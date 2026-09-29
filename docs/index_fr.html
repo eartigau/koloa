@@ -92,6 +92,8 @@
     figure.lecture-figure figcaption, .lecture-figure figcaption { color: var(--muted); font-size: 0.84rem;
       margin-top: 6px; line-height: 1.45; }
     .two-figs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .three-figs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;
+      align-items: start; }
     .stat { background: var(--soft); border: 1px solid var(--line); }
     .stat .label { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem;
       color: var(--muted); }
@@ -127,7 +129,7 @@
     @media (max-width: 720px) {
       .layout { grid-template-columns: minmax(0, 1fr); }
       .span-2, .span-3 { grid-column: span 1; }
-      .two-figs, .text-fig { grid-template-columns: minmax(0, 1fr); }
+      .two-figs, .three-figs, .text-fig { grid-template-columns: minmax(0, 1fr); }
     }
     /* tabs (assets/tabs.js; without it every panel shows, one under another) */
     .ex-tablist { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 16px; padding: 3px; }
@@ -723,7 +725,7 @@ print(rmap.summary())      <span class="c"># the K found 50 and 90 % of the time
 <img alt="HD 69830 en fonction du temps, tous instruments confondus" src="figures/dace_timeseries.svg"/>
 <figcaption>Les vitesses de chaque époque instrumentale en fonction du temps, décalages retirés, chaque pose colorée selon sa probabilité d'être une valeur aberrante, avec le modèle des trois planètes.</figcaption>
 </figure>
-<div class="two-figs">
+<div class="three-figs">
 <figure class="lecture-figure">
 <img alt="La première planète repliée en phase" src="figures/dace_phase_0.svg"/>
 <figcaption>Repliement en phase à la période la plus courte, après retrait des autres planètes.</figcaption>
@@ -732,11 +734,11 @@ print(rmap.summary())      <span class="c"># the K found 50 and 90 % of the time
 <img alt="La deuxième planète repliée en phase" src="figures/dace_phase_1.svg"/>
 <figcaption>Repliement en phase à la période suivante, après retrait des autres planètes.</figcaption>
 </figure>
-</div>
 <figure class="lecture-figure">
 <img alt="La troisième planète repliée en phase" src="figures/dace_phase_2.svg"/>
 <figcaption>Repliement en phase à la période la plus longue, après retrait des autres planètes.</figcaption>
 </figure>
+</div>
 <div class="codeblock">import koloa
 from koloa.dace import fetch, rvdata
 from koloa.fip import inflate_to_fit
@@ -817,7 +819,7 @@ fit = koloa.mcmc_orbits(data, [], trend=1)
 accel, minus, plus = acceleration(fit)['accel']
 
 <span class="c"># the lightest companion that can pull that hard, whatever its orbit</span>
-<span class="c">#   (&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;Torres 1999&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;) [Msun]: the star at 3.52 pc, the companion 11.6 arcsec away</span>
+<span class="c">#   (&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;&lt;a href="https://doi.org/10.1086/316313" target="_blank" rel="noopener"&gt;Torres 1999&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;) [Msun]: the star at 3.52 pc, the companion 11.6 arcsec away</span>
 mmin = companion_min_mass(acceleration(fit)['draws'], 3.52, 11.6)
 
 <span class="c"># the perspective acceleration (mu^2 d, geometry) from the Gaia DR3</span>
