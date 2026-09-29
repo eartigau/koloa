@@ -564,8 +564,7 @@ def uc_rotation():
             (f'The period at which the power of the SHO peaks agrees with the '
              f'photometry within 2&sigma;.', zlit < 2,
              f'{pm(per, 1)}&nbsp;d, {zlit:.1f}&sigma; from {lit["P"]:.0f}&nbsp;d '
-             f'(a broad estimate: the SHO has Q = '
-             f'{mix["gp_quality"][0]:.1f})'),
+             f'(the SHO has Q = {mix["gp_quality"][0]:.1f})'),
             (f'Robust: with {100 * rob["fraction"]:.0f}% of the visits made bad, '
              f'koloa\'s period stays within 1&sigma; of the clean one in at '
              f'least {need} of {rob["nreal"]} realisations.',
@@ -575,7 +574,7 @@ def uc_rotation():
             ('How many DTEMP values does koloa flag?', None,
              f'{summ["flagged"]} of {summ["n"]}; the gaussian posterior of the '
              f'period {pm(gau["gp_period_peak"], 1)}&nbsp;d')],
-        run='python demos/demo_rotation.py --nsteps 4000 --nreal 6 --ncpu 9')
+        run='python demos/demo_rotation.py --nsteps 16000 --nreal 6 --ncpu 9')
 
 
 def uc_kepler21():

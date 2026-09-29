@@ -867,6 +867,26 @@ def rotation(html: str) -> str:
                 f'{fmap["P0"]:.1f}&nbsp;d, {shape}; its log posterior is '
                 f'{abs(gain):.1f} {"higher" if gain > 0 else "lower"} than '
                 f'with Q above {qlow:.0f}')
+    # the period of the GP against the photometry, in the GP's sigma (the
+    #   side of its interval towards it)
+    per, lit_p = mix['gp_period_peak'], summ['literature']['P']
+    zlit = abs(lit_p - per[0]) / (per[2] if lit_p > per[0] else per[1])
+    if zlit < 2:
+        gp_note = (f'The period of the GP is broader than the peaks of the '
+                   f'periodograms: an SHO of Q near {mix["gp_quality"][0]:.1f} '
+                   f'spreads its power over a wide band of periods, so its '
+                   f'peak is a loose estimate of the rotation, and the '
+                   f'periodograms, which fit a single sinusoid, are sharper '
+                   f'for this star.')
+    else:
+        gp_note = (f'That is {zlit:.1f}&sigma; below the rotation of the '
+                   f'photometry and the peaks of the periodograms: for this '
+                   f'star, a single damped oscillator of Q near '
+                   f'{mix["gp_quality"][0]:.1f} is a poor description of the '
+                   f'rotation, which the periodograms of DTEMP3500 and of the '
+                   f'FWHM find without it. A sharper kernel (an oscillator at '
+                   f'P and one at P/2, or a quasi-periodic one) would be the '
+                   f'next test.')
     text = (f'<p>The outlier-aware periodogram of DTEMP3500 peaks at '
             f'{summ["peak_mix"]:.2f}&nbsp;d (&Delta;lnL = '
             f'{summ["peak_mix_dlnl"]:.1f}), the gaussian one at '
@@ -883,12 +903,8 @@ def rotation(html: str) -> str:
             f'({escape(summ["literature"]["reference"])}). koloa flags '
             f'{summ["flagged"]} of the {summ["n"]} values as outliers. With a '
             f'gaussian likelihood, the peak is at '
-            f'{interval(*gau["gp_period_peak"], digits=1)}&nbsp;d. The '
-            f'period of the GP is broader than the peaks of the '
-            f'periodograms: an SHO of Q near {mix["gp_quality"][0]:.1f} spreads '
-            f'its power over a wide band of periods, so its peak is a loose '
-            f'estimate of the rotation, and the periodograms, which fit a '
-            f'single sinusoid, are sharper for this star.</p>'
+            f'{interval(*gau["gp_period_peak"], digits=1)}&nbsp;d. '
+            + gp_note + '</p>'
             f'<p>With {100 * rob["fraction"]:.0f}% of the visits moved by '
             f'{rob["shift"][0]:.0f} to {rob["shift"][1]:.0f} times the '
             f'dispersion of DTEMP3500, over {rob["nreal"]} realisations '
