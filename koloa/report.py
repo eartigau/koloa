@@ -236,6 +236,8 @@ def duck_pdf(report: Any, data: RVData, path: Optional[str] = None,
                 unit='point' if unit == 'point' else 'sequence',
                 title=f'{target}: leave one visit out'), 'jackknife')
         for split, coh in report.details.get('coherence', {}).items():
+            if len(coh['chunks']) < 2:  # too few visits to compare
+                continue
             keep(kplot.coherence(
                 coh, title=f'{target}: is the signal coherent? (by {split})'),
                  f'coherence_{split}')

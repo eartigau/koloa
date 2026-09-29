@@ -161,7 +161,8 @@ def coherence(data: RVData, period: float,
     :param trend: int, the degree of a global trend taken out first
     :param visits: bool, test the visit means rather than the exposures
 
-    :return: dict, the chunks and the tests
+    :return: dict, the chunks and the tests (NaN when fewer than two chunks
+             are large enough to compare)
     """
     prob = np.zeros(data.n) if prob is None else np.asarray(prob)
     rel = np.clip(1 - prob, 1e-3, 1)
@@ -186,12 +187,22 @@ def coherence(data: RVData, period: float,
     cols += [(label == cc).astype(float) for cc in ids]
     cols += [tnorm ** deg for deg in range(1, trend + 1)]
     keep = np.isin(label, ids)
-    if jitter is None:
-        jitter = _excess_jitter(np.array(cols).T[keep], data.rv[keep],
-                                err[keep])
-    err = np.sqrt(err ** 2 + jitter ** 2)
-    coeffs, cov, _ = weighted_lstsq(np.array(cols).T[keep], data.rv[keep],
+    out = dict(period=period, split=split, chunks=chunks, K_all=np.nan,
+               jitter=np.nan, on_visits=bool(visits), min_points=min_points,
+               chi2_amplitude=np.nan, p_amplitude=np.nan,
+               chi2_vector=np.nan, p_vector=np.nan)
+    # a sparse series: no chunk (a season of a few visits) is large enough
+    if not ids:
+        return out
+    try:
+        if jitter is None:
+            jitter = _excess_jitter(np.array(cols).T[keep], data.rv[keep],
                                     err[keep])
+        err = np.sqrt(err ** 2 + jitter ** 2)
+        coeffs, cov, _ = weighted_lstsq(np.array(cols).T[keep],
+                                        data.rv[keep], err[keep])
+    except np.linalg.LinAlgError:  # the period and the trend degenerate
+        return out
     k_all = float(np.hypot(coeffs[0], coeffs[1]))
     resid_trend = np.zeros(data.n)
     for deg in range(1, trend + 1):
@@ -202,7 +213,10 @@ def coherence(data: RVData, period: float,
         sel = label == cc
         design = np.array([np.cos(phase[sel]), np.sin(phase[sel]),
                            np.ones(np.sum(sel))]).T
-        cf, cv, _ = weighted_lstsq(design, value[sel], err[sel])
+        try:
+            cf, cv, _ = weighted_lstsq(design, value[sel], err[sel])
+        except np.linalg.LinAlgError:  # a chunk that sees one phase only
+            continue
         amp = float(np.hypot(cf[0], cf[1]))
         grad = np.array([cf[0], cf[1]]) / max(amp, 1e-12)
         samp = float(np.sqrt(grad @ cv[:2, :2] @ grad))
@@ -219,11 +233,8 @@ def coherence(data: RVData, period: float,
                            vec=cf[:2], cov=cv[:2, :2]))
         vecs.append(cf[:2])
         covs.append(cv[:2, :2])
-    out = dict(period=period, split=split, chunks=chunks, K_all=k_all,
-               jitter=float(jitter), on_visits=bool(visits))
+    out.update(K_all=k_all, jitter=float(jitter))
     if len(chunks) < 2:
-        out.update(chi2_amplitude=np.nan, p_amplitude=np.nan,
-                   chi2_vector=np.nan, p_vector=np.nan)
         return out
     amps = np.array([ch['K'] for ch in chunks])
     samps = np.array([ch['sK'] for ch in chunks])
@@ -518,13 +529,23 @@ def duck_test(data: RVData, period: float,
         else np.nan
     amps = ', '.join(f'{ch["K"]:.1f}+-{ch["sK"]:.1f}' for ch in
                      main['chunks'])
-    status = 'flag' if np.isfinite(pmin) and pmin < 0.01 else 'pass'
-    report.checks.append(dict(
-        name='coherence', status=status,
-        summary=(f'K by half: {amps} m/s (p = {main["p_amplitude"]:.1e}); '
-                 f'amplitude+phase by season p = '
-                 f'{coh["seasons"]["p_vector"]:.1e}'),
-        p=pmin))
+    parts = []
+    if len(main['chunks']) >= 2:
+        parts.append(f'K by half: {amps} m/s (p = '
+                     f'{main["p_amplitude"]:.1e})')
+    if len(coh['seasons']['chunks']) >= 2:
+        parts.append(f'amplitude+phase by season p = '
+                     f'{coh["seasons"]["p_vector"]:.1e}')
+    for split, what in (('halves', 'half'), ('seasons', 'season')):
+        if len(coh[split]['chunks']) < 2:
+            parts.append(f'too few visits per {what} to compare (at least '
+                         f'{coh[split]["min_points"]} needed)')
+    if np.isfinite(pmin):
+        status = 'flag' if pmin < 0.01 else 'pass'
+    else:
+        status = 'info'
+    report.checks.append(dict(name='coherence', status=status,
+                              summary='; '.join(parts), p=pmin))
     report.details['coherence'] = coh
     # -------------------------------------------------------------------------
     # 4. shape: circular or eccentric
@@ -615,7 +636,8 @@ def duck_test(data: RVData, period: float,
                    f'the outliers and the noise are accounted for')
         if others:
             verdict += ('; in addition, ' + ', '.join(others)
-                        + ' speak against a planet')
+                        + (' speaks' if len(others) == 1 else ' speak')
+                        + ' against a planet')
     elif nflag == 0:
         verdict = 'PLANET CANDIDATE: it looks, swims and quacks like a planet'
     elif nflag == 1:

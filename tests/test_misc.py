@@ -217,6 +217,20 @@ def test_coherence_is_calibrated_with_a_visit_jitter():
     assert np.sum(np.array(pvals) < 0.01) <= 2
 
 
+def test_coherence_of_a_sparse_series_is_nan():
+    """a few visits per season: nothing to compare, and no crash"""
+    from koloa.diagnostics import coherence
+    rng = np.random.default_rng(3)
+    tv = np.concatenate([60000 + 365 * s + rng.uniform(0, 90, 4)
+                         for s in range(4)])
+    time = np.concatenate([t + np.arange(4) * 0.01 for t in tv])
+    data = RVData(time=time, rv=rng.normal(0, 2, time.size),
+                  err=np.full(time.size, 2.0))
+    coh = coherence(data, 444.0, split='seasons')
+    assert coh['chunks'] == [] and np.isnan(coh['p_vector'])
+    assert len(coherence(data, 444.0, split='halves')['chunks']) == 2
+
+
 def test_duck_test_writes_a_pdf_report(tmp_path):
     """duck_test(..., pdf=...) writes the detailed report (offline: no
     archive)"""
