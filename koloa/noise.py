@@ -321,6 +321,11 @@ def mixture_loglike(resid: np.ndarray, diag: np.ndarray, block: np.ndarray,
 
 #: the grouping of points into blocks, by block size, for the arrays in use
 _BLOCK_CACHE = {}
+#: the longest sequence whose exposures can be outliers one by one: its 2^n
+#: configurations are summed. A longer sequence is taken whole: all of its
+#: exposures good (and, with sequence outliers, the sequence good or bad as
+#: a whole), never an outlier exposure by exposure inside it
+MAX_POINT_BLOCK = 10
 
 
 def _block_groups(block: np.ndarray, nblock: int):
@@ -330,7 +335,8 @@ def _block_groups(block: np.ndarray, nblock: int):
     of times with the same sequences)
 
     :return: dict, size: (block indices, (nblocks x size) point indices,
-             (2^size x size) configurations)
+             (2^size x size) configurations, or (1 x size) for a sequence
+             longer than MAX_POINT_BLOCK: only its all-good configuration)
     """
     key = (id(block), len(block), nblock)
     if key in _BLOCK_CACHE and _BLOCK_CACHE[key][0] is block:
@@ -344,10 +350,11 @@ def _block_groups(block: np.ndarray, nblock: int):
             continue
         blocks = np.where(sizes == size)[0]
         idx = order[starts[blocks][:, None] + np.arange(size)[None, :]]
-        conf = None
-        if size <= 10:
+        if size <= MAX_POINT_BLOCK:
             conf = ((np.arange(2 ** size)[:, None]
                      >> np.arange(size)[None, :]) & 1).astype(float)
+        else:
+            conf = np.zeros((1, size))
         groups[int(size)] = (blocks, idx, conf)
     if len(_BLOCK_CACHE) > 64:
         _BLOCK_CACHE.clear()
@@ -405,10 +412,6 @@ def _point_mixture_blocks(resid: np.ndarray, diag: np.ndarray,
         sel_blocks = coupled[gblocks]
         if not np.any(sel_blocks):
             continue
-        if conf is None:
-            raise ValueError('Point outliers in a correlated sequence need '
-                             'sequences of at most 10 exposures; use '
-                             'unit="sequence" or no sequence jitter.')
         blocks = gblocks[sel_blocks]
         idx = gidx[sel_blocks]
         res = resid[idx]
@@ -424,6 +427,9 @@ def _point_mixture_blocks(resid: np.ndarray, diag: np.ndarray,
         logdet = np.sum(np.log(dconf), axis=2) + np.log1p(ablk * ssum)
         nout = np.sum(conf, axis=1)
         logprior = nout * lf + (size - nout) * l1f
+        if size > MAX_POINT_BLOCK:
+            # a long sequence, taken whole: its one configuration is certain
+            logprior = np.zeros(1)
         logl = -0.5 * (quad + logdet + size * LOG2PI) + logprior[None, :]
         total = _logsumexp(logl, axis=1)
         per_block[blocks] = total
@@ -436,7 +442,7 @@ def _point_mixture_blocks(resid: np.ndarray, diag: np.ndarray,
             cum = np.cumsum(prob, axis=1)
             pick = np.sum(cum < rng.random(len(blocks))[:, None]
                           * cum[:, -1:], axis=1)
-            pick = np.clip(pick, 0, 2 ** size - 1)
+            pick = np.clip(pick, 0, len(conf) - 1)
             drawn[idx] = conf[pick]
     if rng is not None:
         return per_block, logp_out, np.arange(npts), drawn

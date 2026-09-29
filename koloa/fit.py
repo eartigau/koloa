@@ -223,11 +223,11 @@ class RVModel:
         self.tnorm = (data.time - self.tref) / max(data.baseline, 1e-9)
         self.units = (np.arange(data.nseq) if unit == 'sequence'
                       else np.arange(data.n))
-        if unit == 'both' and data.nseq < data.n and \
-                np.max(np.bincount(data.seq)) > 10:
-            raise ValueError('Visits of more than 10 exposures: split them '
-                             '(koloa.data.split_sequences) or use '
-                             'unit="sequence"')
+        if unit == 'both' and data.nseq < data.n and likelihood == 'mixture':
+            # a visit of more than 10 exposures is taken whole: accepted or
+            #   rejected as a visit (koloa.noise.MAX_POINT_BLOCK)
+            from koloa.fip import _long_sequences
+            _long_sequences(data, True)
         # ---------------------------------------------------------------------
         # the parameters, in order, with their priors and starting values
         # ---------------------------------------------------------------------

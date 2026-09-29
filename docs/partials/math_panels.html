@@ -13,6 +13,10 @@ instrument closer than 0.3&nbsp;d). The model is \(y_i = m(t_i;\boldsymbol\theta
 indicator vector of visit \(b\), and binary indicators \(q_i\) (exposure \(i\) is an outlier) and \(Q_b\)
 (visit \(b\) is an outlier). An outlying exposure has its variance raised by \(W_\mathrm{p}^2\); an outlying
 visit moves all its exposures by a common offset of variance \(W_\mathrm{v}^2\).</p>
+<p>Inside a visit, the exposures are coupled by \(s_\mathrm{v}\), so their indicators are summed configuration
+by configuration: \(2^n\) of them for a visit of \(n\) exposures. A visit of more than ten exposures is
+therefore taken whole: its exposures are never outliers one by one, and the visit is accepted or rejected as a
+whole (\(Q_b\)).</p>
 <p>The indicators are <a href="https://en.wikipedia.org/wiki/Bernoulli_distribution" target="_blank" rel="noopener">Bernoulli</a>, \(q_i \sim \mathcal B(f_\mathrm p)\) and \(Q_b \sim \mathcal B(f_\mathrm v)\),
 with \(f \sim \mathrm{Beta}(1, 20)\) (mean 4.8&nbsp;%). Summed over the indicators, the likelihood of a visit is
 a <a href="https://en.wikipedia.org/wiki/Mixture_model" target="_blank" rel="noopener">mixture</a> over its states:</p>

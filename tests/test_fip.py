@@ -388,3 +388,46 @@ def test_sampler_with_both_kinds_against_enumeration():
     # the moved visit and the spike stand above the clean points (with eight
     #   points and a free sinusoid, the exact probabilities are 0.4 to 0.45)
     assert np.min(pbad[3:7]) > np.max(pbad[[0, 1, 2]])
+
+
+def test_a_long_sequence_is_taken_whole():
+    """a sequence of more than 10 exposures cannot hold point outliers one
+    by one (2^n configurations): with point and sequence outliers, its
+    likelihood is that of the sequence alone, good or bad as a whole"""
+    from koloa.noise import mixture_loglike, mixture_loglike_both
+    rng = np.random.default_rng(4)
+    npts = 12
+    resid = rng.normal(0, 1.5, npts)
+    resid[5] += 9.0
+    diag = np.full(npts, 1.0)
+    block = np.zeros(npts, dtype=int)
+    both, _, _ = mixture_loglike_both(resid, diag, block, 1, 0.4, 0.05, 20.0,
+                                      0.1, 15.0)
+    whole, _, _ = mixture_loglike(resid, diag, block, 1, 0.4, 0.1, 15.0,
+                                  'sequence')
+    assert np.allclose(both, whole)
+
+
+def test_long_visits_do_not_stop_a_fit_or_a_fip():
+    """visits of three exposures and one of fifteen: the fit and the FIP
+    run, the long visit made bad is flagged as a whole, and a single bad
+    exposure in a short visit is still flagged alone"""
+    from koloa.fit import RVModel
+    rng = np.random.default_rng(2)
+    time, seq = [], []
+    for night, nexp in enumerate([3] * 30 + [15] + [3] * 10):
+        time.extend(10.0 * night + 0.01 * np.arange(nexp))
+    time = np.array(time)
+    rv = 3.0 * np.sin(2 * np.pi * time / 7.3) + rng.normal(0, 1.0, len(time))
+    data = RVData(time, rv, np.full(len(time), 1.0))
+    long_visit = np.where(np.bincount(data.seq)[data.seq] == 15)[0]
+    data.rv[long_visit] += 12.0
+    single = np.where(data.seq == 5)[0][1]
+    data.rv[single] += 12.0
+    fit = RVModel(data, [dict(period=7.3, period_range=(7.0, 7.6))],
+                  likelihood='mixture', unit='both').fit(nstart=1, quiet=True)
+    assert np.all(fit.outlier_prob[long_visit] > 0.9)
+    assert fit.outlier_prob[single] > 0.9
+    res = oafip(data, kmax=1, outliers='both', nsweep=30, nburn=10,
+                nchains=1, progress=False)
+    assert res.pk is not None

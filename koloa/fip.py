@@ -791,13 +791,9 @@ def _default_setup(data: RVData, unit: str, seq_jitter: Optional[bool],
     free = dict(jit=bool(jitter), sjit=bool(seq_jitter and has_seq),
                 wpt=use_pt, wseq=use_seq)
     # point outliers in a correlated sequence are summed configuration by
-    #   configuration, which long sequences make too expensive
-    if use_pt and (free['sjit'] or use_seq) and \
-            np.max(np.bincount(data.seq)) > 10:
-        raise ValueError('Sequences of more than 10 exposures: point '
-                         'outliers inside correlated sequences are too '
-                         'expensive; use outliers="sequence", or no '
-                         'sequence jitter with outliers="point".')
+    #   configuration: a longer sequence is taken whole (koloa.noise)
+    if use_pt and (free['sjit'] or use_seq):
+        _long_sequences(data, use_seq)
     # the start: the robust excess as jitter, the obvious outliers flagged
     excess = np.sqrt(max(rstd ** 2 - med_err ** 2, (0.3 * med_err) ** 2))
     tnorm = (data.time - data.tref) / max(data.baseline, 1e-9)
@@ -822,6 +818,28 @@ def _default_setup(data: RVData, unit: str, seq_jitter: Optional[bool],
     if not jitter:
         init['jitter'] = 0.0
     return dict(tau=tau, bounds=bounds, free=free, init=init)
+
+
+#: the series already told that their long sequences are taken whole
+_LONG_TOLD = set()
+
+
+def _long_sequences(data: RVData, use_seq: bool):
+    """say so, once per series, when sequences are too long for their
+    exposures to be outliers one by one"""
+    from koloa.noise import MAX_POINT_BLOCK
+    sizes = np.bincount(data.seq)
+    nlong = int(np.sum(sizes > MAX_POINT_BLOCK))
+    key = (data.name, data.n, data.nseq, nlong, bool(use_seq))
+    if nlong and key not in _LONG_TOLD:
+        _LONG_TOLD.add(key)
+        log(f'{nlong} sequence{"s" if nlong > 1 else ""} of more than '
+            f'{MAX_POINT_BLOCK} exposures (the longest has {np.max(sizes)}) '
+            + ('taken whole: accepted or rejected as a sequence, their '
+               'exposures never outliers one by one' if use_seq else
+               'taken whole: their exposures are never outliers (use '
+               'outliers="both" to accept or reject them as sequences)'),
+            'warn')
 
 
 def oafip(data: RVData, kmax: int = 3, outliers: Optional[str] = 'both',
