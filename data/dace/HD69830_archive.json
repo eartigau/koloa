@@ -1,0 +1,121 @@
+{
+ "host": "HD 69830",
+ "fetched": "2026-09-29",
+ "star": {
+  "mass": 0.86,
+  "distance": 12.5591
+ },
+ "planets": [
+  {
+   "name": "HD 69830 b",
+   "P": 8.667,
+   "P_err": 0.003,
+   "K": 3.51,
+   "K_err": 0.15,
+   "e": 0.1,
+   "mass_earth": 10.2,
+   "reference": "Lovis et al. 2006",
+   "reference_url": "https://ui.adsabs.harvard.edu/abs/2006Natur.441..305L/abstract",
+   "solutions": [
+    {
+     "reference": "Lovis et al. 2006",
+     "reference_url": "https://ui.adsabs.harvard.edu/abs/2006Natur.441..305L/abstract",
+     "date": "2006-05",
+     "P": 8.667,
+     "K": 3.51,
+     "K_err": 0.15
+    },
+    {
+     "reference": "Rosenthal et al. 2021",
+     "reference_url": "https://ui.adsabs.harvard.edu/abs/2021ApJS..255....8R/abstract",
+     "date": "2021-07",
+     "P": 8.66945,
+     "K": 3.48,
+     "K_err": 0.2
+    },
+    {
+     "reference": "Harada et al. 2025",
+     "reference_url": "https://ui.adsabs.harvard.edu/abs/2025AJ....170..343H/abstract",
+     "date": "2025-12",
+     "P": 8.66901,
+     "K": 3.5,
+     "K_err": 0.17
+    }
+   ]
+  },
+  {
+   "name": "HD 69830 c",
+   "P": 31.56,
+   "P_err": 0.04,
+   "K": 2.66,
+   "K_err": 0.16,
+   "e": 0.13,
+   "mass_earth": 11.8,
+   "reference": "Lovis et al. 2006",
+   "reference_url": "https://ui.adsabs.harvard.edu/abs/2006Natur.441..305L/abstract",
+   "solutions": [
+    {
+     "reference": "Lovis et al. 2006",
+     "reference_url": "https://ui.adsabs.harvard.edu/abs/2006Natur.441..305L/abstract",
+     "date": "2006-05",
+     "P": 31.56,
+     "K": 2.66,
+     "K_err": 0.16
+    },
+    {
+     "reference": "Rosenthal et al. 2021",
+     "reference_url": "https://ui.adsabs.harvard.edu/abs/2021ApJS..255....8R/abstract",
+     "date": "2021-07",
+     "P": 31.613,
+     "K": 2.18,
+     "K_err": 0.2
+    },
+    {
+     "reference": "Harada et al. 2025",
+     "reference_url": "https://ui.adsabs.harvard.edu/abs/2025AJ....170..343H/abstract",
+     "date": "2025-12",
+     "P": 31.6131,
+     "K": 2.43,
+     "K_err": 0.16
+    }
+   ]
+  },
+  {
+   "name": "HD 69830 d",
+   "P": 197.0,
+   "P_err": 3.0,
+   "K": 2.2,
+   "K_err": 0.19,
+   "e": 0.07,
+   "mass_earth": 18.1,
+   "reference": "Lovis et al. 2006",
+   "reference_url": "https://ui.adsabs.harvard.edu/abs/2006Natur.441..305L/abstract",
+   "solutions": [
+    {
+     "reference": "Lovis et al. 2006",
+     "reference_url": "https://ui.adsabs.harvard.edu/abs/2006Natur.441..305L/abstract",
+     "date": "2006-05",
+     "P": 197.0,
+     "K": 2.2,
+     "K_err": 0.19
+    },
+    {
+     "reference": "Rosenthal et al. 2021",
+     "reference_url": "https://ui.adsabs.harvard.edu/abs/2021ApJS..255....8R/abstract",
+     "date": "2021-07",
+     "P": 200.61,
+     "K": 1.68,
+     "K_err": 0.20500000000000002
+    },
+    {
+     "reference": "Harada et al. 2025",
+     "reference_url": "https://ui.adsabs.harvard.edu/abs/2025AJ....170..343H/abstract",
+     "date": "2025-12",
+     "P": 201.05,
+     "K": 1.59,
+     "K_err": 0.185
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,21 @@
+GLOSSARY (use consistently):
+- outlier: valeur aberrante; outlier-aware: robuste aux valeurs aberrantes (or "qui tient compte des valeurs aberrantes")
+- exposure: pose; visit: visite; night: nuit; sequence (of exposures): séquence
+- jitter: gigue; white jitter: gigue blanche; visit jitter: gigue de visite
+- radial velocity: vitesse radiale; velocities: vitesses
+- periodogram: périodogramme; phase fold / folded: repliement en phase / replié en phase
+- semi-amplitude: demi-amplitude; period: période; orbit: orbite; eccentric: excentrique
+- false inclusion probability (FIP): probabilité d'inclusion fausse (FIP); true inclusion probability (TIP): probabilité d'inclusion vraie (TIP); keep the acronyms FIP, TIP, OAP, GP, MCMC, MAP, LBL, PCA2D, SHO, BIC, DACE, RV unchanged
+- false-alarm probability: probabilité de fausse alarme
+- Gaussian process (GP): processus gaussien (GP); kernel: noyau; length (of a GP): longueur de corrélation
+- likelihood: vraisemblance; mixture: mélange; posterior: loi a posteriori (or "postérieure" as adjective: distribution a posteriori); prior: loi a priori; sampler: échantillonneur; draws: tirages; chain: chaîne; burn-in: chauffe; maximum a posteriori: maximum a posteriori
+- recovery map: carte de détectabilité; injection: injection; recovered: retrouvé
+- activity indicator: indicateur d'activité; spot: tache; rotation period: période de rotation
+- transit / transiting: transit / en transit; ephemeris: éphéméride
+- perspective acceleration: accélération de perspective; drift: dérive; trend: tendance
+- use case: cas d'usage; criteria: critères; question: question; data: données; run: exécuter (label "run" -> "exécution"); results: résultats
+- clip (hard / soft): écrêtage (dur / doux)
+- the duck test: le test du canard
+- Home: Accueil; Overview: Vue d'ensemble; Install and run: Installation et utilisation; How it works: Principe
+- koloa stays koloa; its expansion "Keplerian Orbits Lifted from Outlier-Affliction" stays in English (the owner's decision)
+- simulated: simulé; real stars: étoiles réelles; the paper: l'article

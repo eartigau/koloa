@@ -1,0 +1,64 @@
+# koloa: what this repository holds, and what stays out of it
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# data: the template sampling and the public series only; the series of
+#   the SPIRou and NIRPS teams stay out
+data/*
+!data/nirps_template.csv
+!data/kepler21_harpsn_dace_drs3.3.12.csv
+!data/dace/
+data/dace/*
+!data/dace/HD69830_dace.csv
+!data/dace/HD69830_archive.json
+
+# the outputs of the demos (figures, pickles, logs): only the summaries the
+#   website is built from
+demos/output/**
+!demos/output/completeness/
+!demos/output/completeness/summary.json
+!demos/output/contamination/
+!demos/output/contamination/summary.json
+!demos/output/dace/
+!demos/output/dace/summary.json
+!demos/output/false_alarm/
+!demos/output/false_alarm/summary.json
+!demos/output/gl725b/
+!demos/output/gl725b/summary.json
+!demos/output/gp_joint/
+!demos/output/gp_joint/summary.json
+!demos/output/kepler21/
+!demos/output/kepler21/summary.json
+!demos/output/mdwarfs/
+!demos/output/mdwarfs/summary.json
+!demos/output/outliers/
+!demos/output/outliers/summary.json
+!demos/output/posterior/
+!demos/output/posterior/summary.json
+!demos/output/posterior_k6/
+!demos/output/posterior_k6/summary.json
+!demos/output/recovery/
+!demos/output/recovery/summary.json
+!demos/output/rotation/
+!demos/output/rotation/summary.json
+!demos/output/secular/
+!demos/output/secular/summary.json
+!demos/output/toi2120/
+!demos/output/toi2120/summary.json
+!demos/output/two_planets/
+!demos/output/two_planets/summary.json
+!demos/output/toi2120/clean_series.json
+!demos/output/toi2120/results.npy
+
+# the working files of the translations (the catalogue, docs/i18n/fr.json,
+#   and the glossary stay)
+docs/i18n/chunk_*.json
+docs/i18n/fr_[0-9]*.json
+docs/i18n/source.json
+docs/i18n/missing_*.json

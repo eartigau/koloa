@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "koloa"
+version = "0.1.0"
+description = "Keplerian Orbits Lifted from Outlier-Affliction: outlier-aware radial-velocity analysis"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Etienne Artigau" }]
+dependencies = ["numpy>=1.22", "scipy>=1.8", "matplotlib>=3.5"]
+
+[project.urls]
+Homepage = "https://eartigau.github.io/koloa/"
+Source = "https://github.com/eartigau/koloa"
+
+[project.optional-dependencies]
+mcmc = ["emcee>=3"]
+radvel = ["radvel>=1.4"]
+tables = ["astropy>=5"]
+test = ["pytest"]
+all = ["emcee>=3", "radvel>=1.4", "astropy>=5", "pytest"]
+
+[project.scripts]
+koloa = "koloa.cli:main"
+
+[tool.setuptools]
+packages = ["koloa"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

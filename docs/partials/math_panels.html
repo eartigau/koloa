@@ -1,0 +1,202 @@
+<!-- The mathematics of koloa, one panel per tab. make_page.py turns every
+     <section data-tab="..."> into a tab of the "The mathematics" card.
+     Equations are KaTeX: \( inline \) and \[ display \]. The notation is
+     the paper's (paper/koloa.tex). -->
+
+<section data-tab="noise" data-title="The noise model">
+<p>A series holds \(N\) velocities \(y_i\) with error bars \(\sigma_i\), in \(B\) visits (exposures of one
+instrument closer than 0.3&nbsp;d). The model is \(y_i = m(t_i;\boldsymbol\theta) + \epsilon_i\), and the noise is
+<a href="https://en.wikipedia.org/wiki/Normal_distribution" target="_blank" rel="noopener">Gaussian</a> with <a href="https://en.wikipedia.org/wiki/Covariance_matrix" target="_blank" rel="noopener">covariance</a></p>
+\[ \mathbf V = \mathrm{diag}\!\left(\sigma_i^2 + s^2 + q_i W_\mathrm{p}^2\right)
+   + \sum_{b=1}^{B} \left(s_\mathrm{v}^2 + Q_b W_\mathrm{v}^2\right) \mathbf 1_b \mathbf 1_b^\top , \]
+<p>with \(s\) a white jitter, \(s_\mathrm{v}\) a jitter shared by the exposures of a visit, \(\mathbf 1_b\) the
+indicator vector of visit \(b\), and binary indicators \(q_i\) (exposure \(i\) is an outlier) and \(Q_b\)
+(visit \(b\) is an outlier). An outlying exposure has its variance raised by \(W_\mathrm{p}^2\); an outlying
+visit moves all its exposures by a common offset of variance \(W_\mathrm{v}^2\).</p>
+<p>The indicators are <a href="https://en.wikipedia.org/wiki/Bernoulli_distribution" target="_blank" rel="noopener">Bernoulli</a>, \(q_i \sim \mathcal B(f_\mathrm p)\) and \(Q_b \sim \mathcal B(f_\mathrm v)\),
+with \(f \sim \mathrm{Beta}(1, 20)\) (mean 4.8&nbsp;%). Summed over the indicators, the likelihood of a visit is
+a <a href="https://en.wikipedia.org/wiki/Mixture_model" target="_blank" rel="noopener">mixture</a> over its states:</p>
+\[ p(\mathbf y_b) = \sum_{Q_b \in \{0,1\}} \sum_{\mathbf q_b \in \{0,1\}^{n_b}}
+   \Pr(Q_b)\,\Pr(\mathbf q_b)\; \mathcal N\!\left(\mathbf y_b - \mathbf m_b ;\, \mathbf 0,\, \mathbf V_b(Q_b, \mathbf q_b)\right). \]
+<p>Given the indicators, \(\mathbf V\) is a diagonal plus one rank-one block per visit, inverted block by
+block with <a href="https://en.wikipedia.org/wiki/Sherman%E2%80%93Morrison_formula" target="_blank" rel="noopener">Sherman-Morrison</a>: for a block \(\mathbf D + a\mathbf 1\mathbf 1^\top\),</p>
+\[ \left(\mathbf D + a \mathbf 1\mathbf 1^\top\right)^{-1} = \mathbf D^{-1} - \frac{a}{1 + aS}\,
+   \mathbf D^{-1}\mathbf 1\mathbf 1^\top\mathbf D^{-1}, \qquad
+   \ln\left|\mathbf D + a\mathbf 1\mathbf 1^\top\right| = \ln|\mathbf D| + \ln(1 + aS), \quad S = \sum_{i \in b} d_i^{-1}. \]
+<p>Nothing of size \(N^2\) is ever built. The outlier probability of a unit is its <a href="https://en.wikipedia.org/wiki/Posterior_probability" target="_blank" rel="noopener">posterior</a>
+\(\Pr(q_i = 1 \mid \mathbf y)\) or \(\Pr(Q_b = 1 \mid \mathbf y)\), the colour of every point in the figures.</p>
+</section>
+
+<section data-tab="fip" data-title="The FIP">
+<p>Following <a href="https://doi.org/10.1051/0004-6361/202140543" target="_blank" rel="noopener">Hara et al. (2022)</a>, the true inclusion probability of a frequency interval \(I\) is the posterior
+probability that at least one of the signals has its frequency in \(I\), summed over their number \(k\):</p>
+\[ \mathrm{TIP}_I = \sum_{k=0}^{k_\mathrm{max}} \Pr\{\exists\, i \le k : \nu_i \in I \mid \mathbf y, k\}\,
+   \Pr\{k \mid \mathbf y\}, \qquad \mathrm{FIP}_I = 1 - \mathrm{TIP}_I . \]
+<p>A signal is \(A\cos 2\pi\nu t + B\sin 2\pi\nu t\). The model has \(k_\mathrm{max}\) slots, each off or on at
+a grid frequency \(\nu_g\) (<a href="https://en.wikipedia.org/wiki/Reciprocal_distribution" target="_blank" rel="noopener">log-uniform</a> in period, ten grid points per \(1/T\)); the number of signals is
+uniform over \(0\dots k_\mathrm{max}\), so a configuration of \(k\) active slots has prior
+\(p(k)/\binom{k_\mathrm{max}}{k}\). The amplitudes of slot \(j\) are Gaussian of variance \(\tau_j^2\), with
+\(\tau_j\) on a ladder of twelve values from \(\tilde\sigma/\sqrt N\) to
+\(5\max(\sigma_\mathrm{rob}, \tilde\sigma)\): a scale mixture of <a href="https://en.wikipedia.org/wiki/Rayleigh_distribution" target="_blank" rel="noopener">Rayleigh laws</a> that approximates a
+log-uniform prior on the semi-amplitude and keeps the amplitudes <a href="https://en.wikipedia.org/wiki/Conjugate_prior" target="_blank" rel="noopener">conjugate</a>.</p>
+<p>The FIP periodogram is \(\mathrm{FIP}_I\) for sliding intervals of width \(1/T\), \(T\) the time span.</p>
+</section>
+
+<section data-tab="evidence" data-title="Linear evidence">
+<p>Given the indicators, the jitters and the active slots, the data are Gaussian with mean
+\(\mathbf X\boldsymbol\beta\) and covariance \(\mathbf V\), and \(\boldsymbol\beta \sim \mathcal N(\mathbf 0,
+\boldsymbol\Sigma)\) (offsets, trend, decorrelation terms and the amplitudes of every active slot). The
+<a href="https://en.wikipedia.org/wiki/Marginal_likelihood" target="_blank" rel="noopener">evidence</a> is analytic:</p>
+\[ \ln Z = -\tfrac12\left(\mathbf y^\top\mathbf V^{-1}\mathbf y - \mathbf b^\top \mathbf K^{-1}\mathbf b\right)
+   - \tfrac12 \ln|\mathbf V| - \tfrac12 \ln|\boldsymbol\Sigma| - \tfrac12 \ln|\mathbf K| - \tfrac N2\ln 2\pi , \]
+\[ \mathbf K = \mathbf X^\top\mathbf V^{-1}\mathbf X + \boldsymbol\Sigma^{-1}, \qquad
+   \mathbf b = \mathbf X^\top\mathbf V^{-1}\mathbf y . \]
+<p>Adding a slot at frequency \(\nu_g\) with prior width \(\tau\) adds two columns
+\(\mathbf C = [\cos, \sin]\). With \(\mathbf B = \mathbf X^\top\mathbf V^{-1}\mathbf C\) and
+\(\mathbf u = \mathbf C^\top \mathbf V^{-1}\mathbf y - \mathbf B^\top\mathbf K^{-1}\mathbf b\), the gain is a
+two-by-two <a href="https://en.wikipedia.org/wiki/Schur_complement" target="_blank" rel="noopener">Schur complement</a>:</p>
+\[ \Delta\ln Z = \tfrac12\, \mathbf u^\top \mathbf S^{-1}\mathbf u - \tfrac12\ln|\mathbf S| - \ln\tau^2, \qquad
+   \mathbf S = \mathbf C^\top\mathbf V^{-1}\mathbf C + \tau^{-2}\mathbf I - \mathbf B^\top\mathbf K^{-1}\mathbf B . \]
+<p>For the whole grid and every rung of the ladder at once, this costs one product of the \(N \times 2G\)
+matrix of sinusoids.</p>
+</section>
+
+<section data-tab="sampler" data-title="The sampler">
+<p>Each sweep of the <a href="https://en.wikipedia.org/wiki/Gibbs_sampling#Collapsed_Gibbs_sampler" target="_blank" rel="noopener">collapsed Gibbs sampler</a> draws, for every slot \(j\), its state, frequency and rung
+together from their exact conditional (every linear parameter integrated out):</p>
+\[ \Pr\{z_j = 1, g_j = g, m_j = m\} \propto \frac{p(k_{-j}+1)}{\binom{k_\mathrm{max}}{k_{-j}+1}}\,
+   \pi_g\,\frac1M\, e^{\Delta\ln Z_{gm}}, \qquad
+   \Pr\{z_j = 0\} \propto \frac{p(k_{-j})}{\binom{k_\mathrm{max}}{k_{-j}}}, \]
+<p>so a slot can jump from any alias to any other in one step. The jitters and outlier widths take <a href="https://en.wikipedia.org/wiki/Metropolis%E2%80%93Hastings_algorithm" target="_blank" rel="noopener">Metropolis</a>
+steps in their logarithm. The indicators are drawn one at a time from their exact conditional: with
+\(\boldsymbol\beta\) integrated out the data have covariance
+\(\boldsymbol\Sigma_y = \mathbf V + \mathbf X\boldsymbol\Sigma\mathbf X^\top\), and flipping a unit (indicator
+vector \(\mathbf u\)) adds \(\delta\,\mathbf u\mathbf u^\top\), \(\delta = \pm W^2\), so by the <a href="https://en.wikipedia.org/wiki/Matrix_determinant_lemma" target="_blank" rel="noopener">matrix
+determinant lemma</a></p>
+\[ \Delta\ln Z = -\tfrac12\ln(1 + \delta s) + \tfrac12\,\frac{\delta\, t^2}{1 + \delta s}, \qquad
+   s = \mathbf u^\top\boldsymbol\Sigma_y^{-1}\mathbf u,\quad t = \mathbf u^\top\boldsymbol\Sigma_y^{-1}\mathbf y , \]
+<p>with \(\boldsymbol\Sigma_y^{-1}\) carried by a rank-one update when an indicator flips. The fractions are
+drawn from their <a href="https://en.wikipedia.org/wiki/Beta_distribution" target="_blank" rel="noopener">Beta</a> conditionals.</p>
+<p><b><a href="https://en.wikipedia.org/wiki/Rao%E2%80%93Blackwell_theorem" target="_blank" rel="noopener">Rao-Blackwellisation</a>.</b> In the slot update the probability that interval \(I\) is empty is known
+exactly (zero if another active slot lies in it, otherwise the conditional mass of slot \(j\) outside
+\(I\)). Averaging these conditional probabilities, rather than counting visited states, gives the FIP: a FIP
+of \(10^{-8}\) is measured, not rounded to zero. Several chains run in parallel, with the \(\hat R\) of the
+number of signals and of the jitter reported.</p>
+</section>
+
+<section data-tab="oap" data-title="Periodogram and folding">
+<p>The outlier-aware <a href="https://en.wikipedia.org/wiki/Least-squares_spectral_analysis" target="_blank" rel="noopener">periodogram</a> (OAP) is a <a href="https://en.wikipedia.org/wiki/Likelihood_function#Profile_likelihood" target="_blank" rel="noopener">profile likelihood</a>. At each frequency the model
+\(c + A\cos 2\pi\nu t + B\sin 2\pi\nu t\) is fitted by <a href="https://en.wikipedia.org/wiki/Expectation%E2%80%93maximization_algorithm" target="_blank" rel="noopener">expectation-maximisation</a> with a free jitter
+\(s\) and the mixture. With \(v_i = \sigma_i^2 + s^2\) and residuals \(r_i\), the E step gives each point (or
+visit mean) its outlier probability,</p>
+\[ \gamma_i = \frac{f\,\mathcal N(r_i; 0, v_i + W^2)}{(1-f)\,\mathcal N(r_i; 0, v_i) + f\,\mathcal N(r_i; 0, v_i + W^2)}, \]
+<p>the M step solves the weighted normal equations with weights \((1-\gamma_i)/v_i + \gamma_i/(v_i+W^2)\),
+the <a href="https://en.wikipedia.org/wiki/Maximum_a_posteriori_estimation" target="_blank" rel="noopener">MAP</a> of \(f\) under its Beta prior, and a <a href="https://en.wikipedia.org/wiki/Scoring_algorithm" target="_blank" rel="noopener">Fisher-scoring</a> step on \(s^2\). The power is the gain
+\(\Delta\ln L(\nu)\) over the same model without the sinusoid.</p>
+<p><b>Recovery maps</b> (koloa.completeness) inject circular planets over a grid of \((P, K)\) at random
+phases and fold the series at the injected period. Under the null, \(2\Delta\ln L\) at one frequency
+follows <a href="https://en.wikipedia.org/wiki/Chi-squared_distribution" target="_blank" rel="noopener">\(\chi^2_2\)</a>, so a false-alarm probability fap gives the fold threshold</p>
+\[ \Delta\ln L > -\ln(\mathrm{fap}) \quad (4.6 \text{ for } 1\,\%), \]
+<p>and a blind search, over \(M = T\,\Delta\nu\) independent frequencies, requires the highest peak to lie
+within \(1/T\) of the injection with \(\Delta\ln L > \ln(M/\mathrm{fap})\). Injections at \(K = 0\) measure
+the false-alarm rate that each threshold actually gives.</p>
+</section>
+
+<section data-tab="orbits" data-title="Orbits and MCMC">
+<p>An orbit is parametrised by \(\ln P\), \(\sqrt K\cos\lambda\), \(\sqrt K\sin\lambda\), \(\sqrt e\cos\omega\) and
+\(\sqrt e\sin\omega\) (\(\lambda\) the <a href="https://en.wikipedia.org/wiki/Mean_longitude" target="_blank" rel="noopener">mean longitude</a> at the reference epoch, \(\omega\) the <a href="https://en.wikipedia.org/wiki/Argument_of_periapsis" target="_blank" rel="noopener">argument of
+periastron</a> of the star). Uniform priors on these, inside the discs \(K < K_\mathrm{max}\) and \(e < 0.95\),
+are uniform in \(K\), \(e\), \(\omega\) and \(\lambda\), since
+\(\mathrm d(\sqrt e\cos\omega)\,\mathrm d(\sqrt e\sin\omega) = \tfrac12\,\mathrm de\,\mathrm d\omega\).
+A transiting planet takes Gaussian priors on \(P\) and \(T_\mathrm c\) from its transits.</p>
+<p>Without a GP the mixture is summed exactly in the likelihood and the posterior is sampled by <a href="https://emcee.readthedocs.io/" target="_blank" rel="noopener">emcee</a> with
+<a href="https://en.wikipedia.org/wiki/Differential_evolution" target="_blank" rel="noopener">differential-evolution</a> moves. The integrated <a href="https://en.wikipedia.org/wiki/Autocorrelation" target="_blank" rel="noopener">autocorrelation</a> time of each parameter,</p>
+\[ \tau = 1 + 2\sum_{\ell=1}^{M} \rho(\ell), \qquad M = \min\{\ell : \ell \ge 5\,\tau(\ell)\}, \]
+<p>(the autocorrelation \(\rho\) averaged over walkers, the <a href="https://emcee.readthedocs.io/en/stable/tutorials/autocorr/" target="_blank" rel="noopener">automatic window</a> of <a href="https://doi.org/10.1007/978-1-4899-0319-8_6" target="_blank" rel="noopener">Sokal (1997)</a>) sets the length: the
+chain is extended until it holds \(50\,\tau\) of every parameter after a burn-in of at least \(5\,\tau\),
+and \(n_\mathrm{eff} = n_\mathrm{walkers}\, n_\mathrm{steps}/\tau\) is reported (the <a href="https://en.wikipedia.org/wiki/Effective_sample_size" target="_blank" rel="noopener">effective sample size</a>). With a GP, exposures are
+coupled; the indicators are then drawn from their exact leave-one-visit-out conditional (Metropolis within
+<a href="https://en.wikipedia.org/wiki/Gibbs_sampling" target="_blank" rel="noopener">Gibbs</a>).</p>
+<p>The maximum a posteriori starts from the peaks of the OAP, each period kept inside its own peak
+(\(|\Delta\nu| < 1/T\)) while it is optimised, since a line search over a \(\pm10\,\%\) period range lands
+on <a href="https://en.wikipedia.org/wiki/Aliasing" target="_blank" rel="noopener">aliases</a>.</p>
+</section>
+
+<section data-tab="many" data-title="Many outliers">
+<p>A mixture can stall where it starts: from "no outliers", a fit with half its points outlying keeps a wide
+Gaussian and flags nothing. koloa adds starts that no outlier can drag, as polyband does: the linear
+part fitted on the least deviant fraction \(k\) (70 and 50&nbsp;%) of the units, re-selected until the
+selection stops changing. The kept residuals are a <a href="https://en.wikipedia.org/wiki/Truncated_normal_distribution" target="_blank" rel="noopener">Gaussian truncated</a> at \(|z| < q\), with
+\(q = \Phi^{-1}\!\left(\tfrac{1+k}{2}\right)\), whose dispersion is too small by</p>
+\[ \frac{\mathrm{std}(r_\mathrm{kept})}{\sigma} = \sqrt{1 - \frac{2\,q\,\varphi(q)}{k}} , \]
+<p>(0.56 for \(k = 0.7\)); the jitter starts from the corrected \(\sigma\), and the outlier fraction and
+width from the units left out. The likelihood then chooses among all the starts.</p>
+<p>A <a href="https://en.wikipedia.org/wiki/Student%27s_t-distribution" target="_blank" rel="noopener">Student-t</a> likelihood (polyband, and koloa's <span class="mono">likelihood='student'</span>) is the other
+scale mixture of Gaussians: every point is a Gaussian whose precision is <a href="https://en.wikipedia.org/wiki/Gamma_distribution" target="_blank" rel="noopener">Gamma-distributed</a>,</p>
+\[ \mathcal T_\nu(r; 0, v) = \int_0^\infty \mathcal N\!\left(r; 0, v/w\right)\,
+   \mathrm{Gamma}\!\left(w; \tfrac\nu2, \tfrac\nu2\right)\mathrm dw , \]
+<p>so an outlier keeps a weight \((\nu + 1)/(\nu + z^2)\), small but not zero, where the mixture gives a
+flagged unit none. The t cannot describe a visit whose exposures move together.</p>
+</section>
+
+<section data-tab="secular" data-title="Secular acceleration">
+<p>The term has two senses. The first is the acceleration of the star itself, from a companion too far out to
+complete an orbit during the series. It is measured: the trend of a fit is a polynomial in
+\(\tau = (t - t_\mathrm{ref})/T\) over the baseline \(T\), and its first two derivatives at \(t_\mathrm{ref}\)
+are the acceleration and its change,</p>
+\[ \dot v_r = \frac{c_1}{T}, \qquad \ddot v_r = \frac{2\,c_2}{T^2}, \]
+<p>in m/s/yr and m/s/yr\(^2\) with \(T\) in years (<span class="mono">koloa.secular.acceleration</span>), their
+errors from the chain, and outlier-aware with koloa's likelihood. A companion at a projected separation
+\(\rho\), a depth \(z\) behind the star and a distance \(r = (\rho^2 + z^2)^{1/2}\), pulls it along the line of
+sight by \(G M z / r^3\), which is largest at \(z = \rho/\sqrt 2\); an acceleration therefore asks, whatever the
+orbit, for a companion of at least (Torres 1999; Liu et al. 2002)</p>
+\[ M \ge \frac{\sqrt{27}}{2}\,\frac{|\dot v_r|\,\rho^2}{G}
+   = 1.388\times10^{-5}\,M_\odot \left(\frac{d}{\mathrm{pc}}\,\frac{\rho}{\mathrm{arcsec}}\right)^2
+   \left|\frac{\dot v_r}{\mathrm{m\,s^{-1}\,yr^{-1}}}\right| \]
+<p>(<span class="mono">companion_min_mass</span>). Two stars that pull on each other accelerate in the inverse
+ratio of their masses, and the sum of their accelerations, \(G(M_A + M_B)\,z/r^3\), places one behind the
+other along the line of sight, up to the two roots on either side of \(\rho/\sqrt 2\).</p>
+<p>The second sense is the perspective acceleration. A star crossing the sky at transverse velocity
+\(v_t = \mu d\) sees its <a href="https://en.wikipedia.org/wiki/Radial_velocity" target="_blank" rel="noopener">radial velocity</a> grow even at constant space velocity, as the line of sight turns
+towards its motion:</p>
+\[ \dot v_r = \frac{v_t^2}{d} = \mu^2 d
+   \quad\Longrightarrow\quad
+   a\ [\mathrm{m\,s^{-1}\,yr^{-1}}] = C\,\frac{\mu_{\alpha*}^2 + \mu_\delta^2}{\varpi}, \qquad
+   C = \frac{\mathrm{mas}^2\,\mathrm{pc}\cdot 10^3}{\mathrm{yr}} = 2.2982\times10^{-5}, \]
+<p>with proper motions in mas/yr and the parallax in mas: 4.539&nbsp;m/s/yr for Barnard's star. Its error
+follows from the covariance \(\mathbf C_{\mu\mu\varpi}\) of the <a href="https://en.wikipedia.org/wiki/Gaia_(spacecraft)" target="_blank" rel="noopener">Gaia</a> DR3 astrometry, correlations included:</p>
+\[ \sigma_a^2 = \mathbf g^\top \mathbf C_{\mu\mu\varpi}\, \mathbf g, \qquad
+   \mathbf g = \frac{C}{\varpi}\left(2\mu_{\alpha*},\; 2\mu_\delta,\; -\frac{\mu_{\alpha*}^2 + \mu_\delta^2}{\varpi}\right). \]
+<p>In a fit it is the parameter <span class="mono">secacc</span> (<span class="mono">RVModel(perspective=(a, &sigma;))</span>),
+with prior \(\mathcal N(a, \sigma_a^2)\), times \((t - t_\mathrm{ref})\); a trend fitted with it takes the
+acceleration of the star itself. Terms of second order, of relative size \(3 v_r t / d\), are neglected.</p>
+<p>Only for velocities that still hold it. The barycentric correction of Wright &amp; Eastman (2014), Eq. 28,
+implemented in barycorrpy, includes the <a href="https://en.wikipedia.org/wiki/Proper_motion" target="_blank" rel="noopener">proper motion</a> and <a href="https://en.wikipedia.org/wiki/Stellar_parallax" target="_blank" rel="noopener">parallax</a> of the star, and so removes \(a\): APERO
+gives barycorrpy the Gaia EDR3 astrometry of every SPIRou and NIRPS target, and the SPIRou velocities of
+Barnard's star drift by 1.2&nbsp;m/s/yr, not 4.5. Adding the term to such velocities counts it twice.</p>
+</section>
+
+<section data-tab="instruments" data-title="Several instruments">
+<p>With several instruments, each instrument \(j\) has its own offset \(\gamma_j\) and white jitter \(s_j\);
+the orbits, the trend and the outlier fractions and widths are common. The visit jitter can be one for
+all, or one per instrument whose visits hold several exposures
+(<span class="mono">seq_jitter='instrument'</span>): the block constant of visit \(b\) is then
+\(s_{\mathrm v,\,j(b)}^2 + Q_b W_\mathrm{v}^2\), with \(j(b)\) the instrument of the visit, and an
+instrument whose nights hold one exposure keeps its white jitter, which plays the same role. The excess
+noise of a star is not the same for every instrument: activity is weaker in the near infrared than in the
+optical. One visit jitter for all gives the quieter instrument too much, and its bad visits pass for
+good.</p>
+<p>A <a href="https://en.wikipedia.org/wiki/Gaussian_process" target="_blank" rel="noopener">GP</a> adds a covariance \(\mathbf K\) to \(\mathbf V\), in one of three forms:</p>
+\[ K_{ik} = k(t_i - t_k), \qquad
+   K_{ik} = a_{j(i)}\,a_{j(k)}\,k(t_i - t_k), \qquad
+   K_{ik} = \delta_{g(i)\,g(k)}\; k_{g(i)}(t_i - t_k). \]
+<p>The first is one GP for every instrument. The second is chromatic
+(<span class="mono">gp=dict(..., scale='instrument')</span>): one kernel, whose amplitude \(a_j\) differs
+between instruments, \(a = 1\) for the reference. The third is a GP per group of instruments \(g\)
+(<span class="mono">gp=[dict(kernel=..., instruments=[...]), ...]</span>), each with its own kernel and
+parameters: independent GPs, a <a href="https://en.wikipedia.org/wiki/Block_matrix#Block_diagonal_matrices" target="_blank" rel="noopener">block-diagonal</a> covariance. The <a href="https://en.wikipedia.org/wiki/Mat%C3%A9rn_covariance_function" target="_blank" rel="noopener">Matérn-3/2 kernel</a> is</p>
+\[ k(\tau) = \sigma^2 \left(1 + \frac{\sqrt 3\,|\tau|}{\ell}\right) \exp\!\left(-\frac{\sqrt 3\,|\tau|}{\ell}\right). \]
+<p>With a GP the covariance is dense and factorised by <a href="https://en.wikipedia.org/wiki/Cholesky_decomposition" target="_blank" rel="noopener">Cholesky</a>, in \(\mathcal O(N^3)\). The parameters are
+drawn by Metropolis, and the outlier indicators by Gibbs from their exact conditionals: the predictive of
+each unit given all the other points, from the blocks of \(\mathbf C^{-1}\).</p>
+</section>
