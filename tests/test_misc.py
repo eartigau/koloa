@@ -230,3 +230,11 @@ def test_duck_test_writes_a_pdf_report(tmp_path):
     assert report.verdict
     assert path.exists() and path.read_bytes()[:4] == b'%PDF'
     assert path.stat().st_size > 20000
+    # everything in a folder: the report, each figure, the text, the summary
+    folder = tmp_path / 'duck'
+    report.pdf(None, sim['data'], archive=False, outdir=str(folder))
+    names = {item.name for item in folder.iterdir()}
+    assert any(name.endswith('_duck.pdf') for name in names)
+    assert any(name.endswith('_phase.pdf') for name in names)
+    assert any(name.endswith('_duck.txt') for name in names)
+    assert any(name.endswith('_duck.json') for name in names)

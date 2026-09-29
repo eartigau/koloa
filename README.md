@@ -107,6 +107,10 @@ print(report.text())
 #   planets of the star from the NASA Exoplanet Archive (target: its name)
 report = koloa.duck_test(data, period=fip.best()['period'], fipres=fip,
                          pdf='duck.pdf', target='GJ 687')
+# or everything in a folder: the PDF, each figure as a PDF of its own, the
+#   text of the test and a JSON summary (checks, orbit, archive)
+report = koloa.duck_test(data, period=fip.best()['period'], fipres=fip,
+                         outdir='duck_GJ687', target='GJ 687')
 ```
 
 ### Orbital elements by MCMC

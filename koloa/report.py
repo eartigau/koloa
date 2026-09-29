@@ -22,10 +22,16 @@ The pages:
 The archive needs the network (the star's name goes to CDS Sesame and the
 archive); without it, or with archive=False, that page says so.
 
+With outdir, everything also goes into that folder: the report, each figure
+as a PDF of its own, the text of the test (<name>_duck.txt) and a JSON
+summary (<name>_duck.json: the checks, the orbit, the archive).
+
 Created on 2026-09-29
 
 @author: artigau
 """
+import json
+import os
 import textwrap
 from typing import Any, Dict, List, Optional
 
@@ -104,9 +110,19 @@ def _archive(target: str, orbit: Optional[Dict[str, Any]]):
     return known, orbit
 
 
-def duck_pdf(report: Any, data: RVData, path: str,
+def _json(obj):
+    """numbers, arrays and the rest for json.dump"""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (np.floating, np.integer, np.bool_)):
+        return obj.item()
+    return str(obj)
+
+
+def duck_pdf(report: Any, data: RVData, path: Optional[str] = None,
              fipres: Optional[Any] = None, target: Optional[str] = None,
-             archive: bool = True, unit: str = 'both') -> str:
+             archive: bool = True, unit: str = 'both',
+             outdir: Optional[str] = None) -> str:
     """
     A detailed PDF of a duck test (see the module's docstring)
 
@@ -118,12 +134,23 @@ def duck_pdf(report: Any, data: RVData, path: str,
                    of the series when None)
     :param archive: bool, ask the NASA Exoplanet Archive
     :param unit: str, the outlier unit of the fit (both, sequence, point)
+    :param outdir: str or None, a folder for everything: the report (there
+                   when path is None), each figure as a PDF of its own, the
+                   text of the test and a JSON summary
 
-    :return: str, the path written
+    :return: str, the path of the report
     """
     from matplotlib.backends.backend_pdf import PdfPages
     period = float(report.period)
     target = target or data.name
+    safe = ''.join(ch if ch.isalnum() or ch in '-_.' else '_'
+                   for ch in target)
+    if outdir:
+        os.makedirs(outdir, exist_ok=True)
+        if path is None:
+            path = os.path.join(outdir, f'{safe}_duck.pdf')
+    if path is None:
+        raise ValueError('duck_pdf needs a path or an outdir')
     kplot.set_style('paper')
     fit = _fit(data, period, unit)
     orbit = None
@@ -139,7 +166,14 @@ def duck_pdf(report: Any, data: RVData, path: str,
             archive_note = f'The archive could not be asked ({err}).'
     else:
         archive_note = 'The archive was not asked (archive=False).'
-    with PdfPages(path) as pdf:
+    with PdfPages(path) as book:
+        def keep(fig, name):
+            """a page of the report, and a PDF of its own in the folder"""
+            if outdir:
+                fig.savefig(os.path.join(outdir, f'{safe}_{name}.pdf'),
+                            bbox_inches='tight')
+            book.savefig(fig)
+
         # 1. the verdict and every check
         insts = ('' if data.instruments == ['inst'] else
                  f' ({", ".join(data.instruments)})')
@@ -179,31 +213,32 @@ def duck_pdf(report: Any, data: RVData, path: str,
                            'body'))
         else:
             blocks.append((archive_note, 'body'))
-        pdf.savefig(_text_page('Duck test', blocks))
+        keep(_text_page('Duck test', blocks), 'summary')
         # 2. the signal
         if fit is not None:
-            pdf.savefig(kplot.phase(fit, level='point',
-                                    title=f'{target}: folded at '
-                                          f'{period:.5f} d'))
+            keep(kplot.phase(fit, level='point',
+                             title=f'{target}: folded at {period:.5f} d'),
+                 'phase')
         if fipres is not None:
             marks = [period] + [pl['P'] for pl in
                                 (known or {}).get('planets', [])
                                 if pl.get('P')]
-            pdf.savefig(kplot.periodograms(
+            keep(kplot.periodograms(
                 fipres.freq, fips=dict(koloa=fipres), mark=marks,
                 title=f'{target}: FIP (the tested period, and the known '
-                      f'planets, dashed)'))
+                      f'planets, dashed)'), 'fip')
         # 3. robustness and coherence
         jack = report.details.get('jackknife')
         freq = report.details.get('jackknife_freq')
         if jack is not None and freq is not None:
-            pdf.savefig(kplot.jackknife(
+            keep(kplot.jackknife(
                 freq, jack, period, data,
                 unit='point' if unit == 'point' else 'sequence',
-                title=f'{target}: leave one visit out'))
+                title=f'{target}: leave one visit out'), 'jackknife')
         for split, coh in report.details.get('coherence', {}).items():
-            pdf.savefig(kplot.coherence(
-                coh, title=f'{target}: is the signal coherent? (by {split})'))
+            keep(kplot.coherence(
+                coh, title=f'{target}: is the signal coherent? (by {split})'),
+                 f'coherence_{split}')
         # 4. the activity indicators
         inds = report.details.get('indicators') or []
         if inds:
@@ -216,12 +251,13 @@ def duck_pdf(report: Any, data: RVData, path: str,
                         else val
                     row += f'  {mult}P {fipv:.0e}'
                 lines.append((row, 'mono'))
-            pdf.savefig(_text_page(
+            keep(_text_page(
                 'Activity indicators', [(f'The outlier-aware FIP of each '
                                          f'indicator at the period and its '
                                          f'multiples (P = {period:.4f} d); a '
                                          f'low FIP there speaks against a '
-                                         f'planet.', 'body')] + lines))
+                                         f'planet.', 'body')] + lines),
+                 'indicators')
         # 5. the archive, in full
         if known is not None:
             blocks = [(f'Host: {known.get("host")}; star: '
@@ -233,13 +269,24 @@ def duck_pdf(report: Any, data: RVData, path: str,
                     blocks.append((f'{sol["reference"]:<28s} P = '
                                    f'{sol["P"]}  K = {sol["K"]} +- '
                                    f'{sol["K_err"]}', 'mono'))
-            pdf.savefig(_text_page('What the NASA Exoplanet Archive knows',
-                                   blocks))
-        info = pdf.infodict()
+            keep(_text_page('What the NASA Exoplanet Archive knows', blocks),
+                 'archive')
+        info = book.infodict()
         info['Title'] = f'Duck test of {target} at {period:.5f} d'
         info['Creator'] = 'koloa'
     kplot.plt.close('all')
-    log(f'duck test report: {path}')
+    if outdir:
+        with open(os.path.join(outdir, f'{safe}_duck.txt'), 'w') as handle:
+            handle.write(report.text() + '\n')
+        summary = dict(target=target, period=period, verdict=report.verdict,
+                       checks=report.checks, orbit=orbit, archive=known,
+                       archive_note=archive_note, report=os.path.basename(path))
+        with open(os.path.join(outdir, f'{safe}_duck.json'), 'w') as handle:
+            json.dump(summary, handle, indent=1, default=_json)
+        log(f'duck test: the report, its figures, text and summary in '
+            f'{outdir}')
+    else:
+        log(f'duck test report: {path}')
     return path
 
 

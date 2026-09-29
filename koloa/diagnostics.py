@@ -371,9 +371,10 @@ class DuckReport:
         """The checks that speak against a planet"""
         return [ch for ch in self.checks if ch['status'] == 'flag']
 
-    def pdf(self, path: str, data: RVData, fipres: Optional[FIPResult] = None,
-            target: Optional[str] = None, archive: bool = True,
-            unit: str = 'both') -> str:
+    def pdf(self, path: Optional[str], data: RVData,
+            fipres: Optional[FIPResult] = None, target: Optional[str] = None,
+            archive: bool = True, unit: str = 'both',
+            outdir: Optional[str] = None) -> str:
         """
         The report as a detailed PDF: every check with its numbers, the
         figures behind them, and the known planets of the star (the NASA
@@ -385,12 +386,15 @@ class DuckReport:
         :param target: str or None, the star's name for the archive
         :param archive: bool, ask the archive (needs the network)
         :param unit: str, the outlier unit of the orbit fitted for the folds
+        :param outdir: str or None, a folder for everything: the report (there
+                       when path is None), each figure as a PDF, the text and
+                       a JSON summary
 
-        :return: str, the path written
+        :return: str, the path of the report
         """
         from koloa.report import duck_pdf
         return duck_pdf(self, data, path, fipres=fipres, target=target,
-                        archive=archive, unit=unit)
+                        archive=archive, unit=unit, outdir=outdir)
 
     def text(self) -> str:
         """The report, as text"""
@@ -412,7 +416,7 @@ def duck_test(data: RVData, period: float,
               gp_kernel: str = 'sho', unit: str = 'both',
               fip_threshold: float = 0.01, quiet: bool = False,
               pdf: Optional[str] = None, target: Optional[str] = None,
-              archive: bool = True
+              archive: bool = True, outdir: Optional[str] = None
               ) -> DuckReport:
     """
     Every test of planethood koloa knows, at one period
@@ -436,6 +440,9 @@ def duck_test(data: RVData, period: float,
     :param target: str or None, the star's name for the archive (the name
                    of the series when None)
     :param archive: bool, ask the archive for the PDF (needs the network)
+    :param outdir: str or None, a folder for everything: the PDF report
+                   (there when pdf is None), each of its figures as a PDF,
+                   the text of the test and a JSON summary
 
     :return: DuckReport
     """
@@ -622,9 +629,9 @@ def duck_test(data: RVData, period: float,
         for line in report.text().split('\n'):
             if line:
                 log(line, 'value' if line.startswith('VERDICT') else 'info')
-    if pdf:
+    if pdf or outdir:
         report.pdf(pdf, data, fipres=fipres, target=target,
-                   archive=archive, unit=unit)
+                   archive=archive, unit=unit, outdir=outdir)
     return report
 
 
