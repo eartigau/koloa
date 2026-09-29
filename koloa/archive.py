@@ -28,6 +28,7 @@ import re
 import time
 import urllib.parse
 import urllib.request
+from html import unescape
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -90,7 +91,8 @@ def _reference(link: str):
     al. year </a>"""
     ref = re.search(r'>\s*(.*?)\s*</a>', link or '')
     url = re.search(r'href=(\S+)', link or '')
-    return (ref.group(1) if ref else ''), (url.group(1) if url else '')
+    # the archive writes accents as HTML entities (L&oacute;pez-Morales)
+    return (unescape(ref.group(1)) if ref else ''), (url.group(1) if url else '')
 
 
 def host_name(ident: Dict[str, Any]) -> Optional[str]:

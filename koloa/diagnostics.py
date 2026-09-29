@@ -371,6 +371,27 @@ class DuckReport:
         """The checks that speak against a planet"""
         return [ch for ch in self.checks if ch['status'] == 'flag']
 
+    def pdf(self, path: str, data: RVData, fipres: Optional[FIPResult] = None,
+            target: Optional[str] = None, archive: bool = True,
+            unit: str = 'both') -> str:
+        """
+        The report as a detailed PDF: every check with its numbers, the
+        figures behind them, and the known planets of the star (the NASA
+        Exoplanet Archive); see koloa.report
+
+        :param path: str, the PDF written
+        :param data: RVData, the series tested
+        :param fipres: FIPResult or None, the FIP of the series
+        :param target: str or None, the star's name for the archive
+        :param archive: bool, ask the archive (needs the network)
+        :param unit: str, the outlier unit of the orbit fitted for the folds
+
+        :return: str, the path written
+        """
+        from koloa.report import duck_pdf
+        return duck_pdf(self, data, path, fipres=fipres, target=target,
+                        archive=archive, unit=unit)
+
     def text(self) -> str:
         """The report, as text"""
         lines = [f'Duck test at P = {self.period:.4f} d', '']
@@ -389,7 +410,9 @@ def duck_test(data: RVData, period: float,
               prob: Optional[np.ndarray] = None,
               activity: Optional[str] = 'auto', gp: bool = True,
               gp_kernel: str = 'sho', unit: str = 'both',
-              fip_threshold: float = 0.01, quiet: bool = False
+              fip_threshold: float = 0.01, quiet: bool = False,
+              pdf: Optional[str] = None, target: Optional[str] = None,
+              archive: bool = True
               ) -> DuckReport:
     """
     Every test of planethood koloa knows, at one period
@@ -407,6 +430,12 @@ def duck_test(data: RVData, period: float,
     :param unit: str, the outlier unit (sequence or point)
     :param fip_threshold: float, the FIP below which a signal is detected
     :param quiet: bool, no log lines
+    :param pdf: str or None, also write a detailed PDF report there (every
+                check, its figures, and the known planets of the star from
+                the NASA Exoplanet Archive; DuckReport.pdf)
+    :param target: str or None, the star's name for the archive (the name
+                   of the series when None)
+    :param archive: bool, ask the archive for the PDF (needs the network)
 
     :return: DuckReport
     """
@@ -467,6 +496,7 @@ def duck_test(data: RVData, period: float,
                  f'{100 * frac_top:.0f}% of the GLS power at the period'),
         fraction=frac_top))
     report.details['jackknife'] = jack
+    report.details['jackknife_freq'] = freq
     # -------------------------------------------------------------------------
     # 3. coherence in time
     # -------------------------------------------------------------------------
@@ -592,6 +622,9 @@ def duck_test(data: RVData, period: float,
         for line in report.text().split('\n'):
             if line:
                 log(line, 'value' if line.startswith('VERDICT') else 'info')
+    if pdf:
+        report.pdf(pdf, data, fipres=fipres, target=target,
+                   archive=archive, unit=unit)
     return report
 
 

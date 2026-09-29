@@ -215,3 +215,18 @@ def test_coherence_is_calibrated_with_a_visit_jitter():
         pvals.append(coh['p_vector'])
     # the p-values of a true null are uniform: 2 of 20 below 0.01 at most
     assert np.sum(np.array(pvals) < 0.01) <= 2
+
+
+def test_duck_test_writes_a_pdf_report(tmp_path):
+    """duck_test(..., pdf=...) writes the detailed report (offline: no
+    archive)"""
+    from koloa.diagnostics import duck_test
+    from koloa.simulate import simulate
+    sim = simulate(planets=[dict(P=6.1, K=6.0)], err=1.5, seed=5, nvisits=30,
+                   per_visit=2, baseline=300)
+    path = tmp_path / 'duck.pdf'
+    report = duck_test(sim['data'], 6.1, gp=False, quiet=True,
+                       pdf=str(path), archive=False)
+    assert report.verdict
+    assert path.exists() and path.read_bytes()[:4] == b'%PDF'
+    assert path.stat().st_size > 20000

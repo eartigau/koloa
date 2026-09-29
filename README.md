@@ -103,6 +103,10 @@ post = model.sample()                       # MCMC
 # is it a planet?
 report = koloa.duck_test(data, period=11.2, fipres=fip)
 print(report.text())
+# the same as a detailed PDF: every check with its figures, and the known
+#   planets of the star from the NASA Exoplanet Archive (target: its name)
+report = koloa.duck_test(data, period=fip.best()['period'], fipres=fip,
+                         pdf='duck.pdf', target='GJ 687')
 ```
 
 ### Orbital elements by MCMC
