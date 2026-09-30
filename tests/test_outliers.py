@@ -171,9 +171,10 @@ def test_detailed_analysis_runs_offline(tmp_path):
     sim = simulate(planets=[dict(P=7.3, K=8.0)], err=1.5, jitter=0.5,
                    seed=3, nvisits=30, per_visit=2, baseline=300,
                    outliers=[dict(kind='visit', frac=0.1, amplitude=10.0)])
+    # (a GP inside the FIP, koloa's default, needs a few hundred sweeps)
     out = detailed_analysis(sim['data'], outdir=str(tmp_path), archive=False,
-                            dace=False, kmax=1, nsweep=40, nburn=20,
-                            duck=False, gp=False)
+                            dace=False, kmax=1, nsweep=300, nburn=150,
+                            duck=False, gp=False, detection_map=False)
     assert out['fip_first'].pk is not None
     assert len(list(tmp_path.glob('*_report.txt'))) == 1
     assert len(list(tmp_path.glob('*_summary.json'))) == 1
@@ -185,3 +186,23 @@ def test_detailed_analysis_runs_offline(tmp_path):
         assert len(pdf) == 1 and pdf[0].read_bytes()[:4] == b'%PDF'
     # the planet, found and fitted
     assert any(abs(orb['P'][0] / 7.3 - 1) < 0.01 for orb in out['orbits'])
+
+
+def test_detection_map_of_a_series():
+    """the map of koloa.detailed: injections on a grid, the signal found
+    taken out, the limits per period bin"""
+    from koloa.detailed import _detection_map
+    from koloa.fit import RVModel
+    from koloa.simulate import simulate
+    sim = simulate(planets=[dict(P=7.3, K=8.0)], err=1.5, seed=3,
+                   nvisits=30, per_visit=1, baseline=300)
+    data = sim['data']
+    fit = RVModel(data, [dict(period=7.3, period_range=(7.1, 7.5))],
+                  likelihood='mixture', unit='point').fit(nstart=1,
+                                                          quiet=True)
+    dmap = _detection_map(data, fit, 1, 1.1, 1, 4, 1, 0.5)
+    rmap = dmap['map']
+    assert rmap.rate.shape == (12, 10)
+    assert len(dmap['K90']) == 12 and dmap['msini90'] is not None
+    # a planet of 15 errors is found at short periods
+    assert np.nanmax(rmap.rate[:4, -1]) >= 0.5

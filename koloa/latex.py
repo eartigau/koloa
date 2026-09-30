@@ -487,6 +487,17 @@ def _fip(rep: Dict[str, Any], folder: str) -> str:
                rep['fip_second']))
     for key, title, res in passes:
         out.append(f'\\subsection{{{title}}}')
+        comps = res.settings.get('gp') or []
+        if comps:
+            vals = '; '.join(f'{escape(name.split("_", 1)[1])} {mid:.3g} '
+                             f'({low:.3g} to {high:.3g})' for name, (mid, low,
+                                                                  high)
+                             in res.gp_summary().items())
+            out.append('A GP of the activity inside the FIP ('
+                       + ' + '.join(comp['kind'] for comp in comps)
+                       + ', a finite basis whose weights are integrated out, '
+                         'its hyperparameters sampled with the signals): '
+                       + vals + '.\n')
         out.append('P(k), the probability of k signals, from k = 0: '
                    + ', '.join(f'{val:.2f}' for val in res.pk) + '.\n')
         out.append('Planet or no planet is decided on the FIP of the period '
@@ -763,6 +774,49 @@ def _indicators(rep: Dict[str, Any], folder: str) -> str:
     return '\n'.join(out) + '\n'
 
 
+def _detection(rep: Dict[str, Any], folder: str) -> str:
+    """the detection map: which planets the series could have found"""
+    dmap = rep.get('detection_map')
+    if dmap is None:
+        return ''
+    rmap = dmap['map']
+    out = ['\\section{The detection map}',
+           'Which planets the series could have found: circular planets '
+           'injected into it (the signals found taken out) on a grid of '
+           'periods and semi-amplitudes, each looked for by a blind '
+           'outlier-aware search with a false-alarm probability of '
+           f'{rmap.fap:g}, the threshold of each period bin calibrated on '
+           f'injections at K = 0 (false alarms: {rmap.false_alarm:.3f}). The '
+           'semi-amplitude recovered 50 and 90\\,\\% of the time, per '
+           'period bin' + (', and the minimum mass it means' if
+                           dmap['msini50'] is not None else '') + '.\n']
+    mass = dmap['msini50'] is not None
+    out.append('\\begin{tabular}{@{}rrr' + ('rr' if mass else '')
+               + '@{}}\n\\toprule\nP [d] & K$_{50}$ [m/s] & K$_{90}$ [m/s]'
+               + (' & m sin i$_{50}$ [M$_\\oplus$] & m sin i$_{90}$ '
+                  '[M$_\\oplus$]' if mass else '') + ' \\\\\n\\midrule')
+    for ip, per in enumerate(rmap.periods):
+        row = (f'{per:.2f} & {dmap["K50"][ip]:.2f} & '
+               f'{dmap["K90"][ip]:.2f}')
+        if mass:
+            row += (f' & {dmap["msini50"][ip]:.2f} & '
+                    f'{dmap["msini90"][ip]:.2f}')
+        row = row.replace('nan', '--')
+        if dmap.get('unreliable') is not None and dmap['unreliable'][ip]:
+            row = row.replace(f'{per:.2f}', f'{per:.2f}$^\\ast$', 1)
+        out.append(row + ' \\\\')
+    out.append('\\bottomrule\n\\end{tabular}\n')
+    if dmap.get('unreliable') is not None and np.any(dmap['unreliable']):
+        out.append(f'$^\\ast$ The bin holds the rotation period '
+                   f'({dmap["prot"]:.0f}\\,d) or its half: the activity, '
+                   f'left in the series, is found there, not a planet.\n')
+    out.append(_figure(rep['figures'].get('detection_map'), folder,
+                       'The fraction of injected planets recovered, with its '
+                       '50 and 90\\,\\% contours; the signals found (stars) '
+                       'and the known planets (circles).', '0.6'))
+    return '\n'.join(out) + '\n'
+
+
 def _tess(rep: Dict[str, Any], folder: str) -> str:
     """the TESS light curves: a photometric peak at a signal?"""
     phot = rep.get('tess')
@@ -924,7 +978,8 @@ def detailed_report(rep: Dict[str, Any], path: str) -> str:
              '\\tableofcontents\n\\bigskip\n', _star(rep),
              _data(rep, folder), _known(rep), _fip(rep, folder),
              _signals(rep, folder), _gp(rep, folder), _ducks(rep, folder),
-             _indicators(rep, folder), _tess(rep, folder),
+             _indicators(rep, folder), _detection(rep, folder),
+             _tess(rep, folder),
              _outliers(rep, folder),
              _settings(rep, folder, skipped), '\\end{document}\n']
     with open(path, 'w', encoding='utf-8') as handle:

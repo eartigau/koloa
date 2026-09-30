@@ -78,7 +78,12 @@ analysis goes on without it). Then the FIP of every instrument together in
 two passes (the errors of each instrument inflated to its noise, first
 without planets, then with them), the signals fitted together and set
 against the known planets, the activity indicators, the duck test, and why
-each outlier is one. From Python: `koloa.detailed_analysis('star.rdb')`.
+each outlier is one. It runs on the nightly means, with a GP of the activity
+inside the FIP (a rotation GP when the archive knows the rotation period),
+decides planet or no planet on the period or any of its aliases, and adds a
+detection map (which planets the series could have found: injections on a
+grid of period and K, a blind search; `--no-detection-map` to skip it, about
+five minutes). From Python: `koloa.detailed_analysis('star.rdb')`.
 
 Beyond the FIP's signals, the known planets are tested at their periods,
 and so are the periods given (`--periods 113.46`, a candidate the archive
@@ -109,6 +114,10 @@ import koloa
 
 data = koloa.RVData.from_csv('series.rdb', name='My star')
 
+# koloa's analyses (oafip, duck_test, analyze, detailed_analysis) run on the
+#   nightly means by default (RVData.nightly: one point per night and
+#   instrument); nightly=False, koloa.data.NIGHTLY = False or the environment
+#   variable KOLOA_NIGHTLY=0 keeps the exposures
 # the outlier-aware FIP, up to three signals
 fip = koloa.oafip(data, kmax=3, outliers='both')
 # with a GP of the activity inside the FIP (a finite basis whose weights are

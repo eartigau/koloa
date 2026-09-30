@@ -156,7 +156,7 @@ def test_gibbs_with_one_slot_equals_single_signal_fip():
     single = fip_single(data, jitter=0.0, pmin=2.0, oversample=5)
     gibbs = oafip(data, kmax=1, outliers=None, jitter=False, pmin=2.0,
                   oversample=5, nsweep=30, nburn=5, nchains=1,
-                  progress=False, seq_jitter=False)
+                  progress=False, seq_jitter=False, nightly=False)
     # with one slot and the noise fixed, every Rao-Blackwellised term IS the
     #   single-signal computation
     assert np.allclose(gibbs.fip, single.fip, rtol=1e-8, atol=1e-12)
@@ -378,7 +378,7 @@ def test_sampler_with_both_kinds_against_enumeration():
                         for gg in gsel] for kk in range(grid.size)])
     tip = inside.astype(float) @ prob
     big = 1e7
-    gibbs = oafip(data, kmax=1, outliers='both', jitter=False,
+    gibbs = oafip(data, kmax=1, outliers='both', jitter=False, nightly=False,
                   seq_jitter=False, freq=freq, oversample=3, ntau=2,
                   width_range=(width, width),
                   frac_prior=(frac * big, (1 - frac) * big), nsweep=8000,

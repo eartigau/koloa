@@ -32,6 +32,14 @@ import numpy as np
 # =============================================================================
 #: points closer than this in time belong to the same sequence [days]
 SEQUENCE_GAP = 0.3
+#: the largest gap inside a night [days]: two visits a few hours apart in
+#:  the same night are one nightly mean
+NIGHT_GAP = 0.5
+#: koloa's analyses (oafip, duck_test, analyze, detailed_analysis) run on
+#:  the nightly means unless told otherwise: nightly=False in a call,
+#:  koloa.data.NIGHTLY = False, or the environment variable KOLOA_NIGHTLY=0
+NIGHTLY = os.environ.get('KOLOA_NIGHTLY', '1').strip().lower() not in (
+    '0', 'false', 'no', 'off')
 #: the cells of a column that count as empty
 EMPTY_CELLS = ('', 'nan', 'none', 'null', 'na', 'n/a')
 
@@ -58,6 +66,19 @@ def robust_std(value: np.ndarray) -> float:
     if len(value) < 2:
         return np.nan
     return float(1.4826 * np.median(np.abs(value - np.median(value))))
+
+
+def night_index(data: 'RVData', gap: float = NIGHT_GAP) -> np.ndarray:
+    """
+    The night of each exposure (per instrument; see RVData.nightly), in the
+    order of the nightly means
+
+    :param data: RVData, the series
+    :param gap: float, the largest gap inside a night [days]
+
+    :return: np.ndarray, an integer per exposure
+    """
+    return find_sequences(data.time, data.inst, gap)
 
 
 def find_sequences(time: np.ndarray, inst: Optional[np.ndarray] = None,
@@ -459,6 +480,32 @@ class RVData:
         out.zero_point = dict(self.zero_point)
         out.sequence_gap = self.sequence_gap
         out.meta = meta
+        return out
+
+    def nightly(self, gap: float = NIGHT_GAP) -> 'RVData':
+        """
+        One point per night and instrument: the weighted mean of its
+        exposures (koloa's analyses run on these by default; nightly=False
+        keeps the exposures)
+
+        A night is the exposures of one instrument that no gap longer than
+        `gap` separates, so two visits a few hours apart are one point. The
+        error of a mean is the formal one, as in binned(): the jitter of the
+        fits absorbs the rest. The series keeps its name.
+
+        :param gap: float, the largest gap inside a night [days]
+
+        :return: RVData, one point per night (itself when no night holds two
+                 exposures)
+        """
+        night = night_index(self, gap)
+        if len(np.unique(night)) == self.n:
+            return self
+        tmp = RVData.__new__(RVData)
+        tmp.__dict__.update(self.__dict__)
+        tmp.seq = night
+        out = tmp.binned()
+        out.name = self.name
         return out
 
     # -------------------------------------------------------------------------

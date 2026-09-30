@@ -130,7 +130,10 @@ def run(path: str) -> Dict[str, Any]:
     module = module_of(path)
     entry = dict(module=module, script=os.path.relpath(path, DOCS))
     entry.update(describe(path))
-    env = dict(os.environ, PYTHONUNBUFFERED='1', MPLBACKEND='Agg')
+    # the examples were written on the exposures: koloa's default of the
+    #   nightly means is off for them (KOLOA_NIGHTLY=0)
+    env = dict(os.environ, PYTHONUNBUFFERED='1', MPLBACKEND='Agg',
+               KOLOA_NIGHTLY='0')
     env.update({name: '1' for name in THREADS})
     figure = os.path.join(FIGDIR, f'{module}.svg')
     usage = resource.getrusage(resource.RUSAGE_CHILDREN)

@@ -86,6 +86,14 @@ def main(argv=None):
                         help='with --detailed: the observatory of the plans '
                              'that lift an alias (CFHT, La Silla, Paranal, '
                              '...; from the instruments by default)')
+    parser.add_argument('--exposures', action='store_true',
+                        help='analyse every exposure (koloa runs on the '
+                             'nightly means by default)')
+    parser.add_argument('--no-detection-map', action='store_true',
+                        help='with --detailed: no detection map')
+    parser.add_argument('--no-fip-gp', action='store_true',
+                        help='with --detailed: no GP of the activity inside '
+                             'the FIP')
     parser.add_argument('--no-tess', action='store_true',
                         help='with --detailed: do not fetch the TESS light '
                              'curves of the star')
@@ -103,14 +111,18 @@ def main(argv=None):
                           pmin=args.pmin, pmax=args.pmax, mcmc=args.mcmc,
                           duck=not args.no_duck, style=args.style,
                           latex=not args.no_latex,
-                          tess=not args.no_tess, site=args.site)
+                          tess=not args.no_tess, site=args.site,
+                          fip_gp=None if args.no_fip_gp else 'auto',
+                          nightly=False if args.exposures else None,
+                          detection_map=not args.no_detection_map)
         return
     data = RVData.from_csv(args.filename, name=args.name, inst=args.inst,
                            sequence_gap=args.gap)
     analyze(data, outdir=args.outdir, kmax=args.kmax, unit=args.unit,
             pmin=args.pmin, pmax=args.pmax, nsweep=args.nsweep,
             nburn=args.nburn, nchains=args.nchains, duck=not args.no_duck,
-            gp=not args.no_gp, style=args.style, period=args.period)
+            gp=not args.no_gp, style=args.style, period=args.period,
+            nightly=False if args.exposures else None)
 
 
 if __name__ == '__main__':

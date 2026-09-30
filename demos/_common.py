@@ -13,8 +13,16 @@ Created on 2026-09-27
 """
 import os
 
+from koloa import data as kdata
 from koloa import plotting as kplot
 from koloa.data import RVData
+
+# the demos are the numbers of the site and the paper, made on the
+#   exposures (each exposure or visit an outlier); koloa's default became
+#   the nightly means (2026-09-30), so they keep the exposures, here and in
+#   their worker processes
+os.environ['KOLOA_NIGHTLY'] = '0'
+kdata.NIGHTLY = False
 
 # =============================================================================
 # Define variables

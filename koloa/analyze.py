@@ -51,7 +51,8 @@ def analyze(data: RVData, outdir: str = 'koloa_output', kmax: int = 3,
             pmax: Optional[float] = None, nsweep: int = 2000,
             nburn: int = 400, nchains: int = 2, duck: bool = True,
             gp: bool = True, style: str = 'paper', seed: int = 1,
-            period: Optional[float] = None) -> Dict[str, Any]:
+            period: Optional[float] = None,
+            nightly: Optional[bool] = None) -> Dict[str, Any]:
     """
     Everything koloa does, on one series
 
@@ -72,11 +73,26 @@ def analyze(data: RVData, outdir: str = 'koloa_output', kmax: int = 3,
     :param period: float or None, the period to examine (the best of the
                    outlier-aware FIP, or of the gaussian FIP when nothing is
                    significant, when None) [days]
+    :param nightly: bool, analyse the nightly means (RVData.nightly, koloa's
+                    default: an outlier is then a night); False keeps the
+                    exposures (an exposure or a whole visit can be one);
+                    None is koloa.data.NIGHTLY
 
     :return: dict, every result
     """
     os.makedirs(outdir, exist_ok=True)
     kplot.set_style(style)
+    if nightly is None:
+        from koloa import data as kdata
+        nightly = kdata.NIGHTLY
+    if nightly:
+        means = data.nightly()
+        if means is not data:
+            log(f'koloa: the nightly means, {data.n} exposures in {means.n} '
+                f'nights (nightly=False keeps the exposures)')
+            data = means
+            if unit == 'both':
+                unit = 'point'
     summ = data.summary()
     log(f'koloa: {data.name}, {summ["npoints"]} points in {summ["nseq"]} '
         f'sequences over {summ["baseline"]:.0f} days')

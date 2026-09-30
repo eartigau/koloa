@@ -436,8 +436,8 @@ def duck_test(data: RVData, period: float,
               pdf: Optional[str] = None, target: Optional[str] = None,
               archive: bool = True, outdir: Optional[str] = None,
               tess: Union[None, bool, Dict[str, Any]] = None,
-              aliases: Optional[bool] = None, site: Optional[str] = None
-              ) -> DuckReport:
+              aliases: Optional[bool] = None, site: Optional[str] = None,
+              nightly: Optional[bool] = None) -> DuckReport:
     """
     Every test of planethood koloa knows, at one period
 
@@ -477,6 +477,10 @@ def duck_test(data: RVData, period: float,
                     report is written
     :param site: str or None, the observatory of the plan (a key of
                  koloa.aliases.SITES; from the instruments when None)
+    :param nightly: bool, test the nightly means (RVData.nightly, koloa's
+                    default; the outlier probability of each exposure is
+                    averaged into its night, and an outlier is a night);
+                    False tests the exposures; None is koloa.data.NIGHTLY
 
     Planet or no planet is decided on the FIP of the period OR any of its
     aliases (1 day, 1 year, 1 month): whether there is a planet, whichever
@@ -486,9 +490,23 @@ def duck_test(data: RVData, period: float,
     :return: DuckReport
     """
     from koloa.fit import period_prior_from_indicator
-    report = DuckReport(period=period)
     if prob is None and fipres is not None:
         prob = fipres.outlier_prob
+    if nightly is None:
+        from koloa import data as kdata
+        nightly = kdata.NIGHTLY
+    if nightly:
+        means = data.nightly()
+        if means is not data:
+            from koloa.data import night_index
+            night = night_index(data)
+            if prob is not None and len(prob) == data.n:
+                prob = (np.bincount(night, np.asarray(prob, dtype=float))
+                        / np.bincount(night))
+            data = means
+            if unit == 'both':
+                unit = 'point'
+    report = DuckReport(period=period)
     prob = np.zeros(data.n) if prob is None else np.asarray(prob)
     # the outliers of the model, out of the checks that have no outlier
     #   model of their own (the jackknife's GLS, the coherence's least

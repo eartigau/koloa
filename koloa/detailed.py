@@ -63,6 +63,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 import numpy as np
 
 from koloa import literature as klit
+from koloa import kepler
 from koloa import plotting as kplot
 from koloa.archive import MATCH, compare, conjunction, known_planets, resolve
 from koloa.data import RVData, merge, robust_std
@@ -227,16 +228,120 @@ def fetch_dace(names: Sequence[str], folder: str, exclude: Sequence[str] = (),
     return None
 
 
-def _fip(data, fit, kmax, nsweep, nburn, seed, label):
-    """the FIP of a series, the errors of each instrument inflated to a fit"""
+def _gp_spec(fip_gp: Any, known: Dict[str, Any]) -> Any:
+    """
+    The GP of the FIP: 'auto' is a local GP, with a rotation GP beside it
+    when the archive knows the rotation period (its prior, +- 10 %)
+    """
+    if fip_gp in (None, False):
+        return None
+    if fip_gp is not True and fip_gp != 'auto':
+        return fip_gp
+    prot = (known.get('star') or {}).get('rotation')
+    if prot:
+        return ['local', dict(kind='rotation', period=dict(
+            mu=float(np.log(float(prot))), sd=0.1))]
+    return 'local'
+
+
+def _fip_gp_text(res) -> str:
+    """the GP of a FIP, in words"""
+    comps = res.settings.get('gp') or []
+    if not comps:
+        return 'no GP'
+    kinds = ' + '.join(comp['kind'] for comp in comps)
+    vals = '; '.join(f'{key.split("_", 1)[1]} {mid:.3g} ({low:.3g} to '
+                     f'{high:.3g})' for key, (mid, low, high)
+                     in res.gp_summary().items())
+    return f'GP {kinds}: {vals}'
+
+
+def _detection_map(data: RVData, fit: Any, nplanet: int, pmin: float,
+                   ninj: int, workers: int, seed: int,
+                   mstar: Optional[float],
+                   prot: Optional[float] = None) -> Dict[str, Any]:
+    """
+    Which planets the series could have found: circular planets injected
+    into it, the signals found taken out first, on a grid of periods (from
+    pmin to the baseline) and semi-amplitudes (0.3 to 15 times the median
+    error), each looked for by a blind outlier-aware search (koloa.
+    completeness, test 'search', a false-alarm probability of 1 %, the
+    threshold of each period bin calibrated on injections at K = 0, a
+    slope fitted beside each sinusoid)
+
+    The activity is left in the series, so a period bin that holds the
+    rotation period (or its half) finds the activity's own peak: its
+    recoveries are not a planet's, and the bin is marked unreliable.
+
+    :return: dict, map (RecoveryMap), K50 and K90 per period bin [m/s],
+             msini50 and msini90 [Earth masses] when the star's mass is
+             known, unreliable (per bin: holds P_rot or P_rot/2)
+    """
+    from koloa.completeness import recovery_map
+    series = data.select(np.ones(data.n, dtype=bool))
+    if nplanet:
+        series.rv = data.rv - sum(fit.model.planet_rv(fit.theta, ip)
+                                  for ip in range(nplanet))
+    med = float(np.median(data.err))
+    period_edges = np.geomspace(pmin, max(data.baseline, 2 * pmin), 13)
+    amp_edges = np.geomspace(0.3 * med, 15 * med, 11)
+    unit = 'point' if data.nseq == data.n else 'sequence'
+    rmap = recovery_map(series, period_edges, amp_edges, ninj=ninj,
+                        test='search', outliers=True, unit=unit, fap=0.01,
+                        nnull=max(20, 10 * ninj), seed=seed, workers=workers,
+                        trend=1,
+                        calibrate=True, quiet=True)
+    k50, k90 = rmap.k_at(0.5), rmap.k_at(0.9)
+    edges = rmap.period_edges
+    unreliable = np.zeros(len(rmap.periods), dtype=bool)
+    for per in ([prot, prot / 2] if prot else []):
+        unreliable |= (edges[:-1] <= per) & (per < edges[1:])
+    out = dict(map=rmap, K50=k50, K90=k90, msini50=None, msini90=None,
+               unreliable=unreliable, prot=prot)
+    if mstar:
+        out['msini50'] = np.array([
+            kepler.minimum_mass(amp, per, 0.0, mstar) if np.isfinite(amp)
+            else np.nan for amp, per in zip(k50, rmap.periods)])
+        out['msini90'] = np.array([
+            kepler.minimum_mass(amp, per, 0.0, mstar) if np.isfinite(amp)
+            else np.nan for amp, per in zip(k90, rmap.periods)])
+    log('detection map: ' + rmap.summary().split('\n')[0], 'value')
+    return out
+
+
+def _map_lines(dmap: Dict[str, Any]) -> List[str]:
+    """the detection map in words: per period bin, the K (and m sin i)
+    recovered 50 and 90 % of the time"""
+    rmap = dmap['map']
+    lines = [rmap.summary().split('\n')[0]]
+    if rmap.nnull:
+        lines.append(f'  false alarms at K = 0: {rmap.false_alarm:.3f}')
+    for ip, per in enumerate(rmap.periods):
+        line = (f'  P = {per:8.2f} d: K(50 %) = {dmap["K50"][ip]:6.2f}, '
+                f'K(90 %) = {dmap["K90"][ip]:6.2f} m/s')
+        if dmap['msini50'] is not None:
+            line += (f'; m sin i {dmap["msini50"][ip]:6.2f} and '
+                     f'{dmap["msini90"][ip]:6.2f} Me')
+        if dmap['unreliable'][ip]:
+            line += (f'  (holds the rotation, {dmap["prot"]:.0f} d, or its '
+                     f'half: the activity is found, not a planet)')
+        lines.append(line)
+    return lines
+
+
+def _fip(data, fit, kmax, nsweep, nburn, seed, label, gp=None):
+    """the FIP of a series, the errors of each instrument inflated to a fit
+    (and a GP of the activity inside it)"""
     inflated, info = inflate_to_fit(fit)
     log(f'{label}: errors inflated by ' + ', '.join(
         f'{inst} {val:.2f}' for inst, val in info['inflation'].items())
         + ' m/s', 'value')
     with blas_threads(1):
         res = oafip(inflated, kmax=kmax, outliers='both', nsweep=nsweep,
-                    nburn=nburn, nchains=2, seed=seed, progress=False)
+                    nburn=nburn, nchains=2, seed=seed, progress=False, gp=gp)
     res.settings['width'] = 1 / inflated.baseline
+    if gp:
+        log(f'{label}: {_fip_gp_text(res)}', 'value')
     found = [pk for pk in res.peaks if _decisive(pk) < THRESHOLD]
     log(f'{label}: P(k) = ' + ', '.join(f'{val:.2f}' for val in res.pk)
         + '; FIP (the period or any alias) < 1 %: '
@@ -390,7 +495,11 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                       duck: bool = True, keys: Union[str, Sequence] = 'auto',
                       style: str = 'paper', seed: int = 1,
                       latex: bool = True, tess: bool = True,
-                      site: Optional[str] = None) -> Dict[str, Any]:
+                      site: Optional[str] = None,
+                      fip_gp: Any = 'auto',
+                      nightly: Optional[bool] = None,
+                      detection_map: bool = True,
+                      map_ninj: int = 10) -> Dict[str, Any]:
     """
     Everything koloa can say about a star (see the module's docstring)
 
@@ -441,6 +550,20 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
     :param site: str or None, the observatory of the plans that lift an
                  alias (a key of koloa.aliases.SITES; from the instruments
                  when None)
+    :param fip_gp: a GP of the activity inside both FIPs (koloa.gpbasis):
+                   'auto' (a local GP, and a rotation GP beside it when the
+                   archive knows the rotation period, its prior +- 10 %),
+                   None or False (none), or a spec of oafip(gp=)
+    :param detection_map: bool, map which planets the series could have
+                          found (injections on a grid of period and K, a
+                          blind search; koloa.completeness), with the
+                          signals found taken out
+    :param map_ninj: int, the injections per cell of the map (and
+                     gp_workers the processes)
+    :param nightly: bool, analyse the nightly means of the series once it is
+                    assembled (RVData.nightly, koloa's default: an outlier
+                    is then a night); False keeps the exposures; None is
+                    koloa.data.NIGHTLY
 
     Planet or no planet is decided on the FIP of each period OR any of its
     aliases; which alias it is, is reported apart (the velocities folded at
@@ -553,16 +676,29 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
             f'over {data.baseline:.0f} d, ' + ', '.join(
                 f'{inst} {np.sum(data.inst == inst)}'
                 for inst in data.instruments), 'value')
-    out['data'], out['sources'] = data, sources
+    out['sources'] = sources
+    nexp = data.n
+    if nightly is None:
+        from koloa import data as kdata
+        nightly = kdata.NIGHTLY
+    if nightly:
+        means = data.nightly()
+        if means is not data:
+            log(f'the nightly means: {data.n} exposures in {means.n} nights '
+                f'(nightly=False keeps the exposures)', 'value')
+            data = means
+    out['data'] = data
     multi = len(data.instruments) > 1
-    seq_jitter = 'instrument' if multi else None
+    # a jitter per visit, when visits hold several points
+    seq_jitter = 'instrument' if multi and data.nseq < data.n else None
     nburn = nburn if nburn is not None else max(300, nsweep // 5)
     # 4. the noise without planets, and the FIP
     with blas_threads(1):
         noise = RVModel(data, [], likelihood='mixture', unit='both', trend=1,
                         seq_jitter=seq_jitter).fit(nstart=2, quiet=True)
+    gpspec = _gp_spec(fip_gp, known)
     fip1, info1 = _fip(data, noise, kmax, nsweep, nburn, seed,
-                       'FIP, noise without planets')
+                       'FIP, noise without planets', gp=gpspec)
     # planet or no planet: the period or any of its aliases; one period
     #   per family of aliases
     found = sorted(_found(fip1))
@@ -610,7 +746,7 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                     f'ephemeris carried {eph["ncycle"]} cycles', 'value')
         # 6. the FIP again, with the noise of the fit with the planets
         fip2, info2 = _fip(data, fit, kmax, nsweep, nburn, seed + 1,
-                           'FIP, noise with the planets')
+                           'FIP, noise with the planets', gp=gpspec)
     else:
         log('no interval with FIP < 1 %, no known planet and no period '
             'given: nothing to fit', 'warn')
@@ -646,7 +782,8 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
     # 8. the duck test, with the TESS light curves of the star (fetched
     #    once, for every signal)
     lcs, phot = None, None
-    if tess:
+    # TESS needs the network, as the archive does
+    if tess and archive:
         from koloa import tess as ktess
         try:
             lcs = ktess.light_curves((ident or {}).get('tic') or star)
@@ -667,6 +804,16 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
             except Exception as err:  # the test is a help, not a stop
                 log(f'duck test at {orb["P"][0]:.4f} d: {err}', 'warn')
     out['duck'] = ducks
+    # 8c. the detection map: which planets the series could have found
+    dmap = None
+    if detection_map:
+        try:
+            dmap = _detection_map(data, fit, len(orbits), pmin, map_ninj,
+                                  gp_workers, seed, mstar,
+                                  (known.get('star') or {}).get('rotation'))
+        except Exception as err:  # the map is a help, not a stop
+            log(f'detection map: {err}', 'warn')
+    out['detection_map'] = dmap
     # 9. why each outlier is one
     why = explain(fit, keys=keys)
     out['outliers'] = why
@@ -755,6 +902,24 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                      f'duck_{ip}_plan')
         except Exception as err:  # a figure is a help, not a stop
             log(f'duck test figures at {orb["P"][0]:.4f} d: {err}', 'warn')
+    if dmap is not None:
+        fig = kplot.recovery_map(dmap['map'], title=f'{star}: which planets '
+                                 f'the series could have found (blind '
+                                 f'search)')
+        axm = fig.axes[0]
+        for orb in orbits:
+            axm.plot(orb['P'][0], orb['K'][0], marker='*', ms=11,
+                     color=kplot.C['outlier'], mec='white', ls='none')
+        for pl in known.get('planets', []):
+            if pl.get('P') and pl.get('K'):
+                axm.plot(pl['P'], pl['K'], marker='o', ms=7, mfc='none',
+                         mec=kplot.C['text'], ls='none')
+        # the rotation and its half, where the activity is found
+        if dmap.get('prot'):
+            for per in (dmap['prot'], dmap['prot'] / 2):
+                axm.axvline(per, color=kplot.C['muted'], lw=1.0,
+                            ls=(0, (1, 2)))
+        keep(fig, 'detection_map')
     if phot is not None and phot.get('sectors'):
         keep(ktess.figure(phot, [orb['P'][0] for orb in orbits],
                           title=f'{star}: TESS, the periodogram of each '
@@ -775,6 +940,14 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                  + ''.join(f'  {chk["period"]:.4f} d: [{chk["status"]}] '
                            f'{chk["summary"]}\n' for chk in phot['checks'])
                  + '\n'.join('  ' + line for line in ktess.table(phot)))
+    if dmap is not None:
+        text += ('\n\nDetection map (which planets the series could have '
+                 'found, the signals found taken out)\n'
+                 + '\n'.join(_map_lines(dmap)))
+    if data.n < nexp:
+        text += (f'\n\nThe analysis ran on the nightly means: {nexp} '
+                 f'exposures in {data.n} nights (nightly=False keeps the '
+                 f'exposures).')
     with open(os.path.join(outdir, f'{safe}_report.txt'), 'w') as handle:
         handle.write(text + '\n')
     out['report'] = text
@@ -791,7 +964,7 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
             inflation_second=info2.get('inflation', {}), orbits=orbits,
             indicators=indic, duck=ducks, outliers=why, figures=named,
             gp=gpsum, threshold=THRESHOLD, runtime=time.time() - start,
-            tess=phot,
+            tess=phot, detection_map=dmap,
             settings=dict(archive=archive, dace=dace, vizier=vizier,
                           literature=len(literature or []),
                           periods=', '.join(f'{per}' for per in periods or [])
@@ -799,7 +972,10 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                           nsweep=nsweep, nburn=nburn, pmin=pmin,
                           pmax=pmax or 'the baseline', mcmc=mcmc,
                           nsteps=nsteps if mcmc else '--', seed=seed,
-                          style=style, tess=tess),
+                          style=style, tess=tess,
+                          fip_gp=_fip_gp_text(fip2),
+                          nightly=(f'{nexp} exposures in {data.n} nights'
+                                   if data.n < nexp else 'no')),
             files=sorted(set(os.listdir(outdir)) | {
                 f'{safe}_summary.json', f'{safe}_report.tex',
                 f'{safe}_report.pdf'}))
@@ -815,6 +991,14 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                    report_pdf=paths.get('pdf'))
     if phot is not None:
         summary['tess'] = ktess.light(phot)
+    if dmap is not None:
+        rmap = dmap['map']
+        summary['detection_map'] = dict(
+            period_edges=rmap.period_edges, amp_edges=rmap.amp_edges,
+            rate=rmap.rate, threshold=rmap.threshold,
+            false_alarm=rmap.false_alarm, K50=dmap['K50'], K90=dmap['K90'],
+            msini50=dmap['msini50'], msini90=dmap['msini90'],
+            unreliable=dmap['unreliable'])
     with open(os.path.join(outdir, f'{safe}_summary.json'), 'w') as handle:
         json.dump(summary, handle, indent=1, default=_json)
     log(f'done in {(time.time() - start) / 60:.1f} min: the report'
@@ -900,7 +1084,8 @@ def _report(star, data, ident, known, fip1, fip2, orbits, indic, ducks, why,
     for label, res in (('FIP, noise without planets', fip1),
                        ('FIP, noise with the planets', fip2)):
         lines += ['', label, '  P(k) = ' + ', '.join(f'{val:.2f}'
-                                                     for val in res.pk)]
+                                                     for val in res.pk),
+                  '  ' + _fip_gp_text(res)]
         for pk in res.peaks:
             flag = 'DETECTED' if _decisive(pk) < THRESHOLD else ''
             fam = pk.get('family_fip')
@@ -963,6 +1148,7 @@ def _summary(star, data, ident, known, fip1, fip2, orbits, indic, ducks,
     """everything, as numbers and text"""
     def fipsum(res):
         return dict(pk=[float(val) for val in res.pk],
+                    gp=res.gp_summary(), gp_components=res.settings.get('gp'),
                     peaks=[dict(period=float(pk['period']),
                                 fip=float(pk['fip'])) for pk in res.peaks])
     return dict(

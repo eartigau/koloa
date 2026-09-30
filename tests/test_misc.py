@@ -267,7 +267,8 @@ def test_duck_test_leaves_a_failed_visit_out_of_the_coherence():
     rv[bad] -= 25000.0
     data = data.with_values(rv)
     prob = bad.astype(float)
-    report = duck_test(data, 6.1, prob=prob, gp=False, quiet=True)
+    report = duck_test(data, 6.1, prob=prob, gp=False, quiet=True,
+                       nightly=False)
     coh = report.details['coherence']['halves']
     assert all(abs(chunk['K'] - 6.0) < 3.0 for chunk in coh['chunks'])
     assert report.details['jackknife_data'].n == data.n - int(np.sum(bad))

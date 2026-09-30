@@ -58,7 +58,7 @@ import numpy as np
 from scipy.special import gammaln
 
 from koloa import gpbasis
-from koloa.data import RVData, robust_std
+from koloa.data import RVData, night_index, robust_std
 from koloa.linear import LinearModel, sinusoid_gain
 from koloa.log import log
 from koloa.noise import BlockCov, block_gauss_loglike, block_indicator
@@ -1095,8 +1095,8 @@ def oafip(data: RVData, kmax: int = 3, outliers: Optional[str] = 'both',
           prior_k: Union[str, Sequence[float]] = 'uniform', seed: int = 1,
           progress: bool = True, npeaks: int = 5,
           freq: Optional[np.ndarray] = None,
-          gp: Union[None, str, Dict[str, Any], Sequence[Any]] = None
-          ) -> FIPResult:
+          gp: Union[None, str, Dict[str, Any], Sequence[Any]] = None,
+          nightly: Optional[bool] = None) -> FIPResult:
     """
     The outlier-aware FIP periodogram of a series
 
@@ -1131,11 +1131,30 @@ def oafip(data: RVData, kmax: int = 3, outliers: Optional[str] = 'both',
                sampled with the jitters (koloa.gpbasis.setup: e.g.
                dict(kind='rotation', period=dict(mu=np.log(116), sd=0.1)),
                or dict(kind='local', length=(10, 100)))
+    :param nightly: bool, run on the nightly means (RVData.nightly, koloa's
+                    default): a night is then one point, and an outlier a
+                    whole night; the outlier probability of each night is
+                    given back to each of its exposures (outlier_prob, of
+                    the length of data). False keeps the exposures, where an
+                    exposure or a whole visit can be an outlier; None is
+                    koloa.data.NIGHTLY (True)
 
     :return: FIPResult, the FIP periodogram and everything around it
     """
     start = _time.time()
+    night = None
+    if nightly is None:
+        from koloa import data as kdata
+        nightly = kdata.NIGHTLY
+    if nightly:
+        means = data.nightly()
+        if means is not data:
+            night, data = night_index(data), means
     unit = outliers if outliers in ('point', 'sequence', 'both') else 'none'
+    if unit == 'both' and data.nseq == data.n:
+        # no visit holds two points (nightly means): points and visits are
+        #   the same
+        unit = 'point'
     setup = _default_setup(data, unit, seq_jitter, jitter, tau_range, ntau,
                            width_range)
     scale = max(robust_std(data.rv), float(np.median(data.err)))
@@ -1147,6 +1166,8 @@ def oafip(data: RVData, kmax: int = 3, outliers: Optional[str] = 'both',
                     oversample=oversample, tref=data.tref, freq=freq)
     grid = PeriodGrid(**gridargs)
     method = ('gaussian' if unit == 'none' else f'mixture ({unit} outliers)')
+    if night is not None:
+        method += ', nightly means'
     if cfg['gp']:
         method += ', GP ' + ' + '.join(comp['kind'] for comp in cfg['gp'])
     if progress:
@@ -1161,6 +1182,13 @@ def oafip(data: RVData, kmax: int = 3, outliers: Optional[str] = 'both',
     else:
         outs = [_run_chain(jobs[0])]
     result = _combine(outs, data, grid, cfg, method, npeaks)
+    if night is not None:
+        # the probability of each night, given back to its exposures
+        result.settings['nightly'] = True
+        result.settings['night_index'] = night
+        if result.outlier_prob is not None:
+            result.settings['nightly_outlier_prob'] = result.outlier_prob
+            result.outlier_prob = result.outlier_prob[night]
     result.runtime = _time.time() - start
     if progress:
         log(f'OAFIP done in {result.runtime:.0f} s')
@@ -1417,6 +1445,11 @@ def inflate_to_fit(fit: Any):
     the variance of its visits matches the fit: by n (s^2 - s_ref^2) + j^2
     for an instrument with its own visit jitter s, n exposures per visit
     and white jitter j, and by max(j^2 - s_ref^2, 0) for one without.
+    Without any visit jitter (nightly means, one exposure per visit), the
+    smallest white jitter j_ref is the one left to the sampler, and the
+    errors grow by max(j^2 - j_ref^2, 0): one instrument is not inflated at
+    all, and its jitter is sampled with the signals (a fit without planets
+    would otherwise put a planet's variance in the errors).
 
     :param fit: FitResult, a fit of the series with a jitter per instrument
                 (RVModel(..., seq_jitter='instrument')), with or without
@@ -1438,9 +1471,12 @@ def inflate_to_fit(fit: Any):
     sjit = {inst: value(f'log_sjit_{inst}') for inst in insts
             if f'log_sjit_{inst}' in model.index}
     sref = min(sjit.values()) if sjit else 0.0
+    jref = min(jit.values()) if (jit and not sjit) else 0.0
     added = {}
     for inst in insts:
-        if inst in sjit:
+        if not sjit:
+            added[inst] = max(jit[inst] ** 2 - jref ** 2, 0.0)
+        elif inst in sjit:
             # the median number of exposures per visit of this instrument
             seqs = data.seq[data.inst == inst]
             nexp = float(np.median(np.bincount(seqs)[np.unique(seqs)]))
