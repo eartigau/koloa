@@ -111,6 +111,13 @@ data = koloa.RVData.from_csv('series.rdb', name='My star')
 
 # the outlier-aware FIP, up to three signals
 fip = koloa.oafip(data, kmax=3, outliers='both')
+# with a GP of the activity inside the FIP (a finite basis whose weights are
+#   integrated out, its hyperparameters sampled with the jitters): a local,
+#   non-oscillating one, or a rotation one with a prior on its period
+fip = koloa.oafip(data, kmax=3, gp='local')
+#   (a gaussian on ln P_rot: 116 d, 10 %)
+fip = koloa.oafip(data, kmax=3, gp=dict(kind='rotation',
+                                        period=dict(mu=4.754, sd=0.1)))
 print(fip.summary())
 reliability = 1 - fip.outlier_prob          # per exposure
 

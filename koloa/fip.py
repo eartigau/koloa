@@ -28,7 +28,10 @@ step is an exact conditional draw:
    parameters as Hara et al. (2022) recommend. The ladder is summed in the
    same step.
 3. The noise is a white jitter, a jitter per observing sequence, and the
-   outlier mixture of koloa.noise: each unit (point, or whole sequence) is
+   outlier mixture of koloa.noise (and, with gp=, a GP of the activity as a
+   finite basis whose weights are integrated out with the other linear
+   parameters and whose hyperparameters are sampled with the jitters,
+   koloa.gpbasis): each unit (point, or whole sequence) is
    an outlier or not, a latent indicator drawn from its exact conditional.
    Given the indicators the noise is gaussian again, which is what keeps
    step 1 exact. The outlier fraction and width are sampled too.
@@ -49,11 +52,12 @@ Created on 2026-09-27
 import time as _time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 from scipy.special import gammaln
 
+from koloa import gpbasis
 from koloa.data import RVData, robust_std
 from koloa.linear import LinearModel, sinusoid_gain
 from koloa.log import log
@@ -441,6 +445,20 @@ class FIPResult:
         out.sort(key=lambda mem: -mem['tip'])
         return out
 
+    def gp_summary(self) -> Dict[str, Tuple[float, float, float]]:
+        """
+        The hyperparameters of the GP, as (median, 16th, 84th percentiles)
+        of the chains (empty without a GP)
+
+        :return: dict, 'gp<i>_<name>': tuple
+        """
+        out = {}
+        for key, val in self.chains.items():
+            if key.startswith('gp') and len(val):
+                pct = np.percentile(val, [50, 16, 84])
+                out[key] = tuple(float(item) for item in pct)
+        return out
+
     def best(self) -> Dict[str, Any]:
         """
         The most significant peak
@@ -467,6 +485,8 @@ class FIPResult:
                          f'{peak["window"]:.3f}'
                          + (f'  FIP of P or an alias = {fam:.2e}'
                             if fam is not None else ''))
+        for key, (mid, low, high) in self.gp_summary().items():
+            lines.append(f'  {key}: {mid:.3g} ({low:.3g} to {high:.3g})')
         if self.outlier_prob is not None:
             lines.append(f'  expected outlier points ({self.unit} model): '
                          f'{self.settings.get("expected_outliers", 0):.1f}')
@@ -490,7 +510,13 @@ class _Chain:
         self.block, self.nblock = data.seq, data.nseq
         self.indicator = block_indicator(self.block, self.nblock)
         base = base_design(data, cfg['trend'], cfg['regressors'])
-        self.base, self.base_var = base['design'], base['prior_var']
+        self.fixed_base, self.fixed_var = base['design'], base['prior_var']
+        # the GP of the activity: more base columns, their prior from its
+        #   hyperparameters (koloa.gpbasis)
+        self.time = data.time
+        self.gp_comp = cfg.get('gp') or []
+        self.gp_val = gpbasis.initial(self.gp_comp)
+        self._set_base()
         self.grid = grid
         self.trig_cs, self.trig_sq = grid.trig()
         self.gsize = grid.size
@@ -514,6 +540,8 @@ class _Chain:
         self.q_pt = init['q_pt'].copy()
         self.q_seq = init['q_seq'].copy()
         self.steps = dict(jit=0.3, sjit=0.3, wpt=0.3, wseq=0.3)
+        self.gp_keys = gpbasis.names(self.gp_comp)
+        self.steps.update({key: 0.2 for key in self.gp_keys})
         self.accept = {key: [0, 0] for key in self.steps}
         # the accumulators
         size = grid.size
@@ -527,7 +555,51 @@ class _Chain:
         self.records = dict(k=[], jitter=[], seq_jitter=[], width=[],
                             width_seq=[], frac=[], frac_seq=[], noutlier=[],
                             logz=[])
+        self.records.update({key: [] for key in self.gp_keys})
         self.slot_records = []
+
+    def _set_base(self):
+        """the base columns: offsets, trend and regressors, then the GP"""
+        if not self.gp_comp:
+            self.base, self.base_var = self.fixed_base, self.fixed_var
+            return
+        cols, var = gpbasis.columns(self.gp_comp, self.gp_val, self.time)
+        self.base = np.hstack([self.fixed_base, cols])
+        self.base_var = np.concatenate([self.fixed_var, var])
+
+    def update_gp(self, cov: BlockCov, model: LinearModel, logz: float):
+        """
+        One Metropolis step on each hyperparameter of the GP (in its
+        logarithm), the linear parameters (the GP's weights among them)
+        integrated out
+
+        :return: tuple, the model and its log evidence after the steps
+        """
+        for ic, comp in enumerate(self.gp_comp):
+            for name, prior in comp['priors'].items():
+                if prior['kind'] == 'fixed':
+                    continue
+                key = f'gp{ic}_{name}'
+                current = self.gp_val[ic][name]
+                prop = float(np.exp(np.log(current) + self.steps[key]
+                                    * self.rng.normal()))
+                self.accept[key][1] += 1
+                lp_new = gpbasis.log_prior(prior, prop)
+                if not np.isfinite(lp_new):
+                    continue
+                lp_old = gpbasis.log_prior(prior, current)
+                old = (self.base, self.base_var)
+                self.gp_val[ic][name] = prop
+                self._set_base()
+                model_new = self.full_model(cov)
+                if (np.log(self.rng.random())
+                        < model_new.logz + lp_new - logz - lp_old):
+                    model, logz = model_new, model_new.logz
+                    self.accept[key][0] += 1
+                else:
+                    self.gp_val[ic][name] = current
+                    self.base, self.base_var = old
+        return model, logz
 
     @property
     def nbad(self) -> int:
@@ -675,6 +747,8 @@ class _Chain:
                 setattr(self, name, prop)
                 cov, model, logz = cov_new, model_new, model_new.logz
                 self.accept[name][0] += 1
+        if self.gp_comp:
+            model, logz = self.update_gp(cov, model, logz)
         # ---------------------------------------------------------------------
         # 3. the outlier indicators, linear parameters integrated out, then
         #    a draw of the linear parameters for the amplitude records
@@ -703,6 +777,11 @@ class _Chain:
             self.records['frac_seq'].append(self.frac_seq)
             self.records['noutlier'].append(self.nbad)
             self.records['logz'].append(logz)
+            for ic, comp in enumerate(self.gp_comp):
+                for name, prior in comp['priors'].items():
+                    if prior['kind'] != 'fixed':
+                        self.records[f'gp{ic}_{name}'].append(
+                            self.gp_val[ic][name])
             nbase = self.base.shape[1]
             col = nbase
             for jj in np.where(self.active)[0]:
@@ -1015,7 +1094,9 @@ def oafip(data: RVData, kmax: int = 3, outliers: Optional[str] = 'both',
           frac_prior: Sequence[float] = (1.0, 20.0),
           prior_k: Union[str, Sequence[float]] = 'uniform', seed: int = 1,
           progress: bool = True, npeaks: int = 5,
-          freq: Optional[np.ndarray] = None) -> FIPResult:
+          freq: Optional[np.ndarray] = None,
+          gp: Union[None, str, Dict[str, Any], Sequence[Any]] = None
+          ) -> FIPResult:
     """
     The outlier-aware FIP periodogram of a series
 
@@ -1044,6 +1125,12 @@ def oafip(data: RVData, kmax: int = 3, outliers: Optional[str] = 'both',
     :param progress: bool, log the progress
     :param npeaks: int, how many peaks to report
     :param freq: np.ndarray or None, a frequency grid to use as it is
+    :param gp: None, 'local', 'rotation' (with its period), a dict or a list
+               of them: a GP of the activity, as a finite basis whose
+               weights are integrated out and whose hyperparameters are
+               sampled with the jitters (koloa.gpbasis.setup: e.g.
+               dict(kind='rotation', period=dict(mu=np.log(116), sd=0.1)),
+               or dict(kind='local', length=(10, 100)))
 
     :return: FIPResult, the FIP periodogram and everything around it
     """
@@ -1051,13 +1138,17 @@ def oafip(data: RVData, kmax: int = 3, outliers: Optional[str] = 'both',
     unit = outliers if outliers in ('point', 'sequence', 'both') else 'none'
     setup = _default_setup(data, unit, seq_jitter, jitter, tau_range, ntau,
                            width_range)
+    scale = max(robust_std(data.rv), float(np.median(data.err)))
     cfg = dict(kmax=kmax, unit=unit, trend=trend, regressors=regressors,
                prior_k=prior_k, frac_prior=tuple(frac_prior), nsweep=nsweep,
-               nburn=nburn, progress=progress, **setup)
+               nburn=nburn, progress=progress,
+               gp=gpbasis.setup(gp, data.time, scale), **setup)
     gridargs = dict(time=data.time, pmin=pmin, pmax=pmax,
                     oversample=oversample, tref=data.tref, freq=freq)
     grid = PeriodGrid(**gridargs)
     method = ('gaussian' if unit == 'none' else f'mixture ({unit} outliers)')
+    if cfg['gp']:
+        method += ', GP ' + ' + '.join(comp['kind'] for comp in cfg['gp'])
     if progress:
         log(f'OAFIP {method}: {data.n} points, {data.nseq} sequences, '
             f'{grid.size} frequencies, kmax = {kmax}, {nchains} chain(s) of '

@@ -25,6 +25,8 @@ or each visit, is good or an outlier, and that indicator is summed over
                       brightness varies at a velocity period
 - koloa.aliases       which alias a signal is: an orbit at each, its share
                       of the probability, and the nights that lift it
+- koloa.gpbasis       a GP of the activity inside the FIP, as a finite basis
+                      (local, or rotation), its hyperparameters sampled
 - koloa.plotting      figures coloured by reliability
 - koloa.simulate      series with known planets, activity and outliers
 - koloa.secular       the acceleration of a star with its errors, what it
