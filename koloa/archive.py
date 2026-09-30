@@ -13,7 +13,13 @@ Who the star is, and what is known of its planets.
 - compare(orbit, known): a fitted orbit against the planet of its period,
   its K against every published solution, the most recent first (the
   archive's default is often the discovery paper, from far fewer velocities
-  than a star has today).
+  than a star has today);
+- conjunction(planet): the published time of conjunction of a planet, to
+  carry its ephemeris to a new series; bibcode(url): the paper of a
+  solution (koloa.literature finds its velocities on VizieR).
+
+known_planets also keeps what the archive knows of the star (rotation
+period, spectral type, Teff, radius, metallicity, v sin i, magnitudes).
 
 Everything needs the network; known_planets keeps what it found in a JSON
 file when given a path, and reads it back.
@@ -43,6 +49,20 @@ ARCHIVE = 'https://exoplanetarchive.ipac.caltech.edu/TAP/sync'
 #: a fitted signal is a known planet when their periods are within this
 #: fraction (the periods of old solutions can be off by a few per cent)
 MATCH = 0.05
+#: what a file of known_planets holds: 2 adds the star (rotation, type...)
+#: and the ephemeris and discovery of each planet
+SCHEMA = 2
+#: the columns of the star kept from pscomppars, and their names in koloa
+STAR_COLUMNS = dict(st_spectype='spectral_type', st_teff='teff',
+                    st_mass='mass', st_rad='radius', st_met='metallicity',
+                    st_logg='logg', st_vsin='vsini', st_rotp='rotation',
+                    st_age='age', sy_dist='distance', sy_vmag='V',
+                    sy_jmag='J', sy_kmag='K')
+#: the columns of each planet kept from pscomppars (beyond P, K, e, mass)
+PLANET_COLUMNS = dict(pl_tranmid='tc', pl_orbtper='tp', pl_orblper='omega',
+                      pl_orbsmax='a', pl_eqt='teq', pl_insol='insolation',
+                      discoverymethod='discovery', disc_year='disc_year',
+                      disc_facility='disc_facility')
 
 
 # =============================================================================
@@ -93,6 +113,53 @@ def _reference(link: str):
     url = re.search(r'href=(\S+)', link or '')
     # the archive writes accents as HTML entities (L&oacute;pez-Morales)
     return (unescape(ref.group(1)) if ref else ''), (url.group(1) if url else '')
+
+
+def _error(row: Dict[str, Any], prefix: str) -> Optional[float]:
+    """the mean of the archive's two errors of a column (<prefix>1 and
+    <prefix>2), or None"""
+    errs = [abs(row[key]) for key in (f'{prefix}1', f'{prefix}2')
+            if row.get(key) is not None]
+    return float(np.mean(errs)) if errs else None
+
+
+def bibcode(url: str) -> Optional[str]:
+    """
+    The bibcode of an ADS address (the archive's links to the papers)
+
+    :param url: str, e.g. https://ui.adsabs.harvard.edu/abs/2023A&A...680A..28G/abstract
+
+    :return: str or None
+    """
+    found = re.search(r'/abs/([^/?#\s]+)', url or '')
+    if found is None:
+        return None
+    code = urllib.parse.unquote(found.group(1))
+    return code if len(code) == 19 else None
+
+
+def conjunction(planet: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    The time of conjunction of a known planet, for its ephemeris: the
+    transit when the archive has it, or the time of periastron of a circular
+    orbit (for which it is the conjunction, omega = 90 deg: the convention
+    of most papers, not of all)
+
+    :param planet: dict, one of known_planets()['planets']
+
+    :return: dict or None, tc and tc_err [BJD - 2400000], P and P_err
+             [days], source (transit or periastron)
+    """
+    if not planet.get('P'):
+        return None
+    base = dict(P=float(planet['P']), P_err=planet.get('P_err'))
+    if planet.get('tc') is not None:
+        return dict(base, tc=planet['tc'], tc_err=planet.get('tc_err'),
+                    source='transit')
+    if planet.get('tp') is not None and not planet.get('e'):
+        return dict(base, tc=planet['tp'], tc_err=planet.get('tp_err'),
+                    source='periastron of a circular orbit')
+    return None
 
 
 def host_name(ident: Dict[str, Any]) -> Optional[str]:
@@ -161,38 +228,40 @@ def known_planets(name: Optional[str] = None, host: Optional[str] = None,
                  when it exists, unless refresh)
     :param refresh: bool, ask the archive even when the file exists
 
-    :return: dict, host, fetched (date), star (mass, distance), planets
-             (name, P, P_err, K, K_err, e, mass_earth, reference,
-             reference_url, solutions); no planet when the archive has none
+    :return: dict, host, fetched (date), star (mass, distance, and the
+             STAR_COLUMNS the archive has: rotation, spectral type, Teff...),
+             planets (name, P, P_err, K, K_err, e, mass_earth, reference,
+             reference_url, solutions, and the PLANET_COLUMNS: tc and tp
+             [BJD - 2400000] with their errors, a, teq, discovery...); no
+             planet when the archive has none
     """
     if path and os.path.exists(path) and not refresh:
         with open(path) as handle:
             out = json.load(handle)
-        # a file written before the solutions were kept: add them
-        if out.get('host') and not all('solutions' in pl
-                                       for pl in out['planets']):
-            sols = solutions(out['host'])
-            for pl in out['planets']:
-                pl['solutions'] = sols.get(pl['name'], [])
-            with open(path, 'w') as handle:
-                json.dump(out, handle, indent=1)
-        return out
+        if out.get('schema', 1) >= SCHEMA or not out.get('host'):
+            return out
+        # a file of an older koloa: ask again, for what it lacks
+        host = out['host']
     if host is None:
         if name is None:
             raise ValueError('known_planets needs a name or a host')
         host = host_name(resolve(name))
     out = dict(host=host, fetched=time.strftime('%Y-%m-%d'), star={},
-               planets=[])
+               planets=[], schema=SCHEMA)
     if host is not None:
-        cols = ('pl_name,pl_orbper,pl_orbpererr1,pl_orbpererr2,pl_rvamp,'
-                'pl_rvamperr1,pl_rvamperr2,pl_orbeccen,pl_bmasse,'
-                'pl_rvamp_reflink,st_mass,sy_dist')
+        cols = ','.join(['pl_name,pl_orbper,pl_orbpererr1,pl_orbpererr2,'
+                         'pl_rvamp,pl_rvamperr1,pl_rvamperr2,pl_orbeccen,'
+                         'pl_bmasse,pl_rvamp_reflink,st_rotperr1,st_rotperr2,'
+                         'pl_tranmiderr1,pl_tranmiderr2,pl_orbtpererr1,'
+                         'pl_orbtpererr2'] + list(STAR_COLUMNS)
+                        + list(PLANET_COLUMNS))
         rows = _query(f"select {cols} from pscomppars where hostname = "
                       f"'{host}' order by pl_orbper")
         sols = solutions(host)
         if rows:
-            out['star'] = dict(mass=rows[0]['st_mass'],
-                               distance=rows[0]['sy_dist'])
+            out['star'] = {name: rows[0].get(col)
+                           for col, name in STAR_COLUMNS.items()}
+            out['star']['rotation_err'] = _error(rows[0], 'st_rotperr')
         for row in rows:
             kerr = [abs(row[key]) for key in ('pl_rvamperr1', 'pl_rvamperr2')
                     if row.get(key) is not None]
@@ -200,14 +269,22 @@ def known_planets(name: Optional[str] = None, host: Optional[str] = None,
                                               'pl_orbpererr2')
                     if row.get(key) is not None]
             ref, url = _reference(row.get('pl_rvamp_reflink'))
-            out['planets'].append(dict(
+            planet = dict(
                 name=row['pl_name'], P=row['pl_orbper'],
                 P_err=float(np.mean(perr)) if perr else None,
                 K=row['pl_rvamp'],
                 K_err=float(np.mean(kerr)) if kerr else None,
                 e=row['pl_orbeccen'], mass_earth=row['pl_bmasse'],
                 reference=ref, reference_url=url,
-                solutions=sols.get(row['pl_name'], [])))
+                solutions=sols.get(row['pl_name'], []))
+            planet.update({name: row.get(col)
+                           for col, name in PLANET_COLUMNS.items()})
+            # the times in koloa's BJD - 2400000
+            for key, col in (('tc', 'pl_tranmiderr'), ('tp', 'pl_orbtpererr')):
+                if planet[key] is not None:
+                    planet[key] = float(planet[key]) - 2400000.0
+                planet[f'{key}_err'] = _error(row, col)
+            out['planets'].append(planet)
     if path:
         with open(path, 'w') as handle:
             json.dump(out, handle, indent=1)

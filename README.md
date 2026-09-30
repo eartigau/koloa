@@ -35,7 +35,10 @@ exactly. That is what makes the outlier-aware FIP affordable.
 | `koloa.radvel_bridge` | `OutlierRVLikelihood`, a drop-in replacement for radvel's `RVLikelihood` |
 | `koloa.doppler` | relativistic Doppler conversions (velocity, wavelength ratio, log-wavelength shift) |
 | `koloa.analyze` | all of the above on one series, with a report and figures |
-| `koloa.detailed` | `detailed_analysis`: everything koloa can say about a star from one file, with its known planets (archive), more data (DACE), the FIP in two passes, the activity indicators and why each outlier is one |
+| `koloa.detailed` | `detailed_analysis`: everything koloa can say about a star from one file, with its known planets (archive), more data (DACE, the velocities published with its planets on VizieR, and any given), the FIP in two passes, the known planets tested at their periods, a GP of the activity, the activity indicators and why each outlier is one, as a LaTeX/PDF report |
+| `koloa.literature` | published velocities: a VizieR .dat or csv file read (times to BJD - 2400000, km/s to m/s), and the tables of the papers of a star's planets found on VizieR from their bibcodes |
+| `koloa.gpcheck` | the signals against a GP of the activity (its prior the rotation period of the archive): the likelihood each adds, periodograms whitened by the GP with false-alarm levels from simulations of its noise, and the whole series with the GP |
+| `koloa.latex` | the detailed analysis as a LaTeX report, compiled to PDF by pdflatex |
 
 ## Install
 
@@ -76,6 +79,26 @@ two passes (the errors of each instrument inflated to its noise, first
 without planets, then with them), the signals fitted together and set
 against the known planets, the activity indicators, the duck test, and why
 each outlier is one. From Python: `koloa.detailed_analysis('star.rdb')`.
+
+Beyond the FIP's signals, the known planets are tested at their periods,
+and so are the periods given (`--periods 113.46`, a candidate the archive
+does not list). The velocities published with the known planets are
+fetched from VizieR (from the bibcodes of their solutions in the archive;
+`--no-vizier` not to), and published velocities can be given
+(`--literature paper_rvs.dat`: a VizieR .dat, or a csv or .rdb with named
+columns); a published velocity within a minute of an exposure of the file
+is the same spectrum and is left out. The signals are fitted again with a
+GP of the activity (the rotation period of the archive as its prior, a
+free period otherwise): the likelihood each adds over the GP, periodograms
+whitened by the GP with their false-alarm levels, and the whole series
+with the GP overplotted, season by season (`--no-gp` not to). Everything
+goes into `<star>_report.pdf`, a LaTeX report compiled by pdflatex when
+there is one (`<star>_report.tex` otherwise; `--no-latex` for neither):
+the star, the data and where they come from, the known planets and their
+published solutions, the FIP, the signals against the known planets
+(their K and the published ephemeris carried to the data), the GP, the
+duck test of each signal, the activity indicators and the rotation, the
+outliers, and every figure.
 
 From Python:
 

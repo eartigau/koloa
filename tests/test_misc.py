@@ -252,3 +252,22 @@ def test_duck_test_writes_a_pdf_report(tmp_path):
     assert any(name.endswith('_phase.pdf') for name in names)
     assert any(name.endswith('_duck.txt') for name in names)
     assert any(name.endswith('_duck.json') for name in names)
+
+
+def test_duck_test_leaves_a_failed_visit_out_of_the_coherence():
+    """a visit thousands of m/s off, flagged by the outlier model, does not
+    reach the jackknife and the coherence (they have no outlier model)"""
+    from koloa.diagnostics import duck_test
+    from koloa.simulate import simulate
+    sim = simulate(planets=[dict(P=6.1, K=6.0)], err=1.5, seed=5, nvisits=30,
+                   per_visit=2, baseline=300)
+    data = sim['data']
+    rv = data.rv.copy()
+    bad = data.seq == data.seq[10]
+    rv[bad] -= 25000.0
+    data = data.with_values(rv)
+    prob = bad.astype(float)
+    report = duck_test(data, 6.1, prob=prob, gp=False, quiet=True)
+    coh = report.details['coherence']['halves']
+    assert all(abs(chunk['K'] - 6.0) < 3.0 for chunk in coh['chunks'])
+    assert report.details['jackknife_data'].n == data.n - int(np.sum(bad))

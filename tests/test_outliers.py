@@ -173,9 +173,15 @@ def test_detailed_analysis_runs_offline(tmp_path):
                    outliers=[dict(kind='visit', frac=0.1, amplitude=10.0)])
     out = detailed_analysis(sim['data'], outdir=str(tmp_path), archive=False,
                             dace=False, kmax=1, nsweep=40, nburn=20,
-                            duck=False)
+                            duck=False, gp=False)
     assert out['fip_first'].pk is not None
     assert len(list(tmp_path.glob('*_report.txt'))) == 1
     assert len(list(tmp_path.glob('*_summary.json'))) == 1
+    # the report in LaTeX, and in PDF where pdflatex is
+    from koloa.latex import _pdflatex
+    assert len(list(tmp_path.glob('*_report.tex'))) == 1
+    if _pdflatex() is not None:
+        pdf = list(tmp_path.glob('*_report.pdf'))
+        assert len(pdf) == 1 and pdf[0].read_bytes()[:4] == b'%PDF'
     # the planet, found and fitted
     assert any(abs(orb['P'][0] / 7.3 - 1) < 0.01 for orb in out['orbits'])

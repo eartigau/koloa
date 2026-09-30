@@ -461,18 +461,28 @@ def duck_test(data: RVData, period: float,
     report = DuckReport(period=period)
     if prob is None and fipres is not None:
         prob = fipres.outlier_prob
-    prob = np.zeros(data.n) if prob is None else prob
+    prob = np.zeros(data.n) if prob is None else np.asarray(prob)
+    # the outliers of the model, out of the checks that have no outlier
+    #   model of their own (the jackknife's GLS, the coherence's least
+    #   squares): a failed exposure thousands of sigma off would be them
+    good = prob < 0.5
+    clean = data.select(good) if (np.any(~good) and np.sum(good) > 10) \
+        else data
+    cprob = prob[good] if clean is not data else prob
     freq0 = 1 / period
     kw = dict(likelihood='mixture', unit=unit)
     # -------------------------------------------------------------------------
     # 1. significance
     # -------------------------------------------------------------------------
     if fipres is not None:
-        fipv = fipres.fip_at(period)
+        # the best interval that holds the period (its grid point can be a
+        #   fraction of an interval off the peak)
+        fipv = fipres.fip_containing(period, 1 / data.baseline)
         wpow = float(window(data.time, freq0)[0])
         summary = f'FIP = {fipv:.2e} (outlier-aware)'
         if gauss_fip is not None:
-            summary += f', {gauss_fip.fip_at(period):.2e} (gaussian)'
+            summary += (f', {gauss_fip.fip_containing(period, 1 / data.baseline):.2e}'
+                        f' (gaussian)')
         summary += f', window power {wpow:.3f}'
         # the aliases, and whether one of them is as good
         idx = int(np.argmin(np.abs(fipres.freq - freq0)))
@@ -498,8 +508,8 @@ def duck_test(data: RVData, period: float,
     # -------------------------------------------------------------------------
     # 2. robustness: who holds the peak up
     # -------------------------------------------------------------------------
-    freq = frequency_grid(data.time, 1.1, None, 10)
-    jack = jackknife(data, freq, unit='point' if unit == 'point'
+    freq = frequency_grid(clean.time, 1.1, None, 10)
+    jack = jackknife(clean, freq, unit='point' if unit == 'point'
                      else 'sequence')
     infl = influence(jack, freq, period)
     idx = int(np.argmin(np.abs(freq - freq0)))
@@ -511,16 +521,19 @@ def duck_test(data: RVData, period: float,
         name='robustness', status=status,
         summary=(f'the most influential '
                  f'{"point" if unit == "point" else "visit"} holds up '
-                 f'{100 * frac_top:.0f}% of the GLS power at the period'),
+                 f'{100 * frac_top:.0f}% of the GLS power at the period'
+                 + (f' ({data.n - clean.n} outlying exposures left out)'
+                    if clean is not data else '')),
         fraction=frac_top))
     report.details['jackknife'] = jack
     report.details['jackknife_freq'] = freq
+    report.details['jackknife_data'] = clean
     # -------------------------------------------------------------------------
     # 3. coherence in time
     # -------------------------------------------------------------------------
     coh = {}
     for split in ('halves', 'seasons'):
-        coh[split] = coherence(data, period, prob=prob, split=split)
+        coh[split] = coherence(clean, period, prob=cprob, split=split)
     main = coh['halves']
     pmin = min(val for val in (coh['halves']['p_vector'],
                                coh['seasons']['p_vector'])

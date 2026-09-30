@@ -232,7 +232,7 @@ def duck_pdf(report: Any, data: RVData, path: Optional[str] = None,
         freq = report.details.get('jackknife_freq')
         if jack is not None and freq is not None:
             keep(kplot.jackknife(
-                freq, jack, period, data,
+                freq, jack, period, report.details.get('jackknife_data', data),
                 unit='point' if unit == 'point' else 'sequence',
                 title=f'{target}: leave one visit out'), 'jackknife')
         for split, coh in report.details.get('coherence', {}).items():

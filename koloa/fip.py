@@ -286,6 +286,23 @@ class FIPResult:
         """
         return float(self.fip[np.argmin(np.abs(self.freq - 1.0 / period))])
 
+    def fip_containing(self, period: float, width: float) -> float:
+        """
+        The FIP of the best interval that holds a period: the lowest FIP of
+        the intervals centred within half a width of it (a fitted period
+        sits anywhere in its peak, not on the grid point of the best
+        interval, and the grid point nearest it can belong to a weaker one)
+
+        :param period: float, the period [days]
+        :param width: float, the width of the intervals, 1/T [1/day]
+
+        :return: float, the FIP
+        """
+        near = np.abs(self.freq - 1.0 / period) <= 0.5 * width
+        if not np.any(near):
+            return self.fip_at(period)
+        return float(np.min(self.fip[near]))
+
     def best(self) -> Dict[str, Any]:
         """
         The most significant peak

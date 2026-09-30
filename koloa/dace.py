@@ -127,6 +127,14 @@ def fetch(target: str, path: str, api_key: Optional[str] = None,
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.loads(response.read())
+    except urllib.error.HTTPError as err:
+        # DACE answers: it does not know the target under this name (404),
+        #   which is not a network that filters it
+        if err.code == 404:
+            raise RuntimeError(f'DACE does not know {target}') from err
+        raise RuntimeError(f'DACE could not be reached ({err}); some '
+                           f'networks are filtered: fetch from another '
+                           f'one, or give the CSV file') from err
     except (urllib.error.URLError, TimeoutError) as err:
         raise RuntimeError(f'DACE could not be reached ({err}); some '
                            f'networks are filtered: fetch from another '
