@@ -363,7 +363,8 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                       mcmc: bool = False, nsteps: int = 4000,
                       duck: bool = True, keys: Union[str, Sequence] = 'auto',
                       style: str = 'paper', seed: int = 1,
-                      latex: bool = True) -> Dict[str, Any]:
+                      latex: bool = True, tess: bool = True
+                      ) -> Dict[str, Any]:
     """
     Everything koloa can say about a star (see the module's docstring)
 
@@ -408,6 +409,9 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
     :param seed: int, the seed
     :param latex: bool, write the report as LaTeX (<star>_report.tex) and
                   compile it to PDF (with pdflatex, when there is one)
+    :param tess: bool, fetch the TESS light curves of the star (koloa.tess)
+                 and look for a photometric peak at each signal, its half,
+                 third or double (a check of the duck test, and a figure)
 
     :return: dict, every result (and outdir/<star>_report.txt,
              <star>_summary.json, <star>_report.tex and .pdf, and the
@@ -602,13 +606,24 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
         except Exception as err:  # the GP is a help, not a stop
             log(f'GP: {err}', 'warn')
     out['gp'] = gpres
-    # 8. the duck test
+    # 8. the duck test, with the TESS light curves of the star (fetched
+    #    once, for every signal)
+    lcs, phot = None, None
+    if tess:
+        from koloa import tess as ktess
+        try:
+            lcs = ktess.light_curves((ident or {}).get('tic') or star)
+            phot = ktess.periodicity(lcs, [orb['P'][0] for orb in orbits])
+        except Exception as err:  # no network, or an unknown star
+            log(f'TESS: {err}', 'warn')
+    out['tess'] = phot
     ducks = {}
     if duck:
         for orb in orbits:
             try:
                 report = duck_test(data, orb['P'][0], fipres=fip2, gp=False,
-                                   unit='both', quiet=True)
+                                   unit='both', quiet=True,
+                                   tess=lcs if lcs is not None else False)
                 ducks[f'{orb["P"][0]:.4f}'] = report
             except Exception as err:  # the test is a help, not a stop
                 log(f'duck test at {orb["P"][0]:.4f} d: {err}', 'warn')
@@ -688,6 +703,11 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                          f'duck_{ip}_coherence_{split}')
         except Exception as err:  # a figure is a help, not a stop
             log(f'duck test figures at {orb["P"][0]:.4f} d: {err}', 'warn')
+    if phot is not None and phot.get('sectors'):
+        keep(ktess.figure(phot, [orb['P'][0] for orb in orbits],
+                          title=f'{star}: TESS, the periodogram of each '
+                                f'sector (the signals and their harmonics '
+                                f'in red)'), 'tess')
     if indic:
         keep(_indicator_figure(indic, orbits, star,
                                (known.get('star') or {}).get('rotation')),
@@ -697,6 +717,12 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
     gpsum = _gp_summary(gpres)
     text = _report(star, data, ident, known, fip1, fip2, orbits, indic,
                    ducks, why, time.time() - start, sources) + _gp_text(gpsum)
+    if phot is not None:
+        text += ('\n\nTESS photometry (TIC ' + str(phot.get('tic')) + ')\n  '
+                 + phot['summary'] + '\n'
+                 + ''.join(f'  {chk["period"]:.4f} d: [{chk["status"]}] '
+                           f'{chk["summary"]}\n' for chk in phot['checks'])
+                 + '\n'.join('  ' + line for line in ktess.table(phot)))
     with open(os.path.join(outdir, f'{safe}_report.txt'), 'w') as handle:
         handle.write(text + '\n')
     out['report'] = text
@@ -713,6 +739,7 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
             inflation_second=info2.get('inflation', {}), orbits=orbits,
             indicators=indic, duck=ducks, outliers=why, figures=named,
             gp=gpsum, threshold=THRESHOLD, runtime=time.time() - start,
+            tess=phot,
             settings=dict(archive=archive, dace=dace, vizier=vizier,
                           literature=len(literature or []),
                           periods=', '.join(f'{per}' for per in periods or [])
@@ -720,7 +747,7 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                           nsweep=nsweep, nburn=nburn, pmin=pmin,
                           pmax=pmax or 'the baseline', mcmc=mcmc,
                           nsteps=nsteps if mcmc else '--', seed=seed,
-                          style=style),
+                          style=style, tess=tess),
             files=sorted(set(os.listdir(outdir)) | {
                 f'{safe}_summary.json', f'{safe}_report.tex',
                 f'{safe}_report.pdf'}))
@@ -734,6 +761,8 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                        ducks, why, figs)
     summary.update(sources=sources, gp=gpsum, report_tex=paths.get('tex'),
                    report_pdf=paths.get('pdf'))
+    if phot is not None:
+        summary['tess'] = ktess.light(phot)
     with open(os.path.join(outdir, f'{safe}_summary.json'), 'w') as handle:
         json.dump(summary, handle, indent=1, default=_json)
     log(f'done in {(time.time() - start) / 60:.1f} min: the report'

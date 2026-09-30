@@ -30,7 +30,7 @@ Created on 2026-09-27
 @author: artigau
 """
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 import numpy as np
 from scipy import stats
@@ -427,7 +427,8 @@ def duck_test(data: RVData, period: float,
               gp_kernel: str = 'sho', unit: str = 'both',
               fip_threshold: float = 0.01, quiet: bool = False,
               pdf: Optional[str] = None, target: Optional[str] = None,
-              archive: bool = True, outdir: Optional[str] = None
+              archive: bool = True, outdir: Optional[str] = None,
+              tess: Union[None, bool, Dict[str, Any]] = None
               ) -> DuckReport:
     """
     Every test of planethood koloa knows, at one period
@@ -454,6 +455,12 @@ def duck_test(data: RVData, period: float,
     :param outdir: str or None, a folder for everything: the PDF report
                    (there when pdf is None), each of its figures as a PDF,
                    the text of the test and a JSON summary
+    :param tess: None, bool or dict, whether the TESS light curves of the
+                 star (by target, or the name of the series) are asked for
+                 a photometric peak at the period, its half, third or double
+                 (koloa.tess; needs the network): None asks when a report is
+                 written (pdf or outdir) and archive is True; a dict is light
+                 curves already fetched (koloa.tess.light_curves)
 
     :return: DuckReport
     """
@@ -599,6 +606,28 @@ def duck_test(data: RVData, period: float,
         summary += ' (' + '; '.join(near_best) + ')'
     report.checks.append(dict(name='indicators', status=status,
                               summary=summary))
+    # -------------------------------------------------------------------------
+    # 5b. the photometry of TESS: spots put the rotation and its harmonics
+    #     in the brightness; a planet does not
+    # -------------------------------------------------------------------------
+    if tess is None:
+        tess = bool(pdf or outdir) and archive
+    if tess is not False:
+        from koloa import tess as ktess
+        try:
+            lcs = tess if isinstance(tess, dict) else \
+                ktess.light_curves(target or data.name)
+            phot = ktess.periodicity(lcs, [period])
+            chk = phot['checks'][0] if phot['checks'] else dict(
+                status='info', summary='no TESS light curve')
+            report.details['tess'] = phot
+            report.checks.append(dict(name='photometry',
+                                      status=chk['status'],
+                                      summary='TESS: ' + chk['summary']))
+        except Exception as err:  # no network, or an unknown star
+            report.checks.append(dict(
+                name='photometry', status='info',
+                summary=f'TESS could not be asked ({err})'))
     # -------------------------------------------------------------------------
     # 6. absorption by a GP whose period an indicator sets
     # -------------------------------------------------------------------------

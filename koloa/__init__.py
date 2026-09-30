@@ -21,6 +21,8 @@ or each visit, is good or an outlier, and that indicator is summed over
 - koloa.outliers      why an outlier is one: the header keywords, S/N,
                       error bars and indicators that are off for it
 - koloa.dace          public velocities of every instrument from DACE
+- koloa.tess          the TESS light curves of a star, and whether its
+                      brightness varies at a velocity period
 - koloa.plotting      figures coloured by reliability
 - koloa.simulate      series with known planets, activity and outliers
 - koloa.secular       the acceleration of a star with its errors, what it

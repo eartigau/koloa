@@ -82,6 +82,9 @@ def main(argv=None):
                              'known planets from VizieR')
     parser.add_argument('--no-latex', action='store_true',
                         help='no LaTeX/PDF report (detailed analysis)')
+    parser.add_argument('--no-tess', action='store_true',
+                        help='with --detailed: do not fetch the TESS light '
+                             'curves of the star')
     parser.add_argument('--periods', nargs='+', type=float, default=None,
                         help='more periods to test (detailed analysis: '
                              'candidates the archive does not list) [d]')
@@ -95,7 +98,8 @@ def main(argv=None):
                           nsweep=args.nsweep, nburn=args.nburn,
                           pmin=args.pmin, pmax=args.pmax, mcmc=args.mcmc,
                           duck=not args.no_duck, style=args.style,
-                          latex=not args.no_latex)
+                          latex=not args.no_latex,
+                          tess=not args.no_tess)
         return
     data = RVData.from_csv(args.filename, name=args.name, inst=args.inst,
                            sequence_gap=args.gap)

@@ -707,6 +707,46 @@ def _indicators(rep: Dict[str, Any], folder: str) -> str:
     return '\n'.join(out) + '\n'
 
 
+def _tess(rep: Dict[str, Any], folder: str) -> str:
+    """the TESS light curves: a photometric peak at a signal?"""
+    phot = rep.get('tess')
+    if phot is None:
+        return ''
+    out = ['\\section{The TESS photometry}']
+    if not phot.get('sectors'):
+        return out[0] + '\nTESS has no light curve of the star.\n\n'
+    out.append(f'TIC {phot["tic"]}: {pretty(phot["summary"])}. Spots rotating '
+               'with the star put its rotation period and its harmonics in '
+               'its brightness; a planet does not, unless it transits. A '
+               'sector lasts 27 days, so periods longer than half of it are '
+               'not tested, and the orbit of TESS (13.7\\,d) and its half '
+               'leave systematics.\n')
+    labels = {'pass': ('good', 'pass'), 'flag': ('flag', 'flag'),
+              'info': ('muted', 'note')}
+    out.append('\\begin{tabularx}{\\linewidth}{@{}rlL@{}}\n\\toprule\n'
+               'Signal [d] & & In the light curves \\\\\n\\midrule')
+    for chk in phot['checks']:
+        colour, word = labels.get(chk['status'], ('muted', 'note'))
+        out.append(f'{chk["period"]:.4f} & \\status{{{colour}}}{{{word}}} & '
+                   f'{pretty(chk["summary"])} \\\\')
+    out.append('\\bottomrule\n\\end{tabularx}\n')
+    out.append('\\begin{tabularx}{\\linewidth}{@{}rlrL@{}}\n\\toprule\n'
+               'Sector & Source & rms [ppt] & Strongest periods [d] (GLS '
+               'power, semi-amplitude [ppt]) \\\\\n\\midrule')
+    for sec in phot['sectors']:
+        peaks = ', '.join(f'{pk["period"]:.2f} ({pk["power"]:.2f}, '
+                          f'{pk["amplitude"]:.2f})' for pk in sec['peaks'])
+        out.append(f'{sec["sector"]} & {escape(sec["provenance"])} & '
+                   f'{sec["rms"]:.2f} & {peaks} \\\\')
+    out.append('\\bottomrule\n\\end{tabularx}\n')
+    out.append(_figure(rep['figures'].get('tess'), folder,
+                       'The periodogram of each TESS sector (grey; their '
+                       'median in blue), the signals and their harmonics in '
+                       'red, the orbit of TESS and its half shaded; below, '
+                       'the sector whose strongest peak is highest.', '0.7'))
+    return '\n'.join(out) + '\n'
+
+
 def _outliers(rep: Dict[str, Any], folder: str) -> str:
     """the outliers, and why each one is"""
     from koloa.outliers import NAMES, _describe, _unusual
@@ -828,7 +868,8 @@ def detailed_report(rep: Dict[str, Any], path: str) -> str:
              '\\tableofcontents\n\\bigskip\n', _star(rep),
              _data(rep, folder), _known(rep), _fip(rep, folder),
              _signals(rep, folder), _gp(rep, folder), _ducks(rep, folder),
-             _indicators(rep, folder), _outliers(rep, folder),
+             _indicators(rep, folder), _tess(rep, folder),
+             _outliers(rep, folder),
              _settings(rep, folder, skipped), '\\end{document}\n']
     with open(path, 'w', encoding='utf-8') as handle:
         handle.write('\n'.join(parts))

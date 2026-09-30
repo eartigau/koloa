@@ -15,7 +15,9 @@ The pages:
    period marked, the known planets dashed);
 3. robustness and coherence: the jackknife (which visit holds the peak
    up) and the amplitude and phase through the campaign;
-4. the activity indicators, at the period and its multiples;
+4. the activity indicators, at the period and its multiples, and the
+   TESS light curves of the star (koloa.tess): the periodogram of each
+   sector, with the period, its half, third and double marked;
 5. the NASA Exoplanet Archive: the known planets of the star, every
    published solution, and the fitted K against them.
 
@@ -260,6 +262,28 @@ def duck_pdf(report: Any, data: RVData, path: Optional[str] = None,
                                          f'low FIP there speaks against a '
                                          f'planet.', 'body')] + lines),
                  'indicators')
+        # 4b. the photometry of TESS
+        phot = report.details.get('tess')
+        if phot is not None and phot.get('sectors'):
+            from koloa import tess as ktess
+            keep(ktess.figure(phot, [period],
+                              title=f'{target}: TESS, the periodogram of '
+                                    f'each sector'), 'tess')
+            chk = phot['checks'][0] if phot['checks'] else {}
+            keep(_text_page('TESS photometry', [
+                (f'TIC {phot["tic"]}: {phot["summary"]}.', 'body'),
+                (f'At P = {period:.4f} d: {chk.get("summary", "")}.',
+                 {'flag': 'outlier', 'pass': 'koloa'}.get(
+                     chk.get('status'), 'body')),
+                ('Spots rotating with the star put its rotation period and '
+                 'its harmonics in the brightness; a planet does not, '
+                 'unless it transits. A sector lasts 27 days, so periods '
+                 'longer than half of it are not tested, and the orbit of '
+                 'TESS (13.7 d) and its half leave systematics.', 'body'),
+                ('Sector, source, scatter of the 30-minute bins, strongest '
+                 'periods (GLS power, semi-amplitude)', 'head')]
+                + [(line, 'mono') for line in ktess.table(phot)]),
+                 'tess_sectors')
         # 5. the archive, in full
         if known is not None:
             blocks = [(f'Host: {known.get("host")}; star: '
@@ -283,6 +307,9 @@ def duck_pdf(report: Any, data: RVData, path: Optional[str] = None,
         summary = dict(target=target, period=period, verdict=report.verdict,
                        checks=report.checks, orbit=orbit, archive=known,
                        archive_note=archive_note, report=os.path.basename(path))
+        if report.details.get('tess') is not None:
+            from koloa.tess import light
+            summary['tess'] = light(report.details['tess'])
         with open(os.path.join(outdir, f'{safe}_duck.json'), 'w') as handle:
             json.dump(summary, handle, indent=1, default=_json)
         log(f'duck test: the report, its figures, text and summary in '

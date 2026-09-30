@@ -131,7 +131,10 @@ print(report.text())
 report = koloa.duck_test(data, period=fip.best()['period'], fipres=fip,
                          pdf='duck.pdf', target='GJ 687')
 # or everything in a folder: the PDF, each figure as a PDF of its own, the
-#   text of the test and a JSON summary (checks, orbit, archive)
+#   text of the test and a JSON summary (checks, orbit, archive); with a
+#   report, the TESS light curves of the star are fetched too and searched
+#   for a photometric peak at P, P/2, P/3 or 2P (koloa.tess; tess=False
+#   to skip)
 report = koloa.duck_test(data, period=fip.best()['period'], fipres=fip,
                          outdir='duck_GJ687', target='GJ 687')
 ```
