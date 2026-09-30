@@ -81,6 +81,30 @@ from koloa.utils import blas_threads
 # =============================================================================
 #: a signal of the FIP is detected below this
 THRESHOLD = 0.01
+
+
+def _decisive(peak: Dict[str, Any]) -> float:
+    """planet or no planet: the FIP of a peak's period OR any of its
+    aliases (the FIP of the period alone for a FIP without a family)"""
+    fam = peak.get('family_fip')
+    return float(peak['fip'] if fam is None else fam)
+
+
+def _found(res) -> List[float]:
+    """the periods whose family FIP is below THRESHOLD, the most probable
+    alias of each family only (an alias of a period already found is the
+    same signal, not a second planet)"""
+    from koloa.aliases import same_family
+    out: List[float] = []
+    # the width of an interval, 1/T (set by _fip)
+    width = res.settings.get('width', 1.0 / 365.25)
+    for peak in sorted(res.peaks, key=lambda pk: pk['fip']):
+        if _decisive(peak) >= THRESHOLD:
+            continue
+        if any(same_family(per, peak['period'], width) for per in out):
+            continue
+        out.append(float(peak['period']))
+    return out
 #: the indicators looked at, in this order, when the series has them
 INDICATORS = ('DTEMP3500', 'DTEMP', 'fwhm', 'd2v', 'dW', 'contrast', 'CRX',
               'bis', 'rhk', 'smw', 'halpha')
@@ -212,11 +236,13 @@ def _fip(data, fit, kmax, nsweep, nburn, seed, label):
     with blas_threads(1):
         res = oafip(inflated, kmax=kmax, outliers='both', nsweep=nsweep,
                     nburn=nburn, nchains=2, seed=seed, progress=False)
-    found = [pk for pk in res.peaks if pk['fip'] < THRESHOLD]
+    res.settings['width'] = 1 / inflated.baseline
+    found = [pk for pk in res.peaks if _decisive(pk) < THRESHOLD]
     log(f'{label}: P(k) = ' + ', '.join(f'{val:.2f}' for val in res.pk)
-        + '; FIP < 1 %: ' + (', '.join(f'{pk["period"]:.4f} d '
-                                       f'({pk["fip"]:.1e})' for pk in found)
-                             or 'none'), 'value')
+        + '; FIP (the period or any alias) < 1 %: '
+        + (', '.join(f'{pk["period"]:.4f} d ({_decisive(pk):.1e}; alone '
+                     f'{pk["fip"]:.1e})' for pk in found) or 'none'),
+        'value')
     return res, info
 
 
@@ -363,8 +389,8 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                       mcmc: bool = False, nsteps: int = 4000,
                       duck: bool = True, keys: Union[str, Sequence] = 'auto',
                       style: str = 'paper', seed: int = 1,
-                      latex: bool = True, tess: bool = True
-                      ) -> Dict[str, Any]:
+                      latex: bool = True, tess: bool = True,
+                      site: Optional[str] = None) -> Dict[str, Any]:
     """
     Everything koloa can say about a star (see the module's docstring)
 
@@ -412,6 +438,14 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
     :param tess: bool, fetch the TESS light curves of the star (koloa.tess)
                  and look for a photometric peak at each signal, its half,
                  third or double (a check of the duck test, and a figure)
+    :param site: str or None, the observatory of the plans that lift an
+                 alias (a key of koloa.aliases.SITES; from the instruments
+                 when None)
+
+    Planet or no planet is decided on the FIP of each period OR any of its
+    aliases; which alias it is, is reported apart (the velocities folded at
+    each, their share of the probability, and the nights to observe to
+    lift an ambiguous one).
 
     :return: dict, every result (and outdir/<star>_report.txt,
              <star>_summary.json, <star>_report.tex and .pdf, and the
@@ -529,8 +563,9 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                         seq_jitter=seq_jitter).fit(nstart=2, quiet=True)
     fip1, info1 = _fip(data, noise, kmax, nsweep, nburn, seed,
                        'FIP, noise without planets')
-    found = sorted(pk['period'] for pk in fip1.peaks
-                   if pk['fip'] < THRESHOLD)
+    # planet or no planet: the period or any of its aliases; one period
+    #   per family of aliases
+    found = sorted(_found(fip1))
     # 5. the signals, the known planets and the periods given, fitted
     #   together (a known planet the FIP does not find is tested all the
     #   same), against the known planets
@@ -582,6 +617,8 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
     for orb in orbits:
         # the FIP of the best interval that holds each signal
         orb['fip'] = fip2.fip_containing(orb['P'][0], 1 / data.baseline)
+        orb['family_fip'] = fip2.family_containing(orb['P'][0],
+                                                   1 / data.baseline)
     out.update(fit=fit, orbits=orbits, fip_first=fip1, fip_second=fip2)
     # 7. the activity indicators, and the rotation of the star
     indic = _indicators(data, pmin, pmax)
@@ -623,7 +660,9 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
             try:
                 report = duck_test(data, orb['P'][0], fipres=fip2, gp=False,
                                    unit='both', quiet=True,
-                                   tess=lcs if lcs is not None else False)
+                                   tess=lcs if lcs is not None else False,
+                                   aliases=True, target=star,
+                                   archive=archive, site=site)
                 ducks[f'{orb["P"][0]:.4f}'] = report
             except Exception as err:  # the test is a help, not a stop
                 log(f'duck test at {orb["P"][0]:.4f} d: {err}', 'warn')
@@ -701,6 +740,19 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                                          f'{orb["P"][0]:.3f} d: coherent? '
                                          f'(by {split})'),
                          f'duck_{ip}_coherence_{split}')
+            # the velocities folded at each alias, and the plan
+            from koloa import aliases as kal
+            if report.details.get('alias_solutions'):
+                keep(kal.figure(report.details['alias_solutions'],
+                                title=f'{star}, {orb["P"][0]:.3f} d: the '
+                                      f'period and its aliases'),
+                     f'duck_{ip}_aliases')
+            pln = report.details.get('alias_plan')
+            if pln and pln.get('nights'):
+                keep(kal.plan_figure(pln, report.details['alias_solutions'],
+                                     title=f'{star}: when to observe to '
+                                           f'lift the alias'),
+                     f'duck_{ip}_plan')
         except Exception as err:  # a figure is a help, not a stop
             log(f'duck test figures at {orb["P"][0]:.4f} d: {err}', 'warn')
     if phot is not None and phot.get('sectors'):
@@ -850,10 +902,13 @@ def _report(star, data, ident, known, fip1, fip2, orbits, indic, ducks, why,
         lines += ['', label, '  P(k) = ' + ', '.join(f'{val:.2f}'
                                                      for val in res.pk)]
         for pk in res.peaks:
-            flag = 'DETECTED' if pk['fip'] < THRESHOLD else ''
-            lines.append(f'  {pk["period"]:12.4f} d  FIP {pk["fip"]:.2e}  '
-                         f'{flag}')
-    lines += ['', 'Signals']
+            flag = 'DETECTED' if _decisive(pk) < THRESHOLD else ''
+            fam = pk.get('family_fip')
+            lines.append(f'  {pk["period"]:12.4f} d  FIP {pk["fip"]:.2e}'
+                         + (f'  FIP (the period or any alias) {fam:.2e}'
+                            if fam is not None else '') + f'  {flag}')
+    lines += ['', 'Signals (planet or no planet: the FIP of the period or '
+                  'any of its aliases)']
     if not orbits:
         lines.append('  none with FIP < 1 %')
     for orb in orbits:
@@ -878,9 +933,21 @@ def _report(star, data, ident, known, fip1, fip2, orbits, indic, ducks, why,
         if orb.get('rotation'):
             lines.append('    ROTATION at this period: '
                          + '; '.join(orb['rotation']))
+        if orb.get('family_fip') is not None:
+            lines.append(f'    FIP (the period or any alias) '
+                         f'{orb["family_fip"]:.2e}; the period alone '
+                         f'{orb["fip"]:.2e}')
         report = ducks.get(f'{orb["P"][0]:.4f}')
         if report is not None:
             lines.append(f'    duck test: {report.verdict}')
+            from koloa.aliases import describe, plan_text
+            if report.details.get('alias_solutions'):
+                lines += ['    the period and its aliases:'] + [
+                    '      ' + line for line in
+                    describe(report.details['alias_solutions'])]
+            if report.details.get('alias_plan'):
+                lines += ['    ' + line for line in
+                          plan_text(report.details['alias_plan'])]
     lines += ['', 'Activity indicators (strongest peaks of their outlier-'
                   'aware periodograms)']
     for name, res in indic.items():
@@ -906,7 +973,19 @@ def _summary(star, data, ident, known, fip1, fip2, orbits, indic, ducks,
         fip_first=fipsum(fip1), fip_second=fipsum(fip2), orbits=orbits,
         indicators={name: res['peaks'] for name, res in indic.items()},
         duck={key: report.verdict for key, report in ducks.items()},
+        aliases={key: dict(
+            family_fip=report.details.get('family_fip'),
+            odds=report.details.get('alias_odds'),
+            solutions=_light_aliases(report.details.get('alias_solutions')),
+            plan=report.details.get('alias_plan'))
+            for key, report in ducks.items()},
         outliers=why.to_dict(), figures=figs)
+
+
+def _light_aliases(sols):
+    """the alias solutions without their fits"""
+    from koloa.aliases import light
+    return light(sols) if sols else None
 
 
 # =============================================================================

@@ -107,6 +107,7 @@ class PeriodGrid:
         logp = -np.log(self.freq)
         self.logprior = logp - np.logaddexp.reduce(logp)
         self._trig = None
+        self._fam = None
 
     @property
     def size(self) -> int:
@@ -139,6 +140,85 @@ class PeriodGrid:
         """
         trig_cs = self.trig()[0]
         return trig_cs[:, [idx, idx + self.size]]
+
+    def family(self) -> Dict[str, np.ndarray]:
+        """
+        The alias family of every grid frequency, as segments of the grid
+
+        The family of f is f and its aliases |f - fs| and f + fs for every
+        sampling frequency fs of ALIAS_FREQUENCIES (1 day, 1 year, 1 month):
+        up to seven intervals of the grid, merged where they overlap. What
+        lies outside them is a set of gaps whose bounds depend on the grid
+        only, so they are computed once.
+
+        :return: dict, centre (G x M grid indices), inside (G x M, the alias
+                 is on the grid), and the gaps: start, end (G x M+1) and ok
+                 (the gap exists)
+        """
+        if self._fam is None:
+            from koloa.periodogram import ALIAS_FREQUENCIES
+            size, hbin = self.size, self.halfbin
+            members = [self.freq]
+            for fsamp in ALIAS_FREQUENCIES.values():
+                members += [np.abs(self.freq - fsamp), self.freq + fsamp]
+            members = np.array(members).T
+            idx = np.clip(np.searchsorted(self.freq, members), 1, size - 1)
+            idx = np.where(np.abs(self.freq[idx - 1] - members)
+                           < np.abs(self.freq[idx] - members), idx - 1, idx)
+            half = 0.5 * np.median(np.diff(self.freq)) if size > 1 else 0.0
+            inside = ((members >= self.freq[0] - half)
+                      & (members <= self.freq[-1] + half))
+            start = np.where(inside, np.clip(idx - hbin, 0, size - 1), size)
+            end = np.where(inside, np.clip(idx + hbin, 0, size - 1), -1)
+            order = np.argsort(start, axis=1, kind='stable')
+            start = np.take_along_axis(start, order, axis=1)
+            end = np.take_along_axis(end, order, axis=1)
+            nvalid = inside.sum(axis=1)
+            run = np.maximum.accumulate(end, axis=1)
+            nrow = len(self.freq)
+            gstart = np.hstack([np.zeros((nrow, 1), int), run + 1])
+            gend = np.hstack([start - 1, np.full((nrow, 1), size - 1)])
+            # the gaps up to the one after the last interval
+            jcol = np.arange(members.shape[1] + 1)[None, :]
+            gend = np.where(jcol == nvalid[:, None], size - 1, gend)
+            self._fam = dict(centre=idx, inside=inside,
+                             start=np.clip(gstart, 0, size),
+                             end=np.clip(gend, -1, size - 1),
+                             ok=jcol <= nvalid[:, None])
+        return self._fam
+
+    def bin_family(self, pon: np.ndarray, poff: float, total: float,
+                   covered: Sequence[int] = ()) -> np.ndarray:
+        """
+        The FIP of the alias family of every grid frequency, given one
+        slot's conditional: the probability that the slot is off or outside
+        every interval of the family (the sum of the gaps between them), and
+        zero if another active slot is already in one of them
+
+        :param pon: np.ndarray, (G) the slot's unnormalised probability at
+                    each grid point
+        :param poff: float, its unnormalised probability of being off
+        :param total: float, the normalisation
+        :param covered: list of int, the grid indices of the other active
+                        slots
+
+        :return: np.ndarray, (G) the FIP of each family
+        """
+        fam = self.family()
+        size = len(pon)
+        cum = np.concatenate([[0.0], np.cumsum(pon)])
+        rcum = np.concatenate([np.cumsum(pon[::-1])[::-1], [0.0]])
+        gstart, gend = fam['start'], fam['end']
+        # a gap that runs to the end is summed from the right (precision)
+        seg = np.where(gend >= size - 1, rcum[gstart],
+                       cum[gend + 1] - cum[gstart])
+        use = fam['ok'] & (gend >= gstart)
+        out = (poff + np.sum(np.where(use, seg, 0.0), axis=1)) / total
+        for gidx in covered:
+            hit = np.any(fam['inside'] & (np.abs(fam['centre'] - gidx)
+                                          <= self.halfbin), axis=1)
+            out[hit] = 0.0
+        return out
 
     def bin_fip(self, pon: np.ndarray, poff: float, total: float,
                 covered: Sequence[int] = ()) -> np.ndarray:
@@ -258,6 +338,10 @@ class FIPResult:
     chain_fip: np.ndarray = None
     rhat: Dict[str, float] = field(default_factory=dict)
     runtime: float = 0.0
+    #: the FIP of the alias family of each frequency: no signal at it NOR
+    #:  at any of its aliases (1 day, 1 year, 1 month); whether there is a
+    #:  planet, whichever alias it is (None for a FIP without a sampler)
+    family: np.ndarray = None
 
     @property
     def period(self) -> np.ndarray:
@@ -303,6 +387,60 @@ class FIPResult:
             return self.fip_at(period)
         return float(np.min(self.fip[near]))
 
+    def family_containing(self, period: float, width: float
+                          ) -> Optional[float]:
+        """
+        The FIP of the period OR any of its aliases (1 day, 1 year, 1
+        month): the probability that there is no signal at any of them. It
+        says whether there is a planet, whichever alias it is; which alias
+        is alias_odds()
+
+        :param period: float, the period [days]
+        :param width: float, the width of the intervals, 1/T [1/day]
+
+        :return: float, or None when the FIP has no family
+        """
+        if self.family is None:
+            return None
+        near = np.abs(self.freq - 1.0 / period) <= 0.5 * width
+        if not np.any(near):
+            near = np.argmin(np.abs(self.freq - 1.0 / period))
+        return float(np.min(self.family[near]))
+
+    def alias_odds(self, period: float, width: float
+                   ) -> List[Dict[str, Any]]:
+        """
+        The period and each of its aliases on the grid, with the share of
+        the probability that each holds: its true inclusion probability
+        over the sum of those of the family (they are almost exclusive: a
+        signal is at one alias or another). An alias within 1.5 widths of
+        the period (the yearly one, with a baseline of about a year) is
+        part of its peak, not an alternative, and is left out
+
+        :param period: float, the period [days]
+        :param width: float, the width of the intervals, 1/T [1/day]
+
+        :return: list of dict, name ('P' for the period itself, else the
+                 sampling of the alias, e.g. '1 day'), period, fip, tip,
+                 share; the most probable first
+        """
+        from koloa.periodogram import aliases
+        fmin, fmax = float(self.freq[0]), float(self.freq[-1])
+        members = [dict(name='P', freq=1.0 / period)]
+        members += [dict(name=al['name'], freq=al['freq'])
+                    for al in aliases(1.0 / period, fmin, fmax)
+                    if abs(al['freq'] - 1.0 / period) > 1.5 * width]
+        out = []
+        for mem in members:
+            fipv = self.fip_containing(1.0 / mem['freq'], width)
+            out.append(dict(name=mem['name'], period=1.0 / mem['freq'],
+                            fip=fipv, tip=max(1.0 - fipv, 0.0)))
+        total = sum(mem['tip'] for mem in out)
+        for mem in out:
+            mem['share'] = mem['tip'] / total if total > 0 else np.nan
+        out.sort(key=lambda mem: -mem['tip'])
+        return out
+
     def best(self) -> Dict[str, Any]:
         """
         The most significant peak
@@ -323,9 +461,12 @@ class FIPResult:
                             for it, val in enumerate(self.pk))
             lines.append(f'  number of signals: {pks}')
         for peak in self.peaks[:5]:
+            fam = peak.get('family_fip')
             lines.append(f'  P = {peak["period"]:.4f} d  FIP = '
                          f'{peak["fip"]:.2e}  window = '
-                         f'{peak["window"]:.3f}')
+                         f'{peak["window"]:.3f}'
+                         + (f'  FIP of P or an alias = {fam:.2e}'
+                            if fam is not None else ''))
         if self.outlier_prob is not None:
             lines.append(f'  expected outlier points ({self.unit} model): '
                          f'{self.settings.get("expected_outliers", 0):.1f}')
@@ -378,6 +519,7 @@ class _Chain:
         size = grid.size
         self.fip_acc = np.zeros(size)
         self.dens_acc = np.zeros(size)
+        self.fam_acc = np.zeros(size)
         self.nacc = 0
         self.qprob_acc = np.zeros(self.npts)
         self.qseq_acc = np.zeros(self.nblock)
@@ -486,6 +628,8 @@ class _Chain:
             if record:
                 covered = [self.gidx[ii] for ii in others]
                 self.fip_acc += self.grid.bin_fip(pon, woff, total, covered)
+                self.fam_acc += self.grid.bin_family(pon, woff, total,
+                                                     covered)
                 self.dens_acc += pon / total
                 self.nacc += 1
             # the draw: off, or a frequency, then a rung of the tau ladder
@@ -739,6 +883,7 @@ class _Chain:
     def output(self) -> Dict[str, Any]:
         """Everything the chain measured"""
         return dict(fip_acc=self.fip_acc, dens_acc=self.dens_acc,
+                    fam_acc=self.fam_acc,
                     nacc=self.nacc, qprob_acc=self.qprob_acc,
                     qseq_acc=self.qseq_acc, nq=self.nq,
                     records={key: np.array(val)
@@ -944,6 +1089,7 @@ def _combine(outs: List[Dict[str, Any]], data: RVData, grid: PeriodGrid,
     nacc = sum(out['nacc'] for out in outs)
     fip = sum(out['fip_acc'] for out in outs) / nacc
     density = sum(out['dens_acc'] for out in outs) / nacc
+    family = sum(out['fam_acc'] for out in outs) / nacc
     chain_fip = np.array([out['fip_acc'] / out['nacc'] for out in outs])
     records = {key: np.concatenate([out['records'][key] for out in outs])
                for key in outs[0]['records']}
@@ -970,10 +1116,13 @@ def _combine(outs: List[Dict[str, Any]], data: RVData, grid: PeriodGrid,
     result = FIPResult(freq=grid.freq, fip=fip, density=density,
                        method=method, pk=pk, outlier_prob=outlier_prob,
                        unit=cfg['unit'], chains=records, settings=settings,
-                       chain_fip=chain_fip, rhat=rhat)
+                       chain_fip=chain_fip, rhat=rhat, family=family)
     slots = np.vstack([out['slot_records'] for out in outs])
     result.peaks = describe_peaks(data, grid, fip, npeaks, slots,
                                   chain_fip=chain_fip)
+    for peak in result.peaks:
+        peak['family_fip'] = result.family_containing(peak['period'],
+                                                      1 / data.baseline)
     return result
 
 

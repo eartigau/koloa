@@ -266,8 +266,13 @@ def _summary(rep: Dict[str, Any]) -> str:
                         f'{sci(best["fip"])}).' if best else ''))
     for orb in rep['orbits']:
         per = orb['P'][0]
+        fam = fip2.family_containing(per, 1 / data.baseline)
         line = (f'\\textbf{{{per:.4f}\\,d}}: K = {pm(orb["K"])}\\,m/s, FIP '
-                f'{sci(fip2.fip_containing(per, 1 / data.baseline))}')
+                + (f'{sci(fam)} (the period or any of its aliases; the '
+                   f'period alone '
+                   f'{sci(fip2.fip_containing(per, 1 / data.baseline))})'
+                   if fam is not None else
+                   f'{sci(fip2.fip_containing(per, 1 / data.baseline))}'))
         if 'known' in orb:
             line += f'; {escape(orb["known"]["name"])}'
             if orb.get('comparisons'):
@@ -484,12 +489,17 @@ def _fip(rep: Dict[str, Any], folder: str) -> str:
         out.append(f'\\subsection{{{title}}}')
         out.append('P(k), the probability of k signals, from k = 0: '
                    + ', '.join(f'{val:.2f}' for val in res.pk) + '.\n')
-        out.append('\\begin{tabular}{@{}rrrrl@{}}\n\\toprule\nPeriod [d] & '
-                   'FIP & K [m/s] & window & best alias (FIP) \\\\\n'
-                   '\\midrule')
+        out.append('Planet or no planet is decided on the FIP of the period '
+                   'OR any of its aliases (1 day, 1 year, 1 month): the '
+                   'probability that none of them holds a signal.\n')
+        out.append('\\begin{tabular}{@{}rrrrrl@{}}\n\\toprule\nPeriod [d] & '
+                   'FIP (P or alias) & FIP (P) & K [m/s] & window & best '
+                   'alias (FIP) \\\\\n\\midrule')
         for peak in res.peaks:
+            fam = peak.get('family_fip')
+            decisive = peak['fip'] if fam is None else fam
             mark = ('\\status{good}{detected}'
-                    if peak['fip'] < rep['threshold'] else '')
+                    if decisive < rep['threshold'] else '')
             amp = '--'
             if peak.get('amplitude'):
                 # the 50th, 16th and 84th percentiles of the posterior
@@ -500,7 +510,9 @@ def _fip(rep: Dict[str, Any], folder: str) -> str:
                 best = min(peak['aliases'], key=lambda item: item['fip'])
                 alias = (f'{best["period"]:.3f}\\,d, {escape(best["name"])} '
                          f'({sci(best["fip"])})')
-            out.append(f'{peak["period"]:.4f} & {sci(peak["fip"])} & {amp} & '
+            out.append(f'{peak["period"]:.4f} & '
+                       f'{sci(fam) if fam is not None else "--"} & '
+                       f'{sci(peak["fip"])} & {amp} & '
                        f'{peak.get("window", np.nan):.2f} & {alias} {mark} '
                        f'\\\\')
         out.append('\\bottomrule\n\\end{tabular}\n')
@@ -527,8 +539,8 @@ def _signals(rep: Dict[str, Any], folder: str) -> str:
                + ('; Section~\\ref{sec:gp} has the fit with one'
                   if rep.get('gp') else '') + ').\n')
     out.append('\\begin{tabularx}{\\linewidth}{@{}rrrrrlL@{}}\n\\toprule\n'
-               'P [d] & K [m/s] & e & m sin i [M$_\\oplus$] & FIP & from & '
-               'known planet \\\\\n\\midrule')
+               'P [d] & K [m/s] & e & m sin i [M$_\\oplus$] & FIP (P or '
+               'alias) & from & known planet \\\\\n\\midrule')
     for orb in orbits:
         per = orb['P'][0]
         match = '--'
@@ -539,7 +551,11 @@ def _signals(rep: Dict[str, Any], folder: str) -> str:
                 match += (f': K {sol["K"]} ({escape(sol["reference"])}, '
                           f'{sol["z"]:+.1f}$\\sigma$)')
         origin = escape(orb.get('origin', 'FIP').split(' ')[0])
-        fipv = rep['fip_second'].fip_containing(per, 1 / rep['data'].baseline)
+        fipv = rep['fip_second'].family_containing(per,
+                                                   1 / rep['data'].baseline)
+        if fipv is None:
+            fipv = rep['fip_second'].fip_containing(per,
+                                                    1 / rep['data'].baseline)
         out.append(f'{pm(orb["P"], ".4f")} & {pm(orb["K"])} & '
                    f'{pm(orb["e"])} & {pm(orb.get("msini"))} & '
                    f'{sci(fipv)} & {origin} & {match} \\\\')
@@ -678,6 +694,46 @@ def _ducks(rep: Dict[str, Any], folder: str) -> str:
                 rep['figures'].get(f'duck_{ip}_coherence_{split}'), folder,
                 f'Is the signal at {orb["P"][0]:.4f}\\,d coherent? Its '
                 f'amplitude and phase by {split}.', '0.3'))
+        out.append(_aliases(report, rep, ip, folder))
+    return '\n'.join(out) + '\n'
+
+
+def _aliases(report: Any, rep: Dict[str, Any], ip: int, folder: str) -> str:
+    """which alias: the share of each, the folds, and the plan"""
+    from koloa.aliases import label, plan_text
+    sols = report.details.get('alias_solutions')
+    if not sols:
+        return ''
+    out = ['\\paragraph{Which period?} Planet or no planet is decided on the '
+           'period or any of its aliases (FIP '
+           f'{sci(report.details.get("family_fip"))}); which of them it is: '
+           'the share of the probability each holds, and the log posterior '
+           'of an orbit fitted at each.\n',
+           '\\begin{tabular}{@{}rlrrr@{}}\n\\toprule\nP [d] & & share & '
+           'K [m/s] & $\\Delta\\ln$ post \\\\\n\\midrule']
+    for sol in sols:
+        share = (f'{100 * sol["share"]:.2f}\\,\\%'
+                 if np.isfinite(sol['share']) else '--')
+        amp = (sol['K'][0], sol['K'][1], sol['K'][2])
+        out.append(f'{sol["period"]:.4f} & {escape(label(sol["name"]))} & '
+                   f'{share} & {pm(amp)} & {sol["dlogpost"]:+.1f} \\\\')
+    out.append('\\bottomrule\n\\end{tabular}\n')
+    out.append(_figure(rep['figures'].get(f'duck_{ip}_aliases'), folder,
+                       'The velocities folded at the period and at its '
+                       'aliases, each with its share of the probability.',
+                       '0.3'))
+    pln = report.details.get('alias_plan')
+    if pln:
+        lines = plan_text(pln)
+        out.append('\\paragraph{Lifting the alias} ' + pretty(lines[0])
+                   + '\n\\begin{itemize}')
+        out += [f'\\item {pretty(line.strip())}' for line in lines[1:]]
+        out.append('\\end{itemize}')
+        out.append(_figure(rep['figures'].get(f'duck_{ip}_plan'), folder,
+                           'The velocities the two solutions predict (one '
+                           'sigma shaded) over the nights the star can be '
+                           'observed, and what one visit and a pair in each '
+                           'night would tell them apart by.', '0.5'))
     return '\n'.join(out) + '\n'
 
 

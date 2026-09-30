@@ -10,7 +10,12 @@ them, and what the NASA Exoplanet Archive knows of the star.
 
 The pages:
 1. the verdict and every check (status, summary, its numbers), the orbit at
-   the period, and whether a known planet has that period;
+   the period, and whether a known planet has that period; planet or no
+   planet is decided on the FIP of the period OR any of its aliases, and
+   which alias it is comes apart: the velocities folded at the period and
+   at each alias that holds some of the probability, with its share, and
+   when the period is ambiguous, the nights that would lift the alias
+   (koloa.aliases);
 2. the signal: the orbit folded at the period, the FIP periodogram (the
    period marked, the known planets dashed);
 3. robustness and coherence: the jackknife (which visit holds the peak
@@ -216,6 +221,35 @@ def duck_pdf(report: Any, data: RVData, path: Optional[str] = None,
         else:
             blocks.append((archive_note, 'body'))
         keep(_text_page('Duck test', blocks), 'summary')
+        # 1b. which alias: the folds, their shares, and the plan
+        sols = report.details.get('alias_solutions')
+        if sols:
+            from koloa import aliases as kal
+            keep(kal.figure(sols, title=f'{target}: the velocities folded '
+                                        f'at the period and its aliases'),
+                 'aliases')
+            fam = report.details.get('family_fip')
+            blocks = []
+            if fam is not None:
+                blocks.append((f'Planet or no planet is decided on the '
+                               f'period OR any of its aliases: FIP = '
+                               f'{fam:.2e}, the probability that none of '
+                               f'them holds a signal. Which of them it is: '
+                               f'the share of the probability each holds '
+                               f'(the FIP), and the log posterior of an '
+                               f'orbit fitted at each.', 'body'))
+            blocks += [('The period and its aliases', 'head')]
+            blocks += [(line, 'mono') for line in kal.describe(sols)]
+            pln = report.details.get('alias_plan')
+            if pln:
+                blocks += [('Lifting the alias', 'head')]
+                blocks += [(line, 'mono' if line.startswith('  ') else 'body')
+                           for line in kal.plan_text(pln)]
+            keep(_text_page('Which period?', blocks), 'aliases_text')
+            if pln and pln.get('nights'):
+                keep(kal.plan_figure(pln, sols, title=f'{target}: when to '
+                                                      f'observe to lift the '
+                                                      f'alias'), 'plan')
         # 2. the signal
         if fit is not None:
             keep(kplot.phase(fit, level='point',
@@ -310,6 +344,12 @@ def duck_pdf(report: Any, data: RVData, path: Optional[str] = None,
         if report.details.get('tess') is not None:
             from koloa.tess import light
             summary['tess'] = light(report.details['tess'])
+        summary['family_fip'] = report.details.get('family_fip')
+        summary['alias_odds'] = report.details.get('alias_odds')
+        if report.details.get('alias_solutions'):
+            from koloa.aliases import light as alight
+            summary['aliases'] = alight(report.details['alias_solutions'])
+        summary['alias_plan'] = report.details.get('alias_plan')
         with open(os.path.join(outdir, f'{safe}_duck.json'), 'w') as handle:
             json.dump(summary, handle, indent=1, default=_json)
         log(f'duck test: the report, its figures, text and summary in '

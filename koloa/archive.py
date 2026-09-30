@@ -78,7 +78,8 @@ def resolve(name: str, timeout: float = 30.0) -> Dict[str, Any]:
 
     :return: dict, name (as given), main (SIMBAD's main identifier), aliases
              (every identifier), and the ones koloa uses: gaia_dr3, tic,
-             hip, hd, gj (None when SIMBAD has none)
+             hip, hd, gj (None when SIMBAD has none), and ra, dec (J2000,
+             degrees)
     """
     url = f'{SESAME}?{urllib.parse.quote(name)}'
     with urllib.request.urlopen(url, timeout=timeout) as resp:
@@ -92,10 +93,15 @@ def resolve(name: str, timeout: float = 30.0) -> Dict[str, Any]:
     def first(prefix):
         return next((alias for alias in aliases
                      if alias.startswith(prefix + ' ')), None)
+    # the position (J2000, degrees), for planning observations
+    radeg = re.search(r'<jradeg>(.*?)</jradeg>', text)
+    dedeg = re.search(r'<jdedeg>(.*?)</jdedeg>', text)
     return dict(name=name, main=' '.join(main.group(1).split()),
                 aliases=aliases, gaia_dr3=first('Gaia DR3'),
                 tic=first('TIC'), hip=first('HIP'), hd=first('HD'),
-                gj=first('GJ'))
+                gj=first('GJ'),
+                ra=float(radeg.group(1)) if radeg else None,
+                dec=float(dedeg.group(1)) if dedeg else None)
 
 
 def _query(query: str, timeout: float = 60.0) -> List[Dict[str, Any]]:

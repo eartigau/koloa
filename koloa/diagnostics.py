@@ -415,6 +415,13 @@ class DuckReport:
         for ch in self.checks:
             lines.append(f'[{mark[ch["status"]]}] {ch["name"]}: '
                          f'{ch["summary"]}')
+        sols = self.details.get('alias_solutions')
+        if sols:
+            from koloa.aliases import describe, plan_text
+            lines += ['', 'The period and its aliases (an orbit fitted at '
+                          'each):'] + ['  ' + line for line in describe(sols)]
+            if self.details.get('alias_plan'):
+                lines += [''] + plan_text(self.details['alias_plan'])
         lines += ['', f'VERDICT: {self.verdict}']
         return '\n'.join(lines)
 
@@ -428,7 +435,8 @@ def duck_test(data: RVData, period: float,
               fip_threshold: float = 0.01, quiet: bool = False,
               pdf: Optional[str] = None, target: Optional[str] = None,
               archive: bool = True, outdir: Optional[str] = None,
-              tess: Union[None, bool, Dict[str, Any]] = None
+              tess: Union[None, bool, Dict[str, Any]] = None,
+              aliases: Optional[bool] = None, site: Optional[str] = None
               ) -> DuckReport:
     """
     Every test of planethood koloa knows, at one period
@@ -461,6 +469,19 @@ def duck_test(data: RVData, period: float,
                  (koloa.tess; needs the network): None asks when a report is
                  written (pdf or outdir) and archive is True; a dict is light
                  curves already fetched (koloa.tess.light_curves)
+    :param aliases: bool or None, fit an orbit at the period and at each
+                    alias that holds some of the probability, with its share
+                    (koloa.aliases), and when the period is ambiguous, plan
+                    the observations that lift the alias (needs the star's
+                    position: target, archive True); None fits them when a
+                    report is written
+    :param site: str or None, the observatory of the plan (a key of
+                 koloa.aliases.SITES; from the instruments when None)
+
+    Planet or no planet is decided on the FIP of the period OR any of its
+    aliases (1 day, 1 year, 1 month): whether there is a planet, whichever
+    alias it is. Which alias it is, is reported apart (the 'period' check,
+    a note that never counts against a planet).
 
     :return: DuckReport
     """
@@ -484,9 +505,16 @@ def duck_test(data: RVData, period: float,
     if fipres is not None:
         # the best interval that holds the period (its grid point can be a
         #   fraction of an interval off the peak)
-        fipv = fipres.fip_containing(period, 1 / data.baseline)
+        width = 1 / data.baseline
+        fipv = fipres.fip_containing(period, width)
+        # planet or no planet: the period OR any of its aliases
+        fam = fipres.family_containing(period, width)
+        decisive = fam if fam is not None else fipv
         wpow = float(window(data.time, freq0)[0])
-        summary = f'FIP = {fipv:.2e} (outlier-aware)'
+        summary = (f'planet or no planet (the period or any of its aliases):'
+                   f' FIP = {fam:.2e}; the period alone: FIP = {fipv:.2e}'
+                   if fam is not None else f'FIP = {fipv:.2e}')
+        summary += ' (outlier-aware)'
         if gauss_fip is not None:
             summary += (f', {gauss_fip.fip_containing(period, 1 / data.baseline):.2e}'
                         f' (gaussian)')
@@ -499,19 +527,51 @@ def duck_test(data: RVData, period: float,
                 for alias in peak.get('aliases', []):
                     if best_alias is None or alias['fip'] < best_alias['fip']:
                         best_alias = alias
-        if best_alias is not None:
+        # (with a family, the 'period' check below says it all)
+        if best_alias is not None and fam is None:
             summary += (f'; best alias {best_alias["period"]:.3f} d '
                         f'({best_alias["name"]}) FIP {best_alias["fip"]:.2e}')
-        status = 'pass' if fipv < fip_threshold else 'flag'
-        # an alias is a competitor when it holds a tenth of the probability
-        #   the peak holds
-        if (best_alias is not None and fipv < 0.5
-                and (1 - best_alias['fip']) > 0.1 * (1 - fipv)):
-            summary += ' - the alias is a real competitor'
-            status = 'flag'
+        status = 'pass' if decisive < fip_threshold else 'flag'
         report.checks.append(dict(name='significance', status=status,
-                                  summary=summary, fip=fipv, window=wpow))
+                                  summary=summary, fip=fipv,
+                                  family_fip=fam, window=wpow))
         report.details['fip'] = fipv
+        report.details['family_fip'] = fam
+        # which alias: a note, never a flag (the planet is there all the
+        #   same, and observations can tell)
+        if fam is not None:
+            odds = fipres.alias_odds(period, width)
+            report.details['alias_odds'] = odds
+            shown = [mem for mem in odds if mem['share'] >= 1e-3]
+            text = '; '.join(f'{mem["period"]:.4f} d '
+                             f'({"the period" if mem["name"] == "P" else mem["name"] + " alias"})'
+                             f' {100 * mem["share"]:.1f} %' for mem in shown)
+            if len(shown) > 1:
+                text = 'ambiguous between its aliases: ' + text
+            else:
+                text = f'unambiguous: {text} of the probability'
+            report.checks.append(dict(name='period', status='info',
+                                      summary=text))
+        # the orbit at each alias, and when to observe to tell them apart
+        if aliases is None:
+            aliases = bool(pdf or outdir)
+        if aliases:
+            from koloa import aliases as kal
+            try:
+                sols = kal.solutions(data, period, fipres, unit=unit)
+                report.details['alias_solutions'] = sols
+                if kal.ambiguous(sols) and archive:
+                    from koloa.archive import resolve
+                    where = site or kal.site_of(data.instruments)
+                    ident = resolve(target or data.name)
+                    if where is None:
+                        log('duck test: no observatory for the plan (give '
+                            'site=)', 'warn')
+                    elif ident.get('ra') is not None:
+                        report.details['alias_plan'] = kal.plan(
+                            sols, ident['ra'], ident['dec'], where)
+            except Exception as err:  # a help, not a stop
+                log(f'duck test: aliases at {period:.4f} d: {err}', 'warn')
     # -------------------------------------------------------------------------
     # 2. robustness: who holds the peak up
     # -------------------------------------------------------------------------
@@ -670,12 +730,16 @@ def duck_test(data: RVData, period: float,
     # the verdict
     # -------------------------------------------------------------------------
     nflag = len(report.flags)
-    significant = report.details.get('fip', 0.0) < fip_threshold
+    decisive = report.details.get('family_fip')
+    if decisive is None:
+        decisive = report.details.get('fip', 0.0)
+    significant = decisive < fip_threshold
     if fipres is not None and not significant:
         others = [ch['name'] for ch in report.flags
                   if ch['name'] != 'significance']
-        verdict = (f'NOT DETECTED: FIP = {report.details["fip"]:.2g} once '
-                   f'the outliers and the noise are accounted for')
+        verdict = (f'NOT DETECTED: FIP = {decisive:.2g} for the period or '
+                   f'any of its aliases, once the outliers and the noise are '
+                   f'accounted for')
         if others:
             verdict += ('; in addition, ' + ', '.join(others)
                         + (' speaks' if len(others) == 1 else ' speak')
@@ -688,6 +752,12 @@ def duck_test(data: RVData, period: float,
     else:
         verdict = ('NOT A PLANET (activity or systematics more likely): '
                    + ', '.join(ch['name'] for ch in report.flags))
+    # a detection whose period is ambiguous says so
+    odds = report.details.get('alias_odds') or []
+    if significant and len(odds) > 1 and odds[1]['share'] >= 0.01:
+        verdict += (' (the period is ambiguous: ' + ', '.join(
+            f'{mem["period"]:.4f} d {100 * mem["share"]:.1f} %'
+            for mem in odds if mem['share'] >= 0.01) + ')')
     report.verdict = verdict
     if not quiet:
         for line in report.text().split('\n'):

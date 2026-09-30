@@ -123,7 +123,10 @@ model = koloa.RVModel(
 fit = model.fit()
 post = model.sample()                       # MCMC
 
-# is it a planet?
+# is it a planet? Planet or no planet is decided on the FIP of the period
+#   OR any of its aliases (1 day, 1 year, 1 month): fip.family_containing();
+#   which alias it is comes apart (fip.alias_odds(); with a report, the
+#   velocities folded at each alias, and the nights that would lift it)
 report = koloa.duck_test(data, period=11.2, fipres=fip)
 print(report.text())
 # the same as a detailed PDF: every check with its figures, and the known

@@ -82,6 +82,10 @@ def main(argv=None):
                              'known planets from VizieR')
     parser.add_argument('--no-latex', action='store_true',
                         help='no LaTeX/PDF report (detailed analysis)')
+    parser.add_argument('--site', default=None,
+                        help='with --detailed: the observatory of the plans '
+                             'that lift an alias (CFHT, La Silla, Paranal, '
+                             '...; from the instruments by default)')
     parser.add_argument('--no-tess', action='store_true',
                         help='with --detailed: do not fetch the TESS light '
                              'curves of the star')
@@ -99,7 +103,7 @@ def main(argv=None):
                           pmin=args.pmin, pmax=args.pmax, mcmc=args.mcmc,
                           duck=not args.no_duck, style=args.style,
                           latex=not args.no_latex,
-                          tess=not args.no_tess)
+                          tess=not args.no_tess, site=args.site)
         return
     data = RVData.from_csv(args.filename, name=args.name, inst=args.inst,
                            sequence_gap=args.gap)
