@@ -26,11 +26,12 @@ def test_the_command_lines():
     args = gui.command('detailed', dict(
         target='GJ 436', file='star.rdb', outdir='out', kmax='4',
         nsweep='2000', pmin='1.1', periods='113.46, 27', detection_map='fip',
-        fip_gp=False, tess=False))
+        fip_gp=False, tess=False, exclude='NIRPS, HARPS03'))
     # the defaults of the command line are not written
     assert args == ['star.rdb', '--detailed', '--target', 'GJ 436',
                     '--outdir', 'out', '--kmax', '4', '--periods', '113.46',
-                    '27', '--detection-map', '--no-fip-gp', '--no-tess']
+                    '27', '--exclude', 'NIRPS', 'HARPS03', '--detection-map',
+                    '--no-fip-gp', '--no-tess']
     assert gui.line(args).startswith("koloa star.rdb --detailed --target "
                                      "'GJ 436'")
     # the name alone, or the file alone, will do; neither will not

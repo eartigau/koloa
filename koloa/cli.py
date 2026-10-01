@@ -129,6 +129,11 @@ def main(argv=None):
     parser.add_argument('--port', type=int, default=8765,
                         help='with --gui: the port of the page (the next free '
                              'one when taken)')
+    parser.add_argument('--exclude', nargs='+', default=None,
+                        metavar='INST',
+                        help='with --detailed: instruments left out of the '
+                             'analysis (NIRPS, HARPS03...), once the file, '
+                             'DACE, CARMENES and VizieR are put together')
     parser.add_argument('--no-carmenes', action='store_true',
                         help='with --detailed or --gather: not CARMENES '
                              'DR1')
@@ -153,6 +158,7 @@ def main(argv=None):
                           target=args.target, archive=not args.no_archive,
                           dace=not args.no_dace,
                           carmenes=not args.no_carmenes,
+                          exclude=args.exclude,
                           literature=args.literature,
                           vizier=not args.no_vizier, periods=args.periods,
                           gp=not args.no_gp, kmax=args.kmax,

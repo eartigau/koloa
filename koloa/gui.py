@@ -99,6 +99,9 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
     periods = str(opts.get('periods') or '').replace(',', ' ').split()
     if periods:
         args += ['--periods'] + [f'{float(per):g}' for per in periods]
+    exclude = str(opts.get('exclude') or '').replace(',', ' ').split()
+    if exclude:
+        args += ['--exclude'] + exclude
     dmap = opts.get('detection_map') or 'none'
     if dmap == 'fip':
         args.append('--detection-map')

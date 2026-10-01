@@ -6,7 +6,8 @@ const TEXT = {
     tagline: 'Outlier-aware radial velocities · on this machine', docs: 'Docs',
     star: 'Star', star_hint: 'Its SIMBAD name: the archives, DACE, CARMENES and TESS find it by that name.',
     resolve: 'Resolve', velocities: 'Velocities',
-    velocities_hint: 'A file of velocities (LBL .rdb, csv, DACE csv), the archives gathered for the star, or both.',
+    velocities_hint: 'A file of velocities (LBL .rdb, csv, DACE csv), the archives gathered for the star, or both. Untick an instrument (or click it in the legend) to leave it out of the report.',
+    use: 'Used', exclude: 'Instruments left out',
     file: 'File (optional)', root: 'Archives folder', plot: 'Plot',
     gather: 'Gather the archives',
     gather_hint: 'What DACE (with your key when there is one), CARMENES DR1 and TESS have of the star, kept in the archives folder, one folder per star.',
@@ -33,7 +34,8 @@ const TEXT = {
     tagline: 'Vitesses radiales robustes aux valeurs aberrantes · sur cette machine', docs: 'Docs',
     star: 'Étoile', star_hint: 'Son nom SIMBAD : les archives, DACE, CARMENES et TESS la trouvent par ce nom.',
     resolve: 'Résoudre', velocities: 'Vitesses',
-    velocities_hint: 'Un fichier de vitesses (LBL .rdb, csv, csv de DACE), les archives récupérées pour l’étoile, ou les deux.',
+    velocities_hint: 'Un fichier de vitesses (LBL .rdb, csv, csv de DACE), les archives récupérées pour l’étoile, ou les deux. Décochez un instrument (ou cliquez-le dans la légende) pour l’écarter du rapport.',
+    use: 'Utilisé', exclude: 'Instruments écartés',
     file: 'Fichier (facultatif)', root: 'Dossier des archives', plot: 'Tracer',
     gather: 'Récupérer les archives',
     gather_hint: 'Ce que DACE (avec votre clé s’il y en a une), CARMENES DR1 et TESS ont de l’étoile, rangé dans le dossier des archives, un dossier par étoile.',
@@ -191,16 +193,55 @@ async function plotVelocities() {
       Plotly.newPlot(div, traces, {
         paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(4,8,16,0.35)',
         font: { family: 'Space Grotesk, sans-serif', color: '#e8eef8' },
-        margin: { l: 60, r: 10, t: 10, b: 50 }, legend: { orientation: 'h', y: -0.2 },
+        margin: { l: 60, r: 10, t: 10, b: 50 }, legend: { orientation: 'h', y: -0.2 }, showlegend: traces.length > 1,
         xaxis: { ...axis, title: 'BJD - 2400000', tickformat: '.0f', exponentformat: 'none' }, yaxis: { ...axis, title: 'RV - median [m/s]' },
       }, { responsive: true, displaylogo: false });
     }
-    $('rvtable').innerHTML = `<table class="mini"><tr><th>${esc(t('inst'))}</th><th>${esc(t('n'))}</th><th>${esc(t('rms'))}</th></tr>`
-      + res.instruments.map((inst, i) => `<tr><td><span class="swatch" style="background:${COLOURS[i % 8]}"></span>${esc(inst.name)}</td>`
+    lastRV = res.instruments;
+    $('rvtable').innerHTML = `<table class="mini"><tr><th>${esc(t('use'))}</th><th>${esc(t('inst'))}</th><th>${esc(t('n'))}</th><th>${esc(t('rms'))}</th></tr>`
+      + res.instruments.map((inst, i) => `<tr data-row="${esc(inst.name)}"><td><input type="checkbox" data-inst="${esc(inst.name)}" checked></td>`
+        + `<td><span class="swatch" style="background:${COLOURS[i % 8]}"></span>${esc(inst.name)}</td>`
         + `<td class="num">${inst.n}</td><td class="num">${inst.rms.toFixed(2)}</td></tr>`).join('') + '</table>';
+    if (window.Plotly && div.on) {
+      div.removeAllListeners && div.removeAllListeners('plotly_legendclick');
+      div.on('plotly_legendclick', (ev) => {
+        const name = lastRV[ev.curveNumber].name;
+        setExcluded(name, !excludedSet().has(name.toUpperCase()));
+        return false;
+      });
+    }
+    styleExcluded();
   } catch (err) {
     note.innerHTML = `<span class="bad">${esc(err.message)}</span>`;
   }
+}
+
+// the instruments left out: the field of the report is what counts; the
+// boxes of the table and the legend of the plot write into it
+let lastRV = null;
+function excludedSet() {
+  return new Set($('exclude').value.split(/[\s,]+/).filter(Boolean).map((s) => s.toUpperCase()));
+}
+
+function setExcluded(name, off) {
+  const kept = $('exclude').value.split(/[\s,]+/).filter((s) => s && s.toUpperCase() !== name.toUpperCase());
+  if (off) kept.push(name);
+  $('exclude').value = kept.join(' ');
+  updateCommands();
+  styleExcluded();
+}
+
+function styleExcluded() {
+  if (!lastRV) return;
+  const ex = excludedSet();
+  const off = lastRV.map((inst) => ex.has(inst.name.toUpperCase()));
+  if (window.Plotly && $('rvplot').data) Plotly.restyle('rvplot', { opacity: off.map((o) => (o ? 0.12 : 1)) });
+  lastRV.forEach((inst, i) => {
+    const row = document.querySelector(`tr[data-row="${CSS.escape(inst.name)}"]`);
+    if (!row) return;
+    row.classList.toggle('off', off[i]);
+    row.querySelector('input').checked = !off[i];
+  });
 }
 
 // -----------------------------------------------------------------------------
@@ -279,7 +320,13 @@ async function run(action) {
 // -----------------------------------------------------------------------------
 // start
 // -----------------------------------------------------------------------------
-document.addEventListener('input', updateCommands);
+document.addEventListener('input', (e) => {
+  updateCommands();
+  if (e.target.id === 'exclude') styleExcluded();
+});
+document.addEventListener('change', (e) => {
+  if (e.target.dataset && e.target.dataset.inst) setExcluded(e.target.dataset.inst, !e.target.checked);
+});
 document.addEventListener('change', updateCommands);
 $('resolve').addEventListener('click', resolveStar);
 $('target').addEventListener('keydown', (e) => { if (e.key === 'Enter') resolveStar(); });
@@ -313,7 +360,7 @@ document.addEventListener('click', async (e) => {
   renderJobs();
   // the fields from the address (?target=GJ%20436&file=...&root=...&plot=1)
   const params = new URLSearchParams(location.search);
-  for (const key of ['target', 'file', 'root', 'outdir']) {
+  for (const key of ['target', 'file', 'root', 'outdir', 'exclude']) {
     if (params.get(key)) $(key).value = params.get(key);
   }
   updateCommands();

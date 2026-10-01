@@ -238,11 +238,20 @@ def _summary(rep: Dict[str, Any]) -> str:
                       for inst in data.instruments)
     items = [f'{data.n} exposures in {data.nseq} visits over '
              f'{data.baseline:.0f}\\,d ({insts}).']
-    added = [src for src in rep['sources'][1:] if src['n']]
+    kinds = [src['kind'] for src in rep['sources']]
+    added = [src for src in rep['sources']
+             if src['kind'] not in ('file', 'left out') and src['n'] > 0]
     if added:
-        items[-1] += (' Added to the file: ' + '; '.join(
+        items[-1] += ((' Added to the file: ' if 'file' in kinds else
+                       ' From the archives: ') + '; '.join(
             f'{src["n"]} from {escape(src["label"])} ({escape(src["kind"])})'
             for src in added) + '.')
+    dropped = [src for src in rep['sources'] if src['kind'] == 'left out']
+    if dropped:
+        items[-1] += (' Left out, as asked: ' + '; '.join(
+            ', '.join(f'{escape(inst)} ({num})'
+                      for inst, num in src['instruments'].items())
+            for src in dropped) + '.')
     known = rep['known'] or {}
     star = known.get('star') or {}
     words = [escape(val) for val in (star.get('spectral_type'),) if val]

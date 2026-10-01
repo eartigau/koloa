@@ -233,9 +233,11 @@ def test_detailed_analysis_from_the_name_alone(tmp_path, monkeypatch):
     out = detailed.detailed_analysis(
         None, outdir=str(tmp_path), target='Fake Star', archive=False,
         vizier=False, tess=False, kmax=1, nsweep=200, nburn=100, duck=False,
-        gp=False, fip_gp=None, latex=False)
-    assert sorted(out['data'].instruments) == ['CARMENES', 'HARPS15']
+        gp=False, fip_gp=None, latex=False, exclude=['carmenes'])
+    # both archives put together, then CARMENES left out, as asked
+    assert out['data'].instruments == ['HARPS15']
     kinds = [src['kind'] for src in out['sources']]
     assert 'file' not in kinds and 'DACE' in kinds and 'CARMENES' in kinds
+    assert 'left out' in kinds
     with pytest.raises(ValueError):
         detailed.detailed_analysis(None, outdir=str(tmp_path))

@@ -633,7 +633,9 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
                       fip_gp: Any = 'banded',
                       nightly: Optional[bool] = None,
                       detection_map: Any = False,
-                      map_ninj: int = 10) -> Dict[str, Any]:
+                      map_ninj: int = 10,
+                      exclude: Optional[Sequence[str]] = None
+                      ) -> Dict[str, Any]:
     """
     Everything koloa can say about a star (see the module's docstring)
 
@@ -710,6 +712,9 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
                           an alias counts as missed)
     :param map_ninj: int, the injections per cell of the map (and
                      gp_workers the processes)
+    :param exclude: list of str or None, instruments left out of the
+                    analysis once the series is assembled (the file, DACE,
+                    CARMENES, VizieR), by name (any case): NIRPS, HARPS03...
     :param nightly: bool, analyse the nightly means of the series once it is
                     assembled (RVData.nightly, koloa's default: an outlier
                     is then a night); False keeps the exposures; None is
@@ -874,6 +879,25 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
             f'over {data.baseline:.0f} d, ' + ', '.join(
                 f'{inst} {np.sum(data.inst == inst)}'
                 for inst in data.instruments), 'value')
+    if exclude:
+        wanted = {str(name).strip().upper() for name in exclude}
+        drop = [inst for inst in data.instruments if inst.upper() in wanted]
+        missing = wanted - {inst.upper() for inst in data.instruments}
+        if missing:
+            log(f'not in the series, nothing to leave out: '
+                f'{", ".join(sorted(missing))}', 'warn')
+        if drop:
+            keep = ~np.isin(data.inst, drop)
+            if not np.any(keep):
+                raise ValueError('every instrument is left out (exclude=)')
+            counts = {inst: int(np.sum(data.inst == inst)) for inst in drop}
+            data = data.select(keep)
+            sources.append(dict(kind='left out', label=', '.join(drop),
+                                n=-sum(counts.values()), instruments=counts,
+                                note='left out of the analysis, as asked'))
+            log('left out, as asked: ' + ', '.join(
+                f'{inst} ({num})' for inst, num in counts.items())
+                + f'; {data.n} exposures remain', 'value')
     out['sources'] = sources
     nexp = data.n
     if nightly is None:
@@ -1193,6 +1217,7 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
             gp=gpsum, threshold=THRESHOLD, runtime=time.time() - start,
             tess=phot, detection_map=dmap,
             settings=dict(archive=archive, dace=dace, carmenes=carmenes,
+                          exclude=', '.join(exclude or []) or 'none',
                           vizier=vizier,
                           literature=len(literature or []),
                           periods=', '.join(f'{per}' for per in periods or [])
