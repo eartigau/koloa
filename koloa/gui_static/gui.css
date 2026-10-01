@@ -1,4 +1,9 @@
 /* koloa's GUI: what the shared theme (theme.css) does not have */
+/* a darker grey for secondary text than the theme's (#a8b4ca), clearly
+   apart from the main text (3.2:1 against it, 1.8:1 before) and still
+   readable on the cards (4.8:1, WCAG AA for small text) */
+:root { --muted: #7a8597; }
+input::placeholder { color: var(--muted); opacity: 1; }
 .site-banner-inner { gap: 10px; }
 .site-banner-text { flex: 1; }
 button.home-link { cursor: pointer; font: inherit; }
