@@ -263,3 +263,39 @@ def test_the_acceleration_is_fitted_and_reported(tmp_path):
     assert 'jerk' in out['acceleration']
     assert list(tmp_path.glob('*_model.pdf'))
     assert 'acceleration of the star' in out['report']
+
+
+def test_several_files_each_its_instruments(tmp_path):
+    """an LBL file of NIRPS and one of HARPS across its 2015 upgrade: the
+    instruments named from the files' own columns (HARPS03 and HARPS15, as
+    on DACE); a second NIRPS file set apart; a name given wins"""
+    from koloa.detailed import detailed_analysis
+    rng = np.random.default_rng(2)
+
+    def lbl(path, prefix, times):
+        rows = ''.join(f'{tt!r}\t{rng.normal(0, 2)!r}\t1.0\tr.{prefix}.x.fits\n'
+                       for tt in times)
+        path.write_text('rjd\tvrad\tsvrad\tFILENAME\n----\t----\t----\t----\n'
+                        + rows)
+        return str(path)
+    nirps = lbl(tmp_path / 'nirps.rdb', 'NIRPS',
+                np.sort(rng.uniform(60000, 60300, 25)))
+    harps = lbl(tmp_path / 'harps.rdb', 'HARPS',
+                np.sort(rng.uniform(56800, 57600, 30)))
+    nirps2 = lbl(tmp_path / 'nirps2.rdb', 'NIRPS',
+                 np.sort(rng.uniform(60400, 60600, 12)))
+    out = detailed_analysis([nirps, harps, nirps2], outdir=str(tmp_path),
+                            archive=False, dace=False, carmenes=False,
+                            kmax=1, nsweep=150, nburn=80, duck=False,
+                            gp=False, fip_gp=None, latex=False)
+    assert out['data'].instruments == ['HARPS03', 'HARPS15', 'NIRPS',
+                                       'NIRPS_3']
+    assert [src['label'] for src in out['sources']
+            if src['kind'] == 'file'] == ['nirps.rdb', 'harps.rdb',
+                                          'nirps2.rdb']
+    out = detailed_analysis([nirps, nirps2], outdir=str(tmp_path / 'b'),
+                            instruments=['NIRPS', 'NIRPS_LBL2'],
+                            archive=False, dace=False, carmenes=False,
+                            kmax=1, nsweep=150, nburn=80, duck=False,
+                            gp=False, fip_gp=None, latex=False)
+    assert out['data'].instruments == ['NIRPS', 'NIRPS_LBL2']

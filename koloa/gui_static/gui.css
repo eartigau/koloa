@@ -42,6 +42,11 @@ button.stop { border-color: rgba(230, 103, 103, 0.6); background: rgba(230, 103,
 }
 .fields label.wide { grid-column: span 2; }
 .picker { display: flex; gap: 6px; }
+.fields .filesblock { grid-column: 1 / -1; }
+.filesblock { display: flex; flex-direction: column; gap: 6px; font-size: 0.82rem; color: var(--muted); }
+.filerow { display: grid; grid-template-columns: minmax(0, 3fr) auto minmax(0, 1.4fr) auto; gap: 6px; }
+.filerow button { padding: 5px 10px; font-size: 0.8rem; }
+#addfile { align-self: flex-start; }
 .picker input { flex: 1; }
 .picker button { padding: 5px 10px; font-size: 0.8rem; }
 .fields label { display: flex; flex-direction: column; gap: 4px; font-size: 0.82rem; color: var(--muted); }

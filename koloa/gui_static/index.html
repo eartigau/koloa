@@ -43,8 +43,9 @@
       <h2 data-i18n="velocities">Velocities</h2>
       <p class="hint" data-i18n="velocities_hint">A file of velocities (LBL .rdb, csv, DACE csv), the archives gathered for the star, or both. Untick an instrument (or click it in the legend) to leave it out of the report.</p>
       <div class="fields">
-        <label class="wide"><span data-i18n="file">File (optional)</span>
-          <span class="picker"><input id="file" type="text" placeholder="/path/to/lbl_STAR.rdb" autocomplete="off"><button type="button" data-pick="file" data-into="file" data-i18n="browse">Browse...</button></span></label>
+        <div class="wide filesblock"><span class="flabel-head" data-i18n="files_in">Files (optional): one per instrument or reduction</span>
+          <div id="filelist"></div>
+          <button type="button" id="addfile" class="small" data-i18n="add_file">+ Add a file</button></div>
         <label><span data-i18n="root">Archives folder</span>
           <span class="picker"><input id="root" type="text" value="archives" autocomplete="off"><button type="button" data-pick="folder" data-into="root" title="..." >...</button></span></label>
       </div>

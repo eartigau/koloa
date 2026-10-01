@@ -67,7 +67,7 @@ from koloa import kepler
 from koloa import plotting as kplot
 from koloa.archive import MATCH, compare, conjunction, known_planets, resolve
 from koloa.dace import names as dace_names
-from koloa.data import RVData, merge, robust_std
+from koloa.data import RVData, instrument_names, merge, robust_std
 from koloa.diagnostics import duck_test
 from koloa.fip import inflate_to_fit, oafip
 from koloa.fit import RVModel, mcmc_orbits
@@ -122,10 +122,13 @@ GROSS = 25.0
 # =============================================================================
 # Define functions
 # =============================================================================
-def _read(source: Union[str, RVData], name: Optional[str]) -> RVData:
-    """the series of a file (or the series given), its instrument named; a
-    CSV written by koloa.dace.fetch is read by koloa.dace.rvdata (one
-    instrument per era)"""
+def _read(source: Union[str, RVData], name: Optional[str],
+          label: Optional[str] = None) -> RVData:
+    """the series of a file (or the series given), its instrument named:
+    as given (label), else from the file's own columns (koloa.data.
+    instrument_names: HARPS03 or HARPS15, ESPRESSO18 or 19, NIRPS, SPIRou,
+    HARPN...); a CSV written by koloa.dace.fetch is read by
+    koloa.dace.rvdata (one instrument per era)"""
     if isinstance(source, RVData):
         data = source
     else:
@@ -139,13 +142,61 @@ def _read(source: Union[str, RVData], name: Optional[str]) -> RVData:
             data = RVData.from_csv(source, name=name)
     if name:
         data.name = name
-    if data.instruments == ['inst']:
-        lname, _ = instrument_list(data, 'inst')
-        label = NAMES.get(lname)
-        if label:
-            data.inst = np.array([label] * data.n)
-            data.zero_point = {label: data.zero_point.get('inst', 0.0)}
-    return data
+    names = None
+    if label and str(label).lower() != 'auto':
+        names = np.full(data.n, str(label))
+    elif data.instruments == ['inst']:
+        names = instrument_names(data)
+        if names is None:
+            lname, _ = instrument_list(data, 'inst')
+            if NAMES.get(lname):
+                names = np.full(data.n, NAMES[lname])
+    return data if names is None else relabel(data, names)
+
+
+def read_files(files: Sequence[Any],
+               instruments: Optional[Sequence[Optional[str]]] = None,
+               name: Optional[str] = None) -> List[RVData]:
+    """
+    Several files (or series), each its instruments: as given, else from
+    the file's own columns; an instrument already in an earlier file is
+    named <inst>_<k> (k, the file's rank), each its own offset
+
+    :return: list of RVData, one per file
+    """
+    labels = list(instruments or []) + [None] * len(files)
+    parts: List[RVData] = []
+    for ifile, (src, label) in enumerate(zip(files, labels)):
+        part = _read(src, name, label)
+        taken = {inst for prev in parts for inst in prev.instruments}
+        clash = [inst for inst in part.instruments if inst in taken]
+        if clash:
+            new = np.array([f'{inst}_{ifile + 1}' if inst in clash
+                            else inst for inst in part.inst])
+            log(f'{_label(src)}: {", ".join(clash)} is in another file '
+                f'too: named with _{ifile + 1} (instruments= to name them)',
+                'warn')
+            part = relabel(part, new)
+        parts.append(part)
+        log(f'{_label(src)}: {part.n} exposures, ' + ', '.join(
+            f'{inst} {np.sum(part.inst == inst)}'
+            for inst in part.instruments), 'value')
+    return parts
+
+
+def _label(source: Any) -> str:
+    """a file by its name, a series by its own"""
+    return (os.path.basename(source) if isinstance(source, str)
+            else getattr(source, 'name', 'series'))
+
+
+def relabel(data: RVData, names: np.ndarray) -> RVData:
+    """the same series with other instruments (each its own zero point)"""
+    vrad = data.rv + np.array([data.zero_point[str(inst)]
+                               for inst in data.inst])
+    return RVData(data.time, vrad, data.err, inst=np.asarray(names),
+                  indicators=dict(data.indicators), name=data.name,
+                  sequence_gap=data.sequence_gap, meta=dict(data.meta))
 
 
 def _target(data: RVData, target: Optional[str]) -> Optional[str]:
@@ -681,7 +732,8 @@ def _ephemeris(orb: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 dphase=float(diff / conj['P']), source=conj['source'])
 
 
-def detailed_analysis(source: Union[str, RVData, None] = None,
+def detailed_analysis(source: Union[str, RVData, Sequence[Any],
+                                    None] = None,
                       outdir: str = 'koloa_detailed',
                       name: Optional[str] = None, target: Optional[str] = None,
                       archive: bool = True, dace: bool = True,
@@ -706,14 +758,21 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
                       map_ninj: int = 10,
                       exclude: Optional[Sequence[str]] = None,
                       rotation: Optional[float] = None,
-                      trend: bool = True, curvature: bool = False
+                      trend: bool = True, curvature: bool = False,
+                      instruments: Optional[Sequence[Optional[str]]] = None
                       ) -> Dict[str, Any]:
     """
     Everything koloa can say about a star (see the module's docstring)
 
-    :param source: str, RVData or None: an LBL .rdb, a csv, or a series;
-                   None for the archives only (DACE, CARMENES DR1, VizieR),
-                   from the star's name (target)
+    :param source: str, RVData, a list of them, or None: an LBL .rdb, a
+                   csv, or a series, or several (SPIRou and NIRPS, HARPS
+                   again through LBL, HARPS-N...: each file its
+                   instruments, named from its own columns, or as
+                   instruments= says); None for the archives only (DACE,
+                   CARMENES DR1, VizieR), from the star's name (target)
+    :param instruments: list of str or None, the instrument of each file,
+                        in order ('auto', or None, for the name the file
+                        gives)
     :param outdir: str, where the report, the summary and the figures go
     :param name: str or None, the name of the series
     :param target: str or None, the SIMBAD name of the star, for SIMBAD, the
@@ -832,7 +891,11 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
         log(f'koloa, detailed: {star}, no file: the velocities of the '
             f'archives')
     else:
-        data = _read(source, name)
+        files = (list(source) if isinstance(source, (list, tuple))
+                 else [source])
+        parts = read_files(files, instruments, name)
+        data = parts[0] if len(parts) == 1 else merge(parts,
+                                                      name=parts[0].name)
         star = _target(data, target)
         log(f'koloa, detailed: {star} ({data.name}), {data.n} exposures in '
             f'{data.nseq} visits over {data.baseline:.0f} d, '
@@ -874,9 +937,9 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
     step('more velocities: DACE, CARMENES, VizieR')
     # 3. more velocities: DACE, CARMENES, the ones given, the ones on VizieR
     sources = [] if data is None else [
-        dict(kind='file', label=(os.path.basename(source)
-                                 if isinstance(source, str) else data.name),
-             n=int(data.n), instruments=_counts(data), note='')]
+        dict(kind='file', label=_label(src), n=int(part.n),
+             instruments=_counts(part), note='')
+        for src, part in zip(files, parts)]
     if not dace:
         sources.append(dict(kind='DACE', label='DACE', n=0, instruments={},
                             note='not asked'))
@@ -1322,7 +1385,9 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
         from koloa.latex import compile_pdf, detailed_report
         tex = os.path.join(outdir, f'{safe}_report.tex')
         rep = dict(
-            star=star, source=source if isinstance(source, str) else None,
+            star=star, source=(', '.join(os.path.abspath(src) for src in files
+                                     if isinstance(src, str)) or None)
+            if source is not None else None,
             data=data, ident=ident, known=known, sources=sources,
             fip_first=fip1, fip_second=fip2,
             inflation_first=info1.get('inflation', {}),

@@ -121,6 +121,6 @@ def test_the_file_and_the_archives_are_told_apart(tmp_path):
                          str(tmp_path / 'arch'))
     got = {inst['name']: (inst['source'], inst['n'])
            for inst in res['instruments']}
-    assert got == {'NIRPS': ('file', 30), 'NIRPS_DACE': ('DACE', 10),
+    assert got == {'NIRPS': ('file: lbl.csv', 30), 'NIRPS_DACE': ('DACE', 10),
                    'HARPS15': ('DACE', 15),
                    'CARMENES': ('CARMENES DR1', 12)}

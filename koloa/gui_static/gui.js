@@ -9,6 +9,7 @@ const TEXT = {
     velocities_hint: 'A file of velocities (LBL .rdb, csv, DACE csv), the archives gathered for the star, or both. Untick an instrument (or click it in the legend) to leave it out of the report.',
     use: 'Used', exclude: 'Instruments left out', source: 'Source', src_file: 'input file',
     file: 'File (optional)', root: 'Archives folder', plot: 'Plot', browse: 'Browse...', picking: 'choosing...',
+    files_in: 'Files (optional): one per instrument or reduction', add_file: '+ Add a file', inst_auto: 'instrument (auto)', remove: 'remove',
     gather: 'Gather the archives',
     gather_hint: 'What DACE (with your key when there is one), CARMENES DR1 and TESS have of the star, kept in the archives folder, one folder per star.',
     copy: 'Copy', copied: 'Copied', run_gather: 'Gather', detailed: 'Detailed report',
@@ -44,6 +45,7 @@ const TEXT = {
     velocities_hint: 'Un fichier de vitesses (LBL .rdb, csv, csv de DACE), les archives récupérées pour l’étoile, ou les deux. Décochez un instrument (ou cliquez-le dans la légende) pour l’écarter du rapport.',
     use: 'Utilisé', exclude: 'Instruments écartés', source: 'Source', src_file: 'fichier d’entrée',
     file: 'Fichier (facultatif)', root: 'Dossier des archives', plot: 'Tracer', browse: 'Parcourir...', picking: 'choix en cours...',
+    files_in: 'Fichiers (facultatifs) : un par instrument ou réduction', add_file: '+ Ajouter un fichier', inst_auto: 'instrument (auto)', remove: 'retirer',
     gather: 'Récupérer les archives',
     gather_hint: 'Ce que DACE (avec votre clé s’il y en a une), CARMENES DR1 et TESS ont de l’étoile, rangé dans le dossier des archives, un dossier par étoile.',
     copy: 'Copier', copied: 'Copié', run_gather: 'Récupérer', detailed: 'Rapport détaillé',
@@ -90,6 +92,7 @@ function applyLang() {
   $('lang').textContent = lang === 'fr' ? 'EN' : 'FR';
   showCwd();
   renderJobs();
+  renderFiles();
   checkArchives();
 }
 
@@ -105,19 +108,34 @@ async function api(path, body) {
 // -----------------------------------------------------------------------------
 // the fields and the command lines
 // -----------------------------------------------------------------------------
+// the files: one row each (its path, and its instrument when the file
+//   does not say), as many as wanted
+let fileRows = [{ path: '', label: '' }];
+function renderFiles() {
+  $('filelist').innerHTML = fileRows.map((row, i) => `<div class="filerow">
+      <input type="text" class="fpath" data-row="${i}" value="${esc(row.path)}" placeholder="/path/to/lbl_STAR.rdb" autocomplete="off">
+      <button type="button" data-pick="file" data-row="${i}">${esc(t('browse'))}</button>
+      <input type="text" class="flabel" data-row="${i}" value="${esc(row.label)}" placeholder="${esc(t('inst_auto'))}" autocomplete="off">
+      <button type="button" class="small" data-del="${i}" title="${esc(t('remove'))}">&times;</button></div>`).join('');
+}
+
+function filesNow() {
+  return fileRows.filter((row) => row.path.trim()).map((row) => ({ path: row.path.trim(), label: row.label.trim() }));
+}
+
 function folderName(text) {
   return text.trim().replace(/[^A-Za-z0-9+\-.]+/g, '_').replace(/^_+|_+$/g, '');
 }
 
 function defaultOutdir() {
   const target = $('target').value.trim();
-  const file = $('file').value.trim();
+  const file = (filesNow()[0] || {}).path || '';
   const stem = target || (file ? file.split('/').pop().replace(/\.[^.]*$/, '') : '');
   return stem ? `reports/${folderName(stem)}` : 'reports/star';
 }
 
 function options(action) {
-  const opts = { target: $('target').value, file: $('file').value, root: $('root').value,
+  const opts = { target: $('target').value, files: filesNow(), root: $('root').value,
                  outdir: $('outdir').value.trim() || defaultOutdir() };
   document.querySelectorAll(`[data-for="${action}"]`).forEach((el) => {
     opts[el.dataset.opt] = el.type === 'checkbox' ? el.checked : el.value;
@@ -229,7 +247,7 @@ async function resolveStar() {
 async function plotVelocities() {
   const note = $('rvnote');
   note.innerHTML = `<span class="spin"></span> ${esc(t('loading'))}`;
-  const q = new URLSearchParams({ file: $('file').value.trim(), target: $('target').value.trim(), root: $('root').value.trim() });
+  const q = new URLSearchParams({ files: JSON.stringify(filesNow()), target: $('target').value.trim(), root: $('root').value.trim() });
   try {
     const res = await api(`/api/rv?${q}`);
     note.textContent = (res.notes || []).join(' · ');
@@ -259,7 +277,7 @@ async function plotVelocities() {
     $('rvtable').innerHTML = `<table class="mini"><tr><th>${esc(t('use'))}</th><th>${esc(t('inst'))}</th><th>${esc(t('source'))}</th><th>${esc(t('n'))}</th><th>${esc(t('rms'))}</th></tr>`
       + res.instruments.map((inst, i) => `<tr data-row="${esc(inst.name)}"><td><input type="checkbox" data-inst="${esc(inst.name)}" checked></td>`
         + `<td><span class="swatch" style="background:${COLOURS[i % 8]}"></span>${esc(inst.name)}</td>`
-        + `<td class="src src-${esc((inst.source || '').split(' ')[0].toLowerCase())}">${esc(inst.source === 'file' ? t('src_file') : inst.source)}</td>`
+        + `<td class="src${(inst.source || '').startsWith('file') ? ' src-file' : ''}">${esc((inst.source || '').startsWith('file') ? inst.source.replace('file', t('src_file')) : inst.source)}</td>`
         + `<td class="num">${inst.n}</td><td class="num">${inst.rms.toFixed(2)}</td></tr>`).join('') + '</table>';
     if (window.Plotly && div.on) {
       div.removeAllListeners && div.removeAllListeners('plotly_legendclick');
@@ -404,6 +422,11 @@ async function run(action) {
 // start
 // -----------------------------------------------------------------------------
 document.addEventListener('input', (e) => {
+  if (e.target.dataset && e.target.dataset.row !== undefined) {
+    const row = fileRows[+e.target.dataset.row];
+    if (e.target.classList.contains('fpath')) row.path = e.target.value;
+    if (e.target.classList.contains('flabel')) row.label = e.target.value;
+  }
   updateCommands();
   if (e.target.id === 'target' || e.target.id === 'root') checkArchives();
   if (e.target.id === 'exclude') styleExcluded();
@@ -433,13 +456,15 @@ document.addEventListener('click', async (e) => {
   }
   const picker = e.target.closest('[data-pick]');
   if (picker) {
-    const field = $(picker.dataset.into);
+    const field = picker.dataset.row !== undefined
+      ? document.querySelector(`input.fpath[data-row="${picker.dataset.row}"]`) : $(picker.dataset.into);
     const label = picker.textContent;
     picker.disabled = true; picker.textContent = t('picking');
     try {
       const res = await api(`/api/pick?${new URLSearchParams({ kind: picker.dataset.pick, start: field.value || field.placeholder || '' })}`);
       if (res.path) {
         field.value = res.path;
+        if (picker.dataset.row !== undefined) fileRows[+picker.dataset.row].path = res.path;
         updateCommands();
         if (picker.dataset.into === 'root') checkArchives();
       }
@@ -448,6 +473,17 @@ document.addEventListener('click', async (e) => {
     } finally {
       picker.disabled = false; picker.textContent = label;
     }
+  }
+  if (e.target.id === 'addfile') {
+    fileRows.push({ path: '', label: '' });
+    renderFiles();
+  }
+  const del = e.target.closest('[data-del]');
+  if (del) {
+    fileRows.splice(+del.dataset.del, 1);
+    if (!fileRows.length) fileRows.push({ path: '', label: '' });
+    renderFiles();
+    updateCommands();
   }
   const prot = e.target.closest('[data-prot]');
   if (prot) {
@@ -466,9 +502,12 @@ document.addEventListener('click', async (e) => {
   renderJobs();
   // the fields from the address (?target=GJ%20436&file=...&root=...&plot=1)
   const params = new URLSearchParams(location.search);
-  for (const key of ['target', 'file', 'root', 'outdir', 'exclude']) {
+  for (const key of ['target', 'root', 'outdir', 'exclude']) {
     if (params.get(key)) $(key).value = params.get(key);
   }
+  const given = params.getAll('file');
+  if (given.length) fileRows = given.map((path) => ({ path, label: '' }));
+  renderFiles();
   updateCommands();
   checkArchives();
   if (params.get('target')) resolveStar();

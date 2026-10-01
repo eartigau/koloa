@@ -1056,7 +1056,8 @@ def _settings(rep: Dict[str, Any], folder: str, skipped: List[str]) -> str:
     out.append(f'run in & {rep["runtime"] / 60:.1f} min \\\\')
     out.append('\\bottomrule\n\\end{tabular}\n')
     if rep.get('source'):
-        out.append(f'Source: {_path(os.path.abspath(rep["source"]))}\n')
+        out.append('Source: ' + ', '.join(_path(src) for src in
+                                          rep['source'].split(', ')) + '\n')
     out.append(f'In {_path(os.path.abspath(folder))}: {{\\small '
                + ', '.join(_path(name) for name in rep['files']) + '}.\n')
     if skipped:

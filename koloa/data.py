@@ -68,6 +68,56 @@ def robust_std(value: np.ndarray) -> float:
     return float(1.4826 * np.median(np.abs(value - np.median(value))))
 
 
+#: the instruments by the first word of the names of their files (an LBL
+#: file keeps them: r.HARPS.2018-..., r.ESPRE.2019-...)
+FILE_INSTRUMENTS = {'HARPS': 'HARPS', 'HARPN': 'HARPN', 'ESPRE': 'ESPRESSO',
+                    'ESPRESSO': 'ESPRESSO', 'NIRPS': 'NIRPS',
+                    'CORALIE': 'CORALIE', 'SPIROU': 'SPIRou'}
+#: the eras of an instrument, each with its own zero point, named as DACE
+#: names them: (the first night of the next era [BJD - 2400000], names)
+ERAS = {'HARPS': ([57174.5], ['HARPS03', 'HARPS15']),
+        'ESPRESSO': ([58662.0], ['ESPRESSO18', 'ESPRESSO19'])}
+
+
+def instrument_names(data: 'RVData') -> Optional[np.ndarray]:
+    """
+    The instrument of every point of a file of one instrument (LBL), from
+    its own columns: the names of its files (r.HARPS..., r.ESPRE...,
+    r.NIRPS...), else the S/N keys of APERO (EXTSN035: SPIRou, EXTSN060:
+    NIRPS); an instrument whose zero point changed is split in its eras
+    (HARPS03 and HARPS15, ESPRESSO18 and ESPRESSO19), as on DACE
+
+    :return: np.ndarray of str, or None (nothing says which)
+    """
+    base = None
+    for col in ('FILENAME', 'local_file_name', 'ARCFILE', 'filename'):
+        vals = data.meta.get(col)
+        if vals is None or np.asarray(vals).dtype.kind not in 'USO':
+            continue
+        words = [str(val).strip() for val in vals if str(val).strip()]
+        if not words:
+            continue
+        word = words[0]
+        word = word[2:] if word.startswith('r.') else word
+        head = word.split('.')[0].split('_')[0].upper()
+        base = FILE_INSTRUMENTS.get(head)
+        if base:
+            break
+    if base is None:
+        if 'EXTSN035' in data.meta:
+            base = 'SPIRou'
+        elif 'EXTSN060' in data.meta:
+            base = 'NIRPS'
+        else:
+            return None
+    names = np.full(data.n, base, dtype=object)
+    if base in ERAS:
+        edges, labels = ERAS[base]
+        names = np.array(labels, dtype=object)[np.searchsorted(edges,
+                                                                data.time)]
+    return names.astype(str)
+
+
 def night_index(data: 'RVData', gap: float = NIGHT_GAP) -> np.ndarray:
     """
     The night of each exposure (per instrument; see RVData.nightly), in the

@@ -71,8 +71,16 @@ name of the star, or (best) from both:
 
 ```
 koloa star.rdb --detailed --target "GJ 436" --outdir star
+koloa spirou.rdb nirps.rdb harps.rdb --detailed --target "GJ 436" --outdir star
 koloa --detailed --target "GJ 436" --outdir star     # the archives only
 ```
+
+Each file is one or more instruments, named from its own columns (the
+names of its files: HARPS03 or HARPS15 on either side of the 2015 upgrade,
+ESPRESSO18 or ESPRESSO19, NIRPS, HARPN; SPIRou from APERO's keys), or as
+`--instruments SPIRou NIRPS auto` says; one already in an earlier file is
+named `<inst>_<k>`, and one that DACE has too is `<inst>_DACE`, each with
+its own offset, the same spectra never counted twice.
 
 It finds who the star is (SIMBAD: the name given, or a guess from the
 file's OBJECT column), its known planets in the NASA Exoplanet Archive

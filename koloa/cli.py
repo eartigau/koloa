@@ -37,11 +37,17 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog='koloa', description='Outlier-aware radial velocity analysis: '
         'periodograms, FIPs, fits and the duck test.')
-    parser.add_argument('filename', nargs='?', default=None,
+    parser.add_argument('filename', nargs='*', default=[],
                         help='csv or rdb file (rjd, vrad, svrad and '
                              'indicators with their errors), or with --gather '
-                             'the name of a star; with --detailed it may be '
-                             'left out for the archives only (--target)')
+                             'the name of a star; with --detailed, several '
+                             '(SPIRou and NIRPS, HARPS through LBL...), or '
+                             'none for the archives only (--target)')
+    parser.add_argument('--instruments', nargs='+', default=None,
+                        metavar='NAME',
+                        help='with --detailed: the instrument of each file, '
+                             'in order (auto: the name the file gives, from '
+                             'its columns)')
     parser.add_argument('--outdir', default='koloa_output')
     parser.add_argument('--name', default=None, help='the target name')
     parser.add_argument('--kmax', type=int, default=3,
@@ -171,19 +177,20 @@ def main(argv=None):
     if args.refresh_archive:
         from koloa.archive import tables
         tables(refresh=True)
-        if args.filename is None:
+        if not args.filename:
             return
-    if args.filename is None and not (args.detailed and args.target):
+    if not args.filename and not (args.detailed and args.target):
         parser.error('give a file (or with --gather a star); --detailed '
                      'takes --target alone too')
     if args.gather is not None:
         from koloa.gather import gather
-        gather(args.filename, args.gather, dace=not args.no_dace,
+        gather(args.filename[0], args.gather, dace=not args.no_dace,
                carmenes=not args.no_carmenes, tess=not args.no_tess,
                refresh=args.refresh)
         return
     if args.detailed:
-        detailed_analysis(args.filename, outdir=args.outdir, name=args.name,
+        detailed_analysis(args.filename or None, outdir=args.outdir,
+                          name=args.name, instruments=args.instruments,
                           target=args.target, archive=not args.no_archive,
                           dace=not args.no_dace,
                           carmenes=not args.no_carmenes,
@@ -207,7 +214,7 @@ def main(argv=None):
                                          'fip' if args.detection_map
                                          else False))
         return
-    data = RVData.from_csv(args.filename, name=args.name, inst=args.inst,
+    data = RVData.from_csv(args.filename[0], name=args.name, inst=args.inst,
                            sequence_gap=args.gap)
     analyze(data, outdir=args.outdir, kmax=args.kmax, unit=args.unit,
             pmin=args.pmin, pmax=args.pmax, nsweep=args.nsweep,

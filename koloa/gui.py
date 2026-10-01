@@ -62,6 +62,17 @@ def _number(value: Any, kind=float) -> Optional[float]:
     return kind(str(value).strip())
 
 
+def _files(opts: Dict[str, Any]):
+    """the files of the page (files: path and instrument of each; or file,
+    one path) and their instruments ('' for the name the file gives)"""
+    files = opts.get('files')
+    if files is None:
+        files = [dict(path=opts.get('file'))] if opts.get('file') else []
+    files = [item for item in files if str(item.get('path') or '').strip()]
+    return ([str(item['path']).strip() for item in files],
+            [str(item.get('label') or '').strip() for item in files])
+
+
 def command(action: str, opts: Dict[str, Any]) -> List[str]:
     """
     The arguments of koloa's command line for an action of the page
@@ -73,7 +84,7 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
     :return: list of str, the arguments after 'koloa'
     """
     target = str(opts.get('target') or '').strip()
-    rvfile = str(opts.get('file') or '').strip()
+    paths, labels = _files(opts)
     off = {key: not opts.get(key, True) for key in
            ('dace', 'carmenes', 'tess', 'vizier', 'archive', 'gpcheck',
             'duck', 'latex', 'trend')}
@@ -94,11 +105,13 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
         return args
     if action != 'detailed':
         raise ValueError(f'no action {action}')
-    if not target and not rvfile:
+    if not target and not paths:
         raise ValueError('a file, a SIMBAD name, or (best) both')
     if fipgp == 'sho' and not rotation:
         raise ValueError('an SHO GP needs the rotation period')
-    args = ([rvfile] if rvfile else []) + ['--detailed']
+    args = paths + ['--detailed']
+    if any(labels):
+        args += ['--instruments'] + [lab or 'auto' for lab in labels]
     if target:
         args += ['--target', target]
     args += ['--outdir', str(opts.get('outdir') or 'koloa_output')]
@@ -348,22 +361,28 @@ def gathering(target: str, root: str = '') -> bool:
                and job.outputs == folder for job in JOBS.values())
 
 
-def velocities(rvfile: str = '', target: str = '', root: str = ''
+def velocities(files: Any = '', target: str = '', root: str = ''
                ) -> Dict[str, Any]:
     """
     The velocities of a file and of a star's gathered archives, by
     instrument (each with its median taken out), for the plot of the page
     """
     from koloa.data import merge
-    from koloa.detailed import _read, distinct
+    from koloa.detailed import distinct, read_files
     from koloa.gather import folder_name, load
     series, notes, source = [], [], {}
     filedata = None
-    if rvfile:
-        filedata = _read(rvfile, None)
-        series.append(filedata)
-        source.update({name: 'file' for name in filedata.instruments})
-        notes.append(f'{os.path.basename(rvfile)}: {filedata.n} points')
+    if isinstance(files, str):
+        files = [dict(path=files)] if files else []
+    paths, labels = _files(dict(files=files))
+    if paths:
+        parts = read_files(paths, [lab or None for lab in labels])
+        for path, part in zip(paths, parts):
+            source.update({name: f'file: {os.path.basename(path)}'
+                           for name in part.instruments})
+            notes.append(f'{os.path.basename(path)}: {part.n} points')
+        series += parts
+        filedata = parts[0] if len(parts) == 1 else merge(parts)
     if target:
         folder = os.path.join(root or 'archives', folder_name(target))
         if os.path.exists(os.path.join(folder, 'rv', 'all_rv.csv')):
@@ -461,8 +480,9 @@ class Handler(BaseHTTPRequestHandler):
                                           query.get('root', ''))
                 return self._json(state)
             if url.path == '/api/rv':
-                return self._json(velocities(query.get('file', ''),
-                                             query.get('target', ''),
+                files = (json.loads(query['files']) if query.get('files')
+                         else query.get('file', ''))
+                return self._json(velocities(files, query.get('target', ''),
                                              query.get('root', '')))
             if url.path == '/api/jobs':
                 return self._json([job.state(0) for job in JOBS.values()])
