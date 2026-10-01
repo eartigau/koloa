@@ -9,6 +9,7 @@ const TEXT = {
     velocities_hint: 'A file of velocities (LBL .rdb, csv, DACE csv), the archives gathered for the star, or both. Untick an instrument (or click it in the legend) to leave it out of the report.',
     use: 'Used', exclude: 'Instruments left out', source: 'Source', src_file: 'input file',
     file: 'File (optional)', root: 'Archives folder', plot: 'Plot', browse: 'Browse...', picking: 'choosing...',
+    new_target: 'New target',
     files_in: 'Files (optional): one per instrument or reduction', add_file: '+ Add a file', inst_auto: 'instrument (auto)', remove: 'remove',
     gather: 'Gather the archives',
     gather_hint: 'What DACE (with your key when there is one), CARMENES DR1 and TESS have of the star, kept in the archives folder, one folder per star.',
@@ -45,6 +46,7 @@ const TEXT = {
     velocities_hint: 'Un fichier de vitesses (LBL .rdb, csv, csv de DACE), les archives récupérées pour l’étoile, ou les deux. Décochez un instrument (ou cliquez-le dans la légende) pour l’écarter du rapport.',
     use: 'Utilisé', exclude: 'Instruments écartés', source: 'Source', src_file: 'fichier d’entrée',
     file: 'Fichier (facultatif)', root: 'Dossier des archives', plot: 'Tracer', browse: 'Parcourir...', picking: 'choix en cours...',
+    new_target: 'Nouvelle cible',
     files_in: 'Fichiers (facultatifs) : un par instrument ou réduction', add_file: '+ Ajouter un fichier', inst_auto: 'instrument (auto)', remove: 'retirer',
     gather: 'Récupérer les archives',
     gather_hint: 'Ce que DACE (avec votre clé s’il y en a une), CARMENES DR1 et TESS ont de l’étoile, rangé dans le dossier des archives, un dossier par étoile.',
@@ -321,6 +323,31 @@ function styleExcluded() {
   });
 }
 
+// a new target: every field back to the page's own default, no file, no
+//   star, no plot (the runs stay: closing a page does not stop them)
+function newTarget() {
+  document.querySelectorAll('main input, main select').forEach((el) => {
+    if (el.type === 'checkbox') el.checked = el.defaultChecked;
+    else if (el.tagName === 'SELECT') {
+      const def = [...el.options].find((opt) => opt.defaultSelected) || el.options[0];
+      el.value = def ? def.value : '';
+    } else el.value = el.defaultValue;
+  });
+  fileRows = [{ path: '', label: '' }];
+  renderFiles();
+  $('ident').innerHTML = '';
+  $('rvnote').textContent = '';
+  $('rvtable').innerHTML = '';
+  if (window.Plotly) Plotly.purge($('rvplot'));
+  $('rvplot').classList.remove('on');
+  lastRV = null;
+  onDisk = null;
+  history.replaceState(null, '', location.pathname);
+  updateCommands();
+  checkArchives();
+  $('target').focus();
+}
+
 // -----------------------------------------------------------------------------
 // the runs
 // -----------------------------------------------------------------------------
@@ -441,6 +468,7 @@ $('plot').addEventListener('click', plotVelocities);
 $('run-gather').addEventListener('click', () => run('gather'));
 $('run-detailed').addEventListener('click', () => run('detailed'));
 $('run-archive').addEventListener('click', () => run('archive'));
+$('newtarget').addEventListener('click', newTarget);
 $('lang').addEventListener('click', () => {
   lang = lang === 'fr' ? 'en' : 'fr';
   try { localStorage.setItem('koloa-lang', lang); } catch (e) { /* no storage */ }
