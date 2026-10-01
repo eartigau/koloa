@@ -13,6 +13,8 @@ koloa from the command line.
     koloa star.rdb --detailed --target "GJ 436"  # the SIMBAD name: all the
                                                  # instruments of the archives
     koloa --detailed --target "GJ 436"           # no file: the archives only
+    koloa --gui                                  # the same in the browser,
+                                                 # with the command lines
     koloa "GJ 436" --gather archives             # DACE, CARMENES DR1 and
                                                  # TESS in archives/GJ_436
 
@@ -120,6 +122,13 @@ def main(argv=None):
                              'of the star named instead of a file, in '
                              'ROOT/<star> (koloa.gather); --no-dace, '
                              '--no-carmenes, --no-tess leave one out')
+    parser.add_argument('--gui', action='store_true',
+                        help="koloa's GUI in the browser (koloa.gui): the "
+                             'SIMBAD resolver, the velocities by instrument, '
+                             'and the command line of every run')
+    parser.add_argument('--port', type=int, default=8765,
+                        help='with --gui: the port of the page (the next free '
+                             'one when taken)')
     parser.add_argument('--no-carmenes', action='store_true',
                         help='with --detailed or --gather: not CARMENES '
                              'DR1')
@@ -127,6 +136,10 @@ def main(argv=None):
                         help='more periods to test (detailed analysis: '
                              'candidates the archive does not list) [d]')
     args = parser.parse_args(argv)
+    if args.gui:
+        from koloa.gui import serve
+        serve(args.port)
+        return
     if args.filename is None and not (args.detailed and args.target):
         parser.error('give a file (or with --gather a star); --detailed '
                      'takes --target alone too')

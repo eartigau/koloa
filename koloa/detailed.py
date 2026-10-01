@@ -73,7 +73,7 @@ from koloa.fip import inflate_to_fit, oafip
 from koloa.fit import RVModel, mcmc_orbits
 from koloa.gpcheck import (figure_fold, figure_sequence, figure_whitened,
                            gp_signals)
-from koloa.log import log
+from koloa.log import log, step
 from koloa.outliers import NAMES, explain, instrument_list
 from koloa.periodogram import find_peaks, frequency_grid, oap
 from koloa.utils import blas_threads
@@ -728,6 +728,7 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
     os.makedirs(outdir, exist_ok=True)
     kplot.set_style(style)
     out: Dict[str, Any] = dict(figures=[])
+    step('the series')
     # 1. the series: a file, or none (the archives only, from the name)
     if source is None:
         if not target:
@@ -743,6 +744,7 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
         log(f'koloa, detailed: {star} ({data.name}), {data.n} exposures in '
             f'{data.nseq} visits over {data.baseline:.0f} d, '
             f'{", ".join(data.instruments)}')
+    step('SIMBAD and the archive')
     # 2. who the star is, and what is known of it
     ident, known = None, dict(host=None, planets=[])
     if archive or dace or carmenes or data is None:
@@ -766,6 +768,7 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
         except OSError as err:
             log(f'NASA Exoplanet Archive: {err}', 'warn')
     out['ident'], out['known'] = ident, known
+    step('more velocities: DACE, CARMENES, VizieR')
     # 3. more velocities: DACE, CARMENES, the ones given, the ones on VizieR
     sources = [] if data is None else [
         dict(kind='file', label=(os.path.basename(source)
@@ -886,6 +889,7 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
     # a jitter per visit, when visits hold several points
     seq_jitter = 'instrument' if multi and data.nseq < data.n else None
     nburn = nburn if nburn is not None else max(300, nsweep // 5)
+    step('the FIP, first pass')
     # 4. the noise without planets, and the FIP
     with blas_threads(1):
         noise = RVModel(data, [], likelihood='mixture', unit='both', trend=1,
@@ -896,6 +900,7 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
     # planet or no planet: the period or any of its aliases; one period
     #   per family of aliases
     found = sorted(_found(fip1))
+    step('the signals, fitted together')
     # 5. the signals, the known planets and the periods given, fitted
     #   together (a known planet the FIP does not find is tested all the
     #   same), against the known planets
@@ -939,6 +944,7 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
                     f'{eph["dphase"]:+.3f} in phase) from the published '
                     f'ephemeris carried {eph["ncycle"]} cycles', 'value')
         # 6. the FIP again, with the noise of the fit with the planets
+        step('the FIP, second pass')
         fip2, info2 = _fip(data, fit, kmax, nsweep, nburn, seed + 1,
                            'FIP, noise with the planets', gp=gpspec,
                            decided=info1.get('banded'))
@@ -951,6 +957,7 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
         orb['family_fip'] = fip2.family_containing(orb['P'][0],
                                                    1 / data.baseline)
     out.update(fit=fit, orbits=orbits, fip_first=fip1, fip_second=fip2)
+    step('the activity indicators')
     # 7. the activity indicators, and the rotation of the star
     indic = _indicators(data, pmin, pmax)
     out['indicators'] = indic
@@ -960,6 +967,7 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
     # 7b. the signals against a GP of the activity
     gpres = None
     if gp:
+        step('the GP of the activity')
         try:
             gpres = gp_signals(
                 data, [orb['P'][0] for orb in orbits],
@@ -979,6 +987,7 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
     lcs, phot = None, None
     # TESS needs the network, as the archive does
     if tess and archive:
+        step('TESS')
         from koloa import tess as ktess
         try:
             lcs = ktess.light_curves((ident or {}).get('tic') or star)
@@ -988,6 +997,7 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
     out['tess'] = phot
     ducks = {}
     if duck:
+        step('the duck tests')
         for orb in orbits:
             try:
                 report = duck_test(data, orb['P'][0], fipres=fip2, gp=False,
@@ -1002,6 +1012,7 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
     # 8c. the detection map: which planets the series could have found
     dmap = None
     if detection_map:
+        step('the detection map')
         prot = (known.get('star') or {}).get('rotation')
         try:
             if detection_map == 'search':
@@ -1015,9 +1026,11 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
         except Exception as err:  # the map is a help, not a stop
             log(f'detection map: {err}', 'warn')
     out['detection_map'] = dmap
+    step('why each outlier is one')
     # 9. why each outlier is one
     why = explain(fit, keys=keys)
     out['outliers'] = why
+    step('the figures')
     # 10. the figures, the report and the summary
     safe = data.name.replace(' ', '_')
     figs, named = out['figures'], {}
@@ -1166,6 +1179,7 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
     # 11. the report, in LaTeX and PDF
     paths = {}
     if latex:
+        step('the report, LaTeX and PDF')
         from koloa.latex import compile_pdf, detailed_report
         tex = os.path.join(outdir, f'{safe}_report.tex')
         rep = dict(

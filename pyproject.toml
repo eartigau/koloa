@@ -28,5 +28,8 @@ koloa = "koloa.cli:main"
 [tool.setuptools]
 packages = ["koloa"]
 
+[tool.setuptools.package-data]
+koloa = ["gui_static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -65,6 +65,16 @@ def log(message: str, level: str = 'info'):
         print(f'{_timestamp()} | {message}', flush=True)
 
 
+def step(name: str):
+    """
+    The start of a step of an analysis: one line, 'step: <name>', that
+    koloa's GUI reads to show where a run is (and the terminal shows too)
+
+    :param name: str, the step
+    """
+    log(f'step: {name}', 'info')
+
+
 def loud_warning(message: str):
     """
     A warning that is both logged in orange and raised as a KoloaWarning

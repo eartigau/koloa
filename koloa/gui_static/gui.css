@@ -1,0 +1,92 @@
+/* koloa's GUI: what the shared theme (theme.css) does not have */
+.site-banner-inner { gap: 10px; }
+.site-banner-text { flex: 1; }
+button.home-link { cursor: pointer; font: inherit; }
+
+input, select {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.9rem;
+  color: var(--text);
+  background: rgba(4, 8, 16, 0.75);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 9px;
+  min-width: 0;
+}
+input:focus, select:focus { outline: none; border-color: var(--accent); }
+input[type="checkbox"] { padding: 0; accent-color: var(--accent); }
+
+button {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 0.92rem;
+  color: var(--text);
+  background: rgba(98, 194, 255, 0.12);
+  border: 1px solid rgba(98, 194, 255, 0.45);
+  border-radius: 999px;
+  padding: 7px 16px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+button:hover { border-color: var(--accent); color: #fff; }
+button:disabled { opacity: 0.45; cursor: default; }
+button.go { background: rgba(98, 194, 255, 0.25); font-weight: 700; }
+button.stop { border-color: rgba(230, 103, 103, 0.6); background: rgba(230, 103, 103, 0.12); }
+
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.row input[type="text"] { flex: 1; }
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px 12px;
+  margin: 8px 0;
+}
+.fields label { display: flex; flex-direction: column; gap: 4px; font-size: 0.82rem; color: var(--muted); }
+.checks { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0; font-size: 0.9rem; }
+.checks label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+.cmd { position: relative; margin: 10px 0 4px; }
+.cmd .codeblock { white-space: pre-wrap; word-break: break-all; padding-right: 76px; min-height: 1.2em; }
+.cmd .copy { position: absolute; top: 7px; right: 7px; padding: 3px 10px; font-size: 0.78rem; }
+.cmd .codeblock.error { color: #e66767; }
+
+.plot { width: 100%; min-height: 0; }
+.plot.on { height: 380px; margin-top: 6px; }
+table.mini { border-collapse: collapse; font-size: 0.85rem; margin-top: 6px; }
+table.mini td, table.mini th { padding: 3px 12px 3px 0; text-align: left; }
+table.mini th { color: var(--muted); font-weight: 500; }
+table.mini td.num { font-family: "IBM Plex Mono", monospace; text-align: right; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+
+#ident .stats-grid { margin-top: 10px; }
+#ident .stat .value { font-size: 0.95rem; word-break: break-word; }
+#ident .wide { grid-column: span 2; }
+
+/* the runs */
+.job { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 10px 0; background: rgba(6, 13, 24, 0.55); }
+.job-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.job-head .what { font-weight: 700; }
+.job-head .when { font-family: "IBM Plex Mono", monospace; color: var(--muted); font-size: 0.85rem; }
+.job-head .status { font-size: 0.8rem; border-radius: 999px; padding: 1px 9px; border: 1px solid var(--line); }
+.status.running { color: var(--accent); border-color: rgba(98, 194, 255, 0.5); }
+.status.done { color: #6ce2ad; border-color: rgba(108, 226, 173, 0.5); }
+.status.failed, .status.stopped { color: #e66767; border-color: rgba(230, 103, 103, 0.5); }
+.job-head .spacer { flex: 1; }
+.job .codeblock { font-size: 0.8rem; margin: 8px 0; white-space: pre-wrap; word-break: break-all; }
+ol.steps { list-style: none; padding: 0; margin: 6px 0; }
+ol.steps li { display: grid; grid-template-columns: 1.6em 1fr auto; gap: 6px; padding: 3px 0; border-bottom: 1px solid rgba(200, 220, 255, 0.06); }
+ol.steps .icon { text-align: center; }
+ol.steps .time { font-family: "IBM Plex Mono", monospace; color: var(--muted); font-size: 0.85rem; }
+ol.steps .detail { grid-column: 2 / 4; font-family: "IBM Plex Mono", monospace; color: var(--muted); font-size: 0.76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ok { color: #6ce2ad; }
+.bad { color: #e66767; }
+.hourglass { display: inline-block; animation: turn 2s ease-in-out infinite; }
+@keyframes turn { 0%, 40% { transform: rotate(0deg); } 50%, 90% { transform: rotate(180deg); } 100% { transform: rotate(360deg); } }
+.spin { display: inline-block; width: 0.9em; height: 0.9em; border: 2px solid rgba(98, 194, 255, 0.3); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -2px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.job details summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; margin-top: 6px; }
+.job pre.log { max-height: 320px; overflow: auto; font-size: 0.74rem; white-space: pre; }
+.files { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; font-family: "IBM Plex Mono", monospace; font-size: 0.82rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hourglass, .spin { animation: none; }
+}

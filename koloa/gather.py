@@ -62,7 +62,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from koloa.data import RVData, merge
-from koloa.log import log
+from koloa.log import log, step
 
 # =============================================================================
 # Define variables
@@ -338,6 +338,7 @@ def gather(target: str, root: str = '.', dace: bool = True,
     folder = os.path.join(root, folder_name(target))
     rvdir, photdir = os.path.join(folder, 'rv'), os.path.join(folder, 'phot')
     os.makedirs(folder, exist_ok=True)
+    step('SIMBAD')
     ident = resolve(target)
     log(f'{target}: SIMBAD {ident["main"]}, TIC '
         f'{(ident.get("tic") or "none").replace("TIC ", "")}', 'info')
@@ -363,6 +364,7 @@ def gather(target: str, root: str = '.', dace: bool = True,
             log(f'{key}: {text}', 'warn')
             return None
     if dace:
+        step('DACE')
         ddir = os.path.join(rvdir, 'dace')
         data = attempt('dace', lambda: dace_rv(ident, target, ddir,
                                                api_key=api_key,
@@ -381,6 +383,7 @@ def gather(target: str, root: str = '.', dace: bool = True,
                 status='none', message='DACE has no public velocities under '
                 'the names of the star')
     if carmenes:
+        step('CARMENES DR1')
         cdir = os.path.join(rvdir, 'carmenes')
         star = (attempt('carmenes', lambda: carmenes_star(ident['ra'],
                                                           ident['dec']))
@@ -400,6 +403,7 @@ def gather(target: str, root: str = '.', dace: bool = True,
                 status='none', message='not in CARMENES DR1, or no '
                 'velocity corrected for the nightly zero points')
     if tess:
+        step('TESS')
         lcs = attempt('tess', lambda: tess_photometry(ident, target, photdir,
                                                       refresh=refresh))
         if lcs is not None:
