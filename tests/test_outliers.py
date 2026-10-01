@@ -173,8 +173,9 @@ def test_detailed_analysis_runs_offline(tmp_path):
                    outliers=[dict(kind='visit', frac=0.1, amplitude=10.0)])
     # (a GP inside the FIP, koloa's default, needs a few hundred sweeps)
     out = detailed_analysis(sim['data'], outdir=str(tmp_path), archive=False,
-                            dace=False, kmax=1, nsweep=300, nburn=150,
-                            duck=False, gp=False, detection_map=False)
+                            dace=False, carmenes=False, kmax=1, nsweep=300,
+                            nburn=150, duck=False, gp=False,
+                            detection_map=False)
     assert out['fip_first'].pk is not None
     assert len(list(tmp_path.glob('*_report.txt'))) == 1
     assert len(list(tmp_path.glob('*_summary.json'))) == 1
@@ -206,3 +207,35 @@ def test_detection_map_of_a_series():
     assert len(dmap['K90']) == 12 and dmap['msini90'] is not None
     # a planet of 15 errors is found at short periods
     assert np.nanmax(rmap.rate[:4, -1]) >= 0.5
+
+
+def test_detailed_analysis_from_the_name_alone(tmp_path, monkeypatch):
+    """no file: the velocities of the archives (DACE and CARMENES, here
+    simulated), from the SIMBAD name; neither a file nor a name: an error"""
+    import pytest
+    from koloa import detailed
+    from koloa.data import RVData
+    from koloa.simulate import simulate
+
+    def series(inst, seed):
+        sim = simulate(planets=[dict(P=7.3, K=8.0)], err=1.5, seed=seed,
+                       nvisits=25, per_visit=1, baseline=300)['data']
+        return RVData(sim.time, sim.rv, sim.err,
+                      inst=np.full(sim.n, inst), name='star')
+    monkeypatch.setattr(detailed, 'resolve', lambda name: dict(
+        main=name, aliases=[], gj=None, hd=None, hip=None, tic=None,
+        gaia_dr3=None,
+        ra=10.0, dec=20.0))
+    monkeypatch.setattr(detailed, 'fetch_dace',
+                        lambda *args, **kwargs: series('HARPS15', 3))
+    monkeypatch.setattr(detailed, '_carmenes', lambda *args, **kwargs: (
+        series('CARMENES', 4), 'J00000+000, simulated'))
+    out = detailed.detailed_analysis(
+        None, outdir=str(tmp_path), target='Fake Star', archive=False,
+        vizier=False, tess=False, kmax=1, nsweep=200, nburn=100, duck=False,
+        gp=False, fip_gp=None, latex=False)
+    assert sorted(out['data'].instruments) == ['CARMENES', 'HARPS15']
+    kinds = [src['kind'] for src in out['sources']]
+    assert 'file' not in kinds and 'DACE' in kinds and 'CARMENES' in kinds
+    with pytest.raises(ValueError):
+        detailed.detailed_analysis(None, outdir=str(tmp_path))

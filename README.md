@@ -65,17 +65,21 @@ koloa data/kepler21_harpsn_dace_drs3.3.12.csv --outdir kepler21 --kmax 3
 This writes periodograms, FIPs, a fit, the duck test and every figure into
 `kepler21/`, with a text report and a JSON summary.
 
-The detailed analysis goes further, from one LBL `.rdb`:
+The detailed analysis goes further, from one LBL `.rdb`, from the SIMBAD
+name of the star, or (best) from both:
 
 ```
-koloa star.rdb --detailed --outdir star
+koloa star.rdb --detailed --target "GJ 436" --outdir star
+koloa --detailed --target "GJ 436" --outdir star     # the archives only
 ```
 
-It finds who the star is (SIMBAD, from the OBJECT column or `--target`),
-its known planets in the NASA Exoplanet Archive (every published solution),
-and more velocities on DACE (the public ones of every other instrument,
-merged with the file; DACE answers from some networks only, and the
-analysis goes on without it). Then the FIP of every instrument together in
+It finds who the star is (SIMBAD: the name given, or a guess from the
+file's OBJECT column), its known planets in the NASA Exoplanet Archive
+(every published solution), and more velocities: what DACE has of the star
+(every other instrument, merged with the file; DACE answers from some
+networks only, and the analysis goes on without it; a key in DACE_API_KEY
+or ~/.dacerc adds what its account may see) and CARMENES DR1 (corrected
+for the nightly zero points; `--no-carmenes` not to). Then the FIP of every instrument together in
 two passes (the errors of each instrument inflated to its noise, first
 without planets, then with them), the signals fitted together and set
 against the known planets, the activity indicators, the duck test, and why

@@ -10,6 +10,9 @@ koloa from the command line.
                                                  # two passes, why each
                                                  # outlier, a PDF report
     koloa star.rdb --detailed --literature paper_rvs.dat
+    koloa star.rdb --detailed --target "GJ 436"  # the SIMBAD name: all the
+                                                 # instruments of the archives
+    koloa --detailed --target "GJ 436"           # no file: the archives only
     koloa "GJ 436" --gather archives             # DACE, CARMENES DR1 and
                                                  # TESS in archives/GJ_436
 
@@ -32,9 +35,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog='koloa', description='Outlier-aware radial velocity analysis: '
         'periodograms, FIPs, fits and the duck test.')
-    parser.add_argument('filename', help='csv or rdb file (rjd, vrad, svrad '
-                        'and indicators with their errors), or with --gather '
-                        'the name of a star')
+    parser.add_argument('filename', nargs='?', default=None,
+                        help='csv or rdb file (rjd, vrad, svrad and '
+                             'indicators with their errors), or with --gather '
+                             'the name of a star; with --detailed it may be '
+                             'left out for the archives only (--target)')
     parser.add_argument('--outdir', default='koloa_output')
     parser.add_argument('--name', default=None, help='the target name')
     parser.add_argument('--kmax', type=int, default=3,
@@ -67,8 +72,10 @@ def main(argv=None):
                              'indicators, why each outlier is one, and a '
                              'LaTeX/PDF report')
     parser.add_argument('--target', default=None,
-                        help='the star, for SIMBAD, the archive and DACE '
-                             '(the OBJECT column by default)')
+                        help='the SIMBAD name of the star, for the archive, '
+                             'DACE, CARMENES and TESS (a guess from the '
+                             "file's OBJECT column otherwise); with "
+                             '--detailed, give a file, a name, or both')
     parser.add_argument('--no-dace', action='store_true',
                         help='do not ask DACE for more velocities')
     parser.add_argument('--no-archive', action='store_true',
@@ -114,11 +121,15 @@ def main(argv=None):
                              'ROOT/<star> (koloa.gather); --no-dace, '
                              '--no-carmenes, --no-tess leave one out')
     parser.add_argument('--no-carmenes', action='store_true',
-                        help='with --gather: not CARMENES DR1')
+                        help='with --detailed or --gather: not CARMENES '
+                             'DR1')
     parser.add_argument('--periods', nargs='+', type=float, default=None,
                         help='more periods to test (detailed analysis: '
                              'candidates the archive does not list) [d]')
     args = parser.parse_args(argv)
+    if args.filename is None and not (args.detailed and args.target):
+        parser.error('give a file (or with --gather a star); --detailed '
+                     'takes --target alone too')
     if args.gather is not None:
         from koloa.gather import gather
         gather(args.filename, args.gather, dace=not args.no_dace,
@@ -127,7 +138,9 @@ def main(argv=None):
     if args.detailed:
         detailed_analysis(args.filename, outdir=args.outdir, name=args.name,
                           target=args.target, archive=not args.no_archive,
-                          dace=not args.no_dace, literature=args.literature,
+                          dace=not args.no_dace,
+                          carmenes=not args.no_carmenes,
+                          literature=args.literature,
                           vizier=not args.no_vizier, periods=args.periods,
                           gp=not args.no_gp, kmax=args.kmax,
                           nsweep=args.nsweep, nburn=args.nburn,

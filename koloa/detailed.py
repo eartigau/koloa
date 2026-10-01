@@ -149,16 +149,58 @@ def _read(source: Union[str, RVData], name: Optional[str]) -> RVData:
 
 
 def _target(data: RVData, target: Optional[str]) -> Optional[str]:
-    """the name of the star: given, from the OBJECT column, or the series"""
+    """the name of the star: given, from the OBJECT column, or the series
+    (a guess: SIMBAD may not know it, and the archives then add nothing)"""
     if target:
         return target
+    guess = data.name
     for col in ('OBJECT', 'object', 'target', 'TARGET'):
         if col in data.meta and data.meta[col].dtype.kind in 'USO':
             names, counts = np.unique(data.meta[col], return_counts=True)
             best = str(names[np.argmax(counts)]).strip()
             if best:
-                return best
-    return data.name
+                guess = best
+                break
+    log(f'no SIMBAD name given: {guess!r}, from the file; give it '
+        f'(target=, --target) for the archives to find the star', 'warn')
+    return guess
+
+
+def _carmenes(ident: Dict[str, Any], star: str, folder: str,
+              data: Optional[RVData], refresh: bool = False):
+    """
+    The velocities of CARMENES DR1 that the series does not have (koloa.gather:
+    corrected for the nightly zero points), and a note for the sources
+
+    :return: tuple, RVData or None, and the note
+    """
+    from koloa.gather import carmenes_rv, carmenes_star
+    try:
+        cstar = carmenes_star(ident['ra'], ident['dec'])
+        if cstar is None:
+            return None, 'not in CARMENES DR1'
+        more = carmenes_rv(cstar, star, os.path.join(folder, 'carmenes'),
+                           refresh=refresh)
+    except OSError as err:
+        log(f'CARMENES DR1: {err}', 'warn')
+        return None, f'unreachable ({err})'
+    if more is None:
+        return None, (f'{cstar["carmenes_id"]}: no velocity corrected for the '
+                      f'nightly zero points')
+    if data is not None:
+        # the file's own CARMENES velocities, or the same spectra
+        if any(inst.upper().startswith('CARM') for inst in data.instruments):
+            return None, (f'{cstar["carmenes_id"]}: the file has CARMENES '
+                          f'velocities')
+        nearest = np.min(np.abs(more.time[:, None] - data.time[None, :]),
+                         axis=1)
+        keep = nearest >= 1.0 / 1440
+        if not np.any(keep):
+            return None, (f'{cstar["carmenes_id"]}: nothing the file does '
+                          f'not have')
+        more = more.select(keep)
+    return more, (f'{cstar["carmenes_id"]}, velocities corrected for the '
+                  f'nightly zero points (Ribas et al. 2023)')
 
 
 def fetch_dace(names: Sequence[str], folder: str, exclude: Sequence[str] = (),
@@ -569,10 +611,12 @@ def _ephemeris(orb: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 dphase=float(diff / conj['P']), source=conj['source'])
 
 
-def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed',
+def detailed_analysis(source: Union[str, RVData, None] = None,
+                      outdir: str = 'koloa_detailed',
                       name: Optional[str] = None, target: Optional[str] = None,
                       archive: bool = True, dace: bool = True,
                       dace_folder: Optional[str] = None,
+                      carmenes: bool = True,
                       literature: Optional[Sequence[Union[str, RVData]]]
                       = None, vizier: bool = True,
                       periods: Optional[Sequence[float]] = None,
@@ -593,15 +637,23 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
     """
     Everything koloa can say about a star (see the module's docstring)
 
-    :param source: str or RVData, an LBL .rdb, a csv, or a series
+    :param source: str, RVData or None: an LBL .rdb, a csv, or a series;
+                   None for the archives only (DACE, CARMENES DR1, VizieR),
+                   from the star's name (target)
     :param outdir: str, where the report, the summary and the figures go
     :param name: str or None, the name of the series
-    :param target: str or None, the name of the star for SIMBAD, the
-                   archive and DACE (from the OBJECT column when None)
+    :param target: str or None, the SIMBAD name of the star, for SIMBAD, the
+                   archive, DACE, CARMENES and TESS (from the OBJECT column
+                   of the file when None; needed without a file)
     :param archive: bool, ask the NASA Exoplanet Archive
-    :param dace: bool, ask DACE for more velocities
-    :param dace_folder: str or None, where the DACE CSV is kept (outdir when
-                        None)
+    :param dace: bool, ask DACE for more velocities (what it has of the
+                 star: with no public entry, nothing)
+    :param dace_folder: str or None, where the DACE and CARMENES files are
+                        kept (outdir when None)
+    :param carmenes: bool, add the velocities of CARMENES DR1 (Ribas et al.
+                     2023, the GTO of 2016 to 2020, about 360 M dwarfs of
+                     the north), corrected for the nightly zero points
+                     (koloa.gather)
     :param literature: list or None, published velocities to add: files (a
                        VizieR .dat, time velocity error instrument, without
                        a header; or a csv or .rdb with named columns) or
@@ -676,15 +728,24 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
     os.makedirs(outdir, exist_ok=True)
     kplot.set_style(style)
     out: Dict[str, Any] = dict(figures=[])
-    # 1. the series
-    data = _read(source, name)
-    star = _target(data, target)
-    log(f'koloa, detailed: {star} ({data.name}), {data.n} exposures in '
-        f'{data.nseq} visits over {data.baseline:.0f} d, '
-        f'{", ".join(data.instruments)}')
+    # 1. the series: a file, or none (the archives only, from the name)
+    if source is None:
+        if not target:
+            raise ValueError('detailed_analysis: give a file of velocities, '
+                             'or the SIMBAD name of the star (target=), or '
+                             'both')
+        data, star = None, target
+        log(f'koloa, detailed: {star}, no file: the velocities of the '
+            f'archives')
+    else:
+        data = _read(source, name)
+        star = _target(data, target)
+        log(f'koloa, detailed: {star} ({data.name}), {data.n} exposures in '
+            f'{data.nseq} visits over {data.baseline:.0f} d, '
+            f'{", ".join(data.instruments)}')
     # 2. who the star is, and what is known of it
     ident, known = None, dict(host=None, planets=[])
-    if archive or dace:
+    if archive or dace or carmenes or data is None:
         try:
             ident = resolve(star)
             log(f'SIMBAD: {ident["main"]} ('
@@ -705,11 +766,11 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
         except OSError as err:
             log(f'NASA Exoplanet Archive: {err}', 'warn')
     out['ident'], out['known'] = ident, known
-    # 3. more velocities: DACE, the ones given, the ones on VizieR
-    sources = [dict(kind='file', label=(os.path.basename(source)
-                                        if isinstance(source, str)
-                                        else data.name),
-                    n=int(data.n), instruments=_counts(data), note='')]
+    # 3. more velocities: DACE, CARMENES, the ones given, the ones on VizieR
+    sources = [] if data is None else [
+        dict(kind='file', label=(os.path.basename(source)
+                                 if isinstance(source, str) else data.name),
+             n=int(data.n), instruments=_counts(data), note='')]
     if not dace:
         sources.append(dict(kind='DACE', label='DACE', n=0, instruments={},
                             note='not asked'))
@@ -719,10 +780,12 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
     else:
         names = dace_names(ident, star)
         more = fetch_dace(names, dace_folder or outdir,
-                          exclude=data.instruments, times=data.time,
+                          exclude=data.instruments if data else (),
+                          times=data.time if data else None,
                           refresh=refresh)
         if more is not None:
-            data = merge([data, more], name=data.name)
+            data = (more if data is None
+                    else merge([data, more], name=data.name))
             log(f'with DACE: {data.n} exposures in {data.nseq} visits, '
                 + ', '.join(f'{inst} {np.sum(data.inst == inst)}'
                             for inst in data.instruments), 'value')
@@ -732,6 +795,26 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
             note=('public velocities of the other instruments' if more else
                   'nothing added (unreachable, or no public velocity the '
                   'file does not have) under ' + ', '.join(names))))
+    if not carmenes:
+        sources.append(dict(kind='CARMENES', label='CARMENES DR1', n=0,
+                            instruments={}, note='not asked'))
+    elif ident is None or ident.get('ra') is None:
+        sources.append(dict(kind='CARMENES', label='CARMENES DR1', n=0,
+                            instruments={}, note='not asked: SIMBAD did not '
+                            'resolve the star'))
+    else:
+        more, note = _carmenes(ident, star, dace_folder or outdir, data,
+                               refresh)
+        if more is not None:
+            data = (more if data is None
+                    else merge([data, more], name=data.name))
+            log(f'with CARMENES DR1: {data.n} exposures, ' + ', '.join(
+                f'{inst} {np.sum(data.inst == inst)}'
+                for inst in data.instruments), 'value')
+        sources.append(dict(kind='CARMENES', label='CARMENES DR1',
+                            n=int(more.n) if more else 0,
+                            instruments=_counts(more) if more else {},
+                            note=note))
     others, labels, kinds = [], [], []
     for item in literature or []:
         try:
@@ -757,6 +840,19 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                 sources.append(dict(kind='VizieR', label=note['reference'],
                                     n=0, instruments={},
                                     note=f'{note["bibcode"]}: {note["note"]}'))
+    if others and data is None:
+        # no file and nothing on DACE or CARMENES: the first published
+        #   series is the base
+        data = others.pop(0)
+        sources.append(dict(kind=kinds[0][0], label=labels.pop(0),
+                            n=int(data.n), instruments=_counts(data),
+                            note=kinds.pop(0)[2]))
+        data.name = name or star
+    if data is None:
+        raise ValueError(f'no velocities of {star}: no file, and nothing on '
+                         f'DACE, CARMENES DR1 or VizieR')
+    if source is None:
+        data.name = name or star
     if others:
         data, added = klit.add(data, others, labels)
         for series, info, (kind, cat, note) in zip(others, added, kinds):
@@ -1081,7 +1177,8 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
             indicators=indic, duck=ducks, outliers=why, figures=named,
             gp=gpsum, threshold=THRESHOLD, runtime=time.time() - start,
             tess=phot, detection_map=dmap,
-            settings=dict(archive=archive, dace=dace, vizier=vizier,
+            settings=dict(archive=archive, dace=dace, carmenes=carmenes,
+                          vizier=vizier,
                           literature=len(literature or []),
                           periods=', '.join(f'{per}' for per in periods or [])
                           or '--', gp=gp, gp_nsim=gp_nsim, kmax=kmax,
