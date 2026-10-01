@@ -34,9 +34,12 @@ The folder of a star (the name as given, spaces as underscores):
 Times are BJD - 2400000 (rjd), velocities m/s. A file that is there is read
 back rather than asked for again, unless refresh=True.
 
-DACE: anonymous requests see the public data only (an API key adds what its
-account may see; it is never written anywhere). Some networks filter DACE:
-it is then reported as unreachable and the rest goes on. CARMENES DR1 (the
+DACE: with no API key, the public data only. A key is looked for in the
+environment variable DACE_API_KEY, then in ~/.dacerc (koloa.dace.find_key);
+with one, DACE adds what its account may see, data that may not be public,
+and the manifest says which key was used (where it came from, never the
+key). Some networks filter DACE: it is then reported as unreachable and the
+rest goes on. CARMENES DR1 (the
 GTO of 2016 to 2020) covers about 360 M dwarfs of the north; its velocities
 (a_rv) are per exposure, corrected for the nightly zero points, and leave
 out the exposures of nights the survey did not keep (transit sequences,
@@ -178,7 +181,7 @@ def variability(main: str) -> List[Dict[str, Any]]:
 # The archives
 # -----------------------------------------------------------------------------
 def dace_rv(ident: Dict[str, Any], target: str, folder: str,
-            api_key: Optional[str] = None, refresh: bool = False
+            api_key: Any = None, refresh: bool = False
             ) -> Optional[RVData]:
     """
     The velocities of a star on DACE, trying its names in turn (HD69830,
@@ -187,7 +190,8 @@ def dace_rv(ident: Dict[str, Any], target: str, folder: str,
     :param ident: dict, from koloa.archive.resolve
     :param target: str, the name as given
     :param folder: str, where the files go
-    :param api_key: str or None, a DACE API key (public data only if None)
+    :param api_key: str, None or False: a DACE API key, None to look for
+                    one, False for none (koloa.dace.find_key)
     :param refresh: bool, ask DACE even when a file is there
 
     :return: RVData or None (DACE does not know the star, or unreachable:
@@ -308,7 +312,7 @@ def tess_photometry(ident: Dict[str, Any], target: str, folder: str,
 # -----------------------------------------------------------------------------
 def gather(target: str, root: str = '.', dace: bool = True,
            carmenes: bool = True, tess: bool = True,
-           api_key: Optional[str] = None, refresh: bool = False
+           api_key: Any = None, refresh: bool = False
            ) -> Dict[str, Any]:
     """
     Everything public about a star, in root/<target> (see the module)
@@ -321,7 +325,9 @@ def gather(target: str, root: str = '.', dace: bool = True,
     :param dace: bool, the velocities of DACE
     :param carmenes: bool, the velocities of CARMENES DR1
     :param tess: bool, the light curves of TESS
-    :param api_key: str or None, a DACE API key (not written anywhere)
+    :param api_key: str, None or False: a DACE API key, None to look for
+                    one (DACE_API_KEY, ~/.dacerc), False for the public
+                    data only (the key is never written anywhere)
     :param refresh: bool, ask again for what is already there
 
     :return: dict, the manifest (also in manifest.json): folder, target,
@@ -363,7 +369,12 @@ def gather(target: str, root: str = '.', dace: bool = True,
                                                refresh=refresh))
         if data is not None:
             files = [os.path.join(ddir, fl) for fl in sorted(os.listdir(ddir))]
-            manifest['archives']['dace'] = _summary(data, files, folder)
+            from koloa.dace import find_key
+            origin = find_key(api_key)[1]
+            manifest['archives']['dace'] = dict(
+                _summary(data, files, folder),
+                key=(f'the key of {origin}: may hold data that are not '
+                     f'public' if origin else 'none: public data only'))
             series.append(data)
         elif 'dace' not in manifest['archives']:
             manifest['archives']['dace'] = dict(

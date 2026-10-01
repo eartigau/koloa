@@ -17,6 +17,14 @@ Each era has its own zero point, so each is an instrument for koloa.
 DACE filters some networks (the TLS handshake then stalls): fetch from
 another network, or keep the CSV file and work from it.
 
+The API key (DACE, 'My account'), when none is given, is looked for in the
+environment variable DACE_API_KEY, then in ~/.dacerc, the file dace-query
+reads ([user], key = apiKey:<key>); keep it readable by you only (chmod
+600). With a key, DACE also serves what its account may see, data that may
+not be public: the CSV files then hold them. DACE_API_KEY set to nothing
+(DACE_API_KEY= koloa ...) or api_key=False asks anonymously. The key is
+never written anywhere nor logged.
+
     from koloa.dace import fetch, rvdata
     path = fetch('HD69830', 'hd69830_dace.csv')     # once, with the network
     data = rvdata(path, name='HD 69830')            # an RVData, per era
@@ -25,13 +33,14 @@ Created on 2026-09-29
 
 @author: artigau
 """
+import configparser
 import csv
 import json
 import os
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -51,9 +60,45 @@ INDICATORS = {'ccf_fwhm': 'fwhm', 'ccf_bispan': 'bis', 'ccf_contrast': 'contrast
               'spectro_halpha': 'halpha'}
 
 
+#: the file of the DACE API key, as dace-query reads it
+DACERC = os.path.join(os.path.expanduser('~'), '.dacerc')
+
+
 # =============================================================================
 # Define functions
 # =============================================================================
+def find_key(api_key: Any = None) -> Tuple[Optional[str], Optional[str]]:
+    """
+    The DACE API key: the one given, else the environment variable
+    DACE_API_KEY, else ~/.dacerc ([user], key = apiKey:<key>)
+
+    :param api_key: str, None (look for one) or False (none: public data)
+
+    :return: tuple, the key (None for none) and where it came from
+             ('given', 'DACE_API_KEY', '~/.dacerc' or None)
+    """
+    if api_key is False:
+        return None, None
+    if api_key:
+        return str(api_key), 'given'
+    if 'DACE_API_KEY' in os.environ:
+        # set to nothing: anonymous on purpose
+        key = os.environ['DACE_API_KEY'].strip()
+        return (key, 'DACE_API_KEY') if key else (None, None)
+    if os.path.exists(DACERC):
+        config = configparser.ConfigParser()
+        try:
+            config.read(DACERC)
+            key = config.get('user', 'key', fallback='').strip()
+        except configparser.Error:
+            key = ''
+        if key.startswith('apiKey:'):
+            key = key[len('apiKey:'):]
+        if key:
+            return key, '~/.dacerc'
+    return None, None
+
+
 def _columns(payload) -> Dict[str, list]:
     """
     Decode DACE's parameter lists into columns (its values are run-length
@@ -87,7 +132,7 @@ def _columns(payload) -> Dict[str, list]:
     return columns
 
 
-def fetch(target: str, path: str, api_key: Optional[str] = None,
+def fetch(target: str, path: str, api_key: Any = None,
           source: str = 'standard', limit: int = 20000,
           timeout: float = 120.0, refresh: bool = False) -> str:
     """
@@ -99,7 +144,8 @@ def fetch(target: str, path: str, api_key: Optional[str] = None,
     :param target: str, the name DACE knows the target by (e.g. HD69830)
     :param path: str, the CSV file written (and read back, if it exists and
                  refresh is False)
-    :param api_key: str or None, a DACE API key (anonymous if None)
+    :param api_key: str, None or False: a DACE API key, None to look for
+                    one (find_key), False for none (public data only)
     :param source: str, standard (the pipeline velocities, POSTDRS_A) or
                    telluric (the pipeline's telluric-corrected ones)
     :param limit: int, the most rows asked for
@@ -121,9 +167,12 @@ def fetch(target: str, path: str, api_key: Optional[str] = None,
            f'radial-velocities?{query}')
     request = urllib.request.Request(url, headers={
         'Accept': 'application/json', 'User-Agent': 'koloa'})
-    if api_key:
-        request.add_header('Authorization', f'apiKey:{api_key}')
-    log(f'asking DACE for the velocities of {target}', 'info')
+    key, origin = find_key(api_key)
+    if key:
+        request.add_header('Authorization', f'apiKey:{key}')
+    log(f'asking DACE for the velocities of {target}'
+        + (f' (with the key of {origin})' if key else ' (public data)'),
+        'info')
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.loads(response.read())

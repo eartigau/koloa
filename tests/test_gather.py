@@ -83,3 +83,19 @@ def test_load_reads_what_gather_wrote(tmp_path):
     star = kg.load(str(folder))
     assert star['rv'].n == 30 and len(star['tess']) == 1
     assert np.allclose(star['tess'][0]['flux'], [0.5, -0.3])
+
+
+def test_the_dace_key_is_looked_for(tmp_path, monkeypatch):
+    from koloa import dace
+    rc = tmp_path / '.dacerc'
+    rc.write_text('[user]\nkey = apiKey:abc123\n')
+    monkeypatch.setattr(dace, 'DACERC', str(rc))
+    monkeypatch.delenv('DACE_API_KEY', raising=False)
+    assert dace.find_key() == ('abc123', '~/.dacerc')
+    monkeypatch.setenv('DACE_API_KEY', 'xyz')
+    assert dace.find_key() == ('xyz', 'DACE_API_KEY')
+    # set to nothing, or False: the public data only
+    monkeypatch.setenv('DACE_API_KEY', '')
+    assert dace.find_key() == (None, None)
+    assert dace.find_key(False) == (None, None)
+    assert dace.find_key('given') == ('given', 'given')
