@@ -91,6 +91,10 @@ def main(argv=None):
                              'nightly means by default)')
     parser.add_argument('--no-detection-map', action='store_true',
                         help='with --detailed: no detection map')
+    parser.add_argument('--search-map', action='store_true',
+                        help='with --detailed: the quicker detection map of a '
+                             'blind periodogram search (no GP; an alias '
+                             'counts as missed) instead of the FIP one')
     parser.add_argument('--no-fip-gp', action='store_true',
                         help='with --detailed: no GP of the activity inside '
                              'the FIP')
@@ -114,7 +118,8 @@ def main(argv=None):
                           tess=not args.no_tess, site=args.site,
                           fip_gp=None if args.no_fip_gp else 'auto',
                           nightly=False if args.exposures else None,
-                          detection_map=not args.no_detection_map)
+                          detection_map=(False if args.no_detection_map else
+                                         'search' if args.search_map else 'fip'))
         return
     data = RVData.from_csv(args.filename, name=args.name, inst=args.inst,
                            sequence_gap=args.gap)

@@ -84,3 +84,18 @@ def test_family_and_sites():
     ra, dec = kal._sun(jd)
     alt = kal.altitude(ra, dec, jd, 51.48, 0.0)
     assert alt[0] > 30 and alt[1] < -30
+
+
+def test_detection_map_by_the_fip():
+    """the adaptive map: rounds of injections per band, a strong planet
+    found, the levels ordered"""
+    from koloa.fipmap import fip_map, _logistic_fit, _levels
+    sim = simulate(seed=5, err=1.0)
+    dmap = fip_map(sim['data'], 1.5, 40.0, nband=2, nround=2, per_round=2,
+                   kmax=1, nsweep=60, nburn=40, workers=2, nboot=20)
+    assert len(dmap['injections']) == 8
+    assert dmap['K90'][0] >= dmap['K50'][0] > 0
+    # the logistic fit: found above ln K = 1, missed below
+    lnk = np.linspace(-1, 3, 40)
+    k50, k90 = _levels(*_logistic_fit(lnk, lnk > 1))
+    assert abs(np.log(k50) - 1) < 0.2 and k90 > k50

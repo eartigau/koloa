@@ -774,11 +774,66 @@ def _indicators(rep: Dict[str, Any], folder: str) -> str:
     return '\n'.join(out) + '\n'
 
 
+def _detection_fip(rep: Dict[str, Any], dmap: Dict[str, Any],
+                   folder: str) -> str:
+    """the detection map by the FIP"""
+    edges = dmap['period_edges']
+    mass = dmap.get('msini50') is not None
+    out = ['\\section{The detection map}',
+           'Which planets the series could have found, by the rule that '
+           'decides: circular planets injected into the series (the signals '
+           'found taken out), each looked for by the FIP with the same GP of '
+           'the activity, and found when its period or any of its aliases '
+           f'has a FIP below {dmap["threshold"]:g}. In each period band the '
+           'injections are adaptive (rounds at the K where a logistic curve '
+           'fitted to the band puts 50 and 90\\,\\%; '
+           f'{len(dmap["injections"])} planets in all); the ranges are the '
+           '16--84\\,\\% of a bootstrap of the injections.\n']
+    out.append('\\begin{tabular}{@{}lrr' + ('rr' if mass else '')
+               + '@{}}\n\\toprule\nP [d] & K$_{50}$ [m/s] & K$_{90}$ [m/s]'
+               + (' & m sin i$_{50}$ [M$_\\oplus$] & m sin i$_{90}$ '
+                  '[M$_\\oplus$]' if mass else '') + ' \\\\\n\\midrule')
+    def level(ib, key):
+        note = (dmap.get(f'notes{key}') or [None] * 99)[ib]
+        if note:
+            sign = '$>$' if note.startswith('>') else '$<$'
+            return f'{sign}\\,{note[2:]} (not reached)'
+        rng = dmap[f'K{key}_range'][ib]
+        return f'{dmap[f"K{key}"][ib]:.2f} ({rng[0]:.2f}--{rng[1]:.2f})'
+    for ib in range(len(dmap['periods'])):
+        row = (f'{edges[ib]:.1f}--{edges[ib + 1]:.1f}'
+               + ('$^\\ast$' if dmap['unreliable'][ib] else '')
+               + f' & {level(ib, "50")} & {level(ib, "90")}')
+        if mass:
+            row += ''.join(f' & {val:.2f}' if np.isfinite(val) else ' & --'
+                           for val in (dmap['msini50'][ib],
+                                       dmap['msini90'][ib]))
+        out.append(row + ' \\\\')
+    out.append('\\bottomrule\n\\end{tabular}\n')
+    if np.any(dmap['unreliable']):
+        out.append(f'$^\\ast$ The band holds the rotation period '
+                   f'({dmap["prot"]:.0f}\\,d) or its half, where the GP of '
+                   f'the rotation competes with a planet.\n')
+    if any(dmap.get('notes90') or []):
+        out.append('Not reached: even the largest planets injected in the '
+                   'band were not found often enough. The GP of the activity '
+                   'explains slow signals as well as a planet does, which a '
+                   'single season cannot tell apart.\n')
+    out.append(_figure(rep['figures'].get('detection_map'), folder,
+                       'The injected planets (found filled, missed open), '
+                       'the K found 50\\,\\% (dashed) and 90\\,\\% (solid) '
+                       'of the time with their ranges, the signals found '
+                       '(stars) and the known planets (circles).', '0.6'))
+    return '\n'.join(out) + '\n'
+
+
 def _detection(rep: Dict[str, Any], folder: str) -> str:
     """the detection map: which planets the series could have found"""
     dmap = rep.get('detection_map')
     if dmap is None:
         return ''
+    if dmap.get('kind') == 'fip':
+        return _detection_fip(rep, dmap, folder)
     rmap = dmap['map']
     out = ['\\section{The detection map}',
            'Which planets the series could have found: circular planets '
