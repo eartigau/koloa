@@ -355,22 +355,36 @@ def velocities(rvfile: str = '', target: str = '', root: str = ''
     instrument (each with its median taken out), for the plot of the page
     """
     from koloa.data import merge
-    from koloa.detailed import _read
+    from koloa.detailed import _read, distinct
     from koloa.gather import folder_name, load
-    series, notes = [], []
+    series, notes, source = [], [], {}
+    filedata = None
     if rvfile:
-        series.append(_read(rvfile, None))
-        notes.append(f'{os.path.basename(rvfile)}: {series[-1].n} points')
+        filedata = _read(rvfile, None)
+        series.append(filedata)
+        source.update({name: 'file' for name in filedata.instruments})
+        notes.append(f'{os.path.basename(rvfile)}: {filedata.n} points')
     if target:
         folder = os.path.join(root or 'archives', folder_name(target))
         if os.path.exists(os.path.join(folder, 'rv', 'all_rv.csv')):
             gathered = load(folder)['rv']
-            if series:
-                keep = ~np.isin(gathered.inst, series[0].instruments)
-                gathered = gathered.select(keep) if keep.any() else None
-            if gathered is not None:
-                series.append(gathered)
-                notes.append(f'{folder}: {gathered.n} points')
+            # each archive set apart from the file, as the report does
+            for arch, tag, sel in (
+                    ('DACE', 'DACE',
+                     ~np.char.startswith(gathered.inst.astype(str), 'CARM')),
+                    ('CARMENES DR1', 'DR1',
+                     np.char.startswith(gathered.inst.astype(str), 'CARM'))):
+                if not np.any(sel):
+                    continue
+                part = gathered.select(sel)
+                if filedata is not None:
+                    part = distinct(part, filedata.instruments,
+                                    filedata.time, tag)
+                if part is None:
+                    continue
+                series.append(part)
+                source.update({name: arch for name in part.instruments})
+                notes.append(f'{arch} ({folder}): {part.n} points')
         else:
             notes.append(f'nothing gathered in {folder} yet')
     if not series:
@@ -380,6 +394,7 @@ def velocities(rvfile: str = '', target: str = '', root: str = ''
     for name in data.instruments:
         sel = data.inst == name
         out.append(dict(name=name, n=int(sel.sum()),
+                        source=source.get(name, ''),
                         time=np.round(data.time[sel], 6).tolist(),
                         rv=np.round(data.rv[sel], 3).tolist(),
                         err=np.round(data.err[sel], 3).tolist(),

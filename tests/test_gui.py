@@ -95,3 +95,32 @@ def test_the_dialog_that_picks_a_file(monkeypatch, tmp_path):
     assert gui.pick('file') == dict(path='/data/lbl_GJ436.rdb')
     assert gui.pick('folder', str(tmp_path)) == dict(path='out')
     assert gui.pick('file') == dict(cancelled=True)
+
+
+def test_the_file_and_the_archives_are_told_apart(tmp_path):
+    """NIRPS in the file and on DACE: two instruments, NIRPS (the file) and
+    NIRPS_DACE (what DACE has that the file does not), each with its
+    source; the same spectra are not counted twice"""
+    import numpy as np
+    from koloa.data import RVData
+    from koloa.gather import write_rv
+    rng = np.random.default_rng(1)
+    tfile = np.sort(rng.uniform(60000, 60300, 30))
+    # an LBL file of NIRPS (its EXTSN060 column says so)
+    (tmp_path / 'lbl.csv').write_text('rjd,vrad,svrad,EXTSN060\n' + ''.join(
+        f'{tt!r},{rng.normal(0, 3)!r},1.0,100.0\n' for tt in tfile))
+    tnew = np.sort(rng.uniform(60400, 60500, 10))
+    tharps = np.sort(rng.uniform(58000, 59000, 15))
+    tcarm = np.sort(rng.uniform(57400, 57700, 12))
+    times = np.concatenate([tfile[:20], tnew, tharps, tcarm])
+    insts = np.array(['NIRPS'] * 30 + ['HARPS15'] * 15 + ['CARMENES'] * 12)
+    write_rv(RVData(times, rng.normal(0, 3, len(times)),
+                    np.full(len(times), 1.0), inst=insts),
+             str(tmp_path / 'arch' / 'GJ_436' / 'rv' / 'all_rv.csv'))
+    res = gui.velocities(str(tmp_path / 'lbl.csv'), 'GJ 436',
+                         str(tmp_path / 'arch'))
+    got = {inst['name']: (inst['source'], inst['n'])
+           for inst in res['instruments']}
+    assert got == {'NIRPS': ('file', 30), 'NIRPS_DACE': ('DACE', 10),
+                   'HARPS15': ('DACE', 15),
+                   'CARMENES': ('CARMENES DR1', 12)}

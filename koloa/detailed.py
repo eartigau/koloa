@@ -188,17 +188,12 @@ def _carmenes(ident: Dict[str, Any], star: str, folder: str,
         return None, (f'{cstar["carmenes_id"]}: no velocity corrected for the '
                       f'nightly zero points')
     if data is not None:
-        # the file's own CARMENES velocities, or the same spectra
-        if any(inst.upper().startswith('CARM') for inst in data.instruments):
-            return None, (f'{cstar["carmenes_id"]}: the file has CARMENES '
-                          f'velocities')
-        nearest = np.min(np.abs(more.time[:, None] - data.time[None, :]),
-                         axis=1)
-        keep = nearest >= 1.0 / 1440
-        if not np.any(keep):
+        # set apart from the file's own CARMENES velocities, its spectra
+        #   not counted twice
+        more = distinct(more, data.instruments, data.time, 'DR1')
+        if more is None:
             return None, (f'{cstar["carmenes_id"]}: nothing the file does '
                           f'not have')
-        more = more.select(keep)
     return more, (f'{cstar["carmenes_id"]}, velocities corrected for the '
                   f'nightly zero points (Ribas et al. 2023)')
 
@@ -211,8 +206,8 @@ def fetch_dace(names: Sequence[str], folder: str, exclude: Sequence[str] = (),
 
     :param names: list of str, the names to try
     :param folder: str, where the CSV is kept
-    :param exclude: list of str, instruments to leave out (those of the file:
-                    DACE's pipeline velocities of the same spectra)
+    :param exclude: list of str, the instruments of the file: DACE's own
+                    of the same name are set apart (distinct)
     :param times: np.ndarray or None, the times of the file's exposures: a
                   DACE exposure within a minute of one is the same spectrum,
                   and is left out
@@ -236,24 +231,50 @@ def fetch_dace(names: Sequence[str], folder: str, exclude: Sequence[str] = (),
         except (ValueError, IndexError) as err:
             log(f'DACE, {name}: {err}', 'warn')
             continue
-        keep = [inst for inst in data.instruments
-                if not any(inst.upper().startswith(ex.upper())
-                           for ex in exclude)]
-        mask = np.isin(data.inst, keep)
-        if times is not None and len(times):
-            # the same spectra as the file's: the same time, within a minute
-            nearest = np.min(np.abs(data.time[:, None] - np.asarray(times)[None, :]),
-                             axis=1)
-            same = nearest < 1.0 / 1440
-            if np.any(same & mask):
-                log(f'DACE, {name}: {int(np.sum(same & mask))} exposures that '
-                    f'the file already has, left out', 'warn')
-            mask &= ~same
-        if not np.any(mask):
-            log(f'DACE, {name}: nothing that the file does not have', 'warn')
-            return None
-        return data.select(mask)
+        return distinct(data, exclude, times, 'DACE')
     return None
+
+
+def distinct(more: RVData, theirs: Sequence[str] = (),
+             times: Optional[np.ndarray] = None, source: str = 'DACE'
+             ) -> Optional[RVData]:
+    """
+    The velocities of an archive set apart from those of the file: an
+    instrument the file has too (NIRPS in an LBL file and on DACE, or an era
+    of it: HARPS and HARPS15) keeps its own name, <inst>_<source>, so that
+    each pipeline has its offset and can be left out on its own; and the
+    exposures that are the file's spectra (the same time, within a minute)
+    are left out, not counted twice
+
+    :param more: RVData, the archive's series
+    :param theirs: list of str, the instruments of the file
+    :param times: np.ndarray or None, the times of the file's exposures
+    :param source: str, the archive (DACE, DR1...), for the names
+
+    :return: RVData or None (nothing the file does not have)
+    """
+    mask = np.ones(more.n, dtype=bool)
+    if times is not None and len(times):
+        nearest = np.min(np.abs(more.time[:, None]
+                                - np.asarray(times)[None, :]), axis=1)
+        same = nearest < 1.0 / 1440
+        if np.any(same):
+            log(f'{source}: {int(np.sum(same))} exposures that the file '
+                f'already has (the same spectra), left out', 'warn')
+        mask &= ~same
+    if not np.any(mask):
+        log(f'{source}: nothing that the file does not have', 'warn')
+        return None
+    more = more.select(mask)
+    for inst in list(more.instruments):
+        if any(inst.upper().startswith(ex.upper())
+               or ex.upper().startswith(inst.upper()) for ex in theirs):
+            new = f'{inst}_{source}'
+            more.inst = np.where(more.inst == inst, new, more.inst)
+            more.zero_point[new] = more.zero_point.pop(inst)
+            log(f'{source}: {inst} is in the file too, from another '
+                f'pipeline: named {new}, with its own offset', 'value')
+    return more
 
 
 def _gp_spec(fip_gp: Any, known: Dict[str, Any]) -> Any:
@@ -877,9 +898,11 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
         sources.append(dict(
             kind='DACE', label='DACE', n=int(more.n) if more else 0,
             instruments=_counts(more) if more else {},
-            note=('public velocities of the other instruments' if more else
-                  'nothing added (unreachable, or no public velocity the '
-                  'file does not have) under ' + ', '.join(names))))
+            note=(('what the file does not have; an instrument of the file '
+                   'too is named <inst>_DACE (another pipeline, its own '
+                   'offset)') if more else
+                  'nothing added (unreachable, or no velocity the file does '
+                  'not have) under ' + ', '.join(names))))
     if not carmenes:
         sources.append(dict(kind='CARMENES', label='CARMENES DR1', n=0,
                             instruments={}, note='not asked'))

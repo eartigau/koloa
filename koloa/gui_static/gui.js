@@ -7,7 +7,7 @@ const TEXT = {
     star: 'Star', star_hint: 'Its SIMBAD name: the archives, DACE, CARMENES and TESS find it by that name.',
     resolve: 'Resolve', velocities: 'Velocities',
     velocities_hint: 'A file of velocities (LBL .rdb, csv, DACE csv), the archives gathered for the star, or both. Untick an instrument (or click it in the legend) to leave it out of the report.',
-    use: 'Used', exclude: 'Instruments left out',
+    use: 'Used', exclude: 'Instruments left out', source: 'Source', src_file: 'input file',
     file: 'File (optional)', root: 'Archives folder', plot: 'Plot', browse: 'Browse...', picking: 'choosing...',
     gather: 'Gather the archives',
     gather_hint: 'What DACE (with your key when there is one), CARMENES DR1 and TESS have of the star, kept in the archives folder, one folder per star.',
@@ -42,7 +42,7 @@ const TEXT = {
     star: 'Étoile', star_hint: 'Son nom SIMBAD : les archives, DACE, CARMENES et TESS la trouvent par ce nom.',
     resolve: 'Résoudre', velocities: 'Vitesses',
     velocities_hint: 'Un fichier de vitesses (LBL .rdb, csv, csv de DACE), les archives récupérées pour l’étoile, ou les deux. Décochez un instrument (ou cliquez-le dans la légende) pour l’écarter du rapport.',
-    use: 'Utilisé', exclude: 'Instruments écartés',
+    use: 'Utilisé', exclude: 'Instruments écartés', source: 'Source', src_file: 'fichier d’entrée',
     file: 'Fichier (facultatif)', root: 'Dossier des archives', plot: 'Tracer', browse: 'Parcourir...', picking: 'choix en cours...',
     gather: 'Récupérer les archives',
     gather_hint: 'Ce que DACE (avec votre clé s’il y en a une), CARMENES DR1 et TESS ont de l’étoile, rangé dans le dossier des archives, un dossier par étoile.',
@@ -240,7 +240,7 @@ async function plotVelocities() {
       return;
     }
     const traces = res.instruments.map((inst, i) => ({
-      x: inst.time, y: inst.rv, name: `${inst.name} (${inst.n})`, type: 'scatter', mode: 'markers',
+      x: inst.time, y: inst.rv, name: `${inst.name} (${inst.source}, ${inst.n})`, type: 'scatter', mode: 'markers',
       error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: COLOURS[i % 8] },
       marker: { color: COLOURS[i % 8], symbol: SYMBOLS[i % 8], size: 7, line: { color: '#08111f', width: 1 } },
       hovertemplate: `${inst.name}<br>rjd %{x:.4f}<br>%{y:.2f} m/s<extra></extra>`,
@@ -256,9 +256,10 @@ async function plotVelocities() {
       }, { responsive: true, displaylogo: false });
     }
     lastRV = res.instruments;
-    $('rvtable').innerHTML = `<table class="mini"><tr><th>${esc(t('use'))}</th><th>${esc(t('inst'))}</th><th>${esc(t('n'))}</th><th>${esc(t('rms'))}</th></tr>`
+    $('rvtable').innerHTML = `<table class="mini"><tr><th>${esc(t('use'))}</th><th>${esc(t('inst'))}</th><th>${esc(t('source'))}</th><th>${esc(t('n'))}</th><th>${esc(t('rms'))}</th></tr>`
       + res.instruments.map((inst, i) => `<tr data-row="${esc(inst.name)}"><td><input type="checkbox" data-inst="${esc(inst.name)}" checked></td>`
         + `<td><span class="swatch" style="background:${COLOURS[i % 8]}"></span>${esc(inst.name)}</td>`
+        + `<td class="src src-${esc((inst.source || '').split(' ')[0].toLowerCase())}">${esc(inst.source === 'file' ? t('src_file') : inst.source)}</td>`
         + `<td class="num">${inst.n}</td><td class="num">${inst.rms.toFixed(2)}</td></tr>`).join('') + '</table>';
     if (window.Plotly && div.on) {
       div.removeAllListeners && div.removeAllListeners('plotly_legendclick');
