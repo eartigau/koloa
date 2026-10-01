@@ -124,3 +124,32 @@ def test_the_file_and_the_archives_are_told_apart(tmp_path):
     assert got == {'NIRPS': ('file: lbl.csv', 30), 'NIRPS_DACE': ('DACE', 10),
                    'HARPS15': ('DACE', 15),
                    'CARMENES': ('CARMENES DR1', 12)}
+
+
+def test_a_star_asked_again_is_read_from_the_disk(tmp_path, monkeypatch):
+    """the resolver asks the network once; then the disk answers (the copy
+    kept, or the star's archives folder first), unless refreshed"""
+    import json
+    from koloa import archive
+    calls = []
+
+    def ask(name, refresh=False):
+        calls.append(name)
+        return dict(name=name, main='Ross 905', aliases=[], tic=None,
+                    variability=[], carmenes=None)
+    monkeypatch.setattr(gui, '_ask_star', ask)
+    monkeypatch.setattr(archive, 'CACHE', str(tmp_path / 'cache'))
+    monkeypatch.setattr(archive, 'host_name', lambda ident: None)
+    first = gui.resolve_star('GJ 436', str(tmp_path / 'arch'))
+    again = gui.resolve_star('GJ 436', str(tmp_path / 'arch'))
+    assert calls == ['GJ 436'] and 'disk' not in first
+    assert again['disk'] == 'the copy kept' and again['main'] == 'Ross 905'
+    # the star's archives folder (koloa.gather) comes first
+    folder = tmp_path / 'arch' / 'GJ_436'
+    folder.mkdir(parents=True)
+    (folder / 'target.json').write_text(json.dumps(dict(
+        name='GJ 436', main='GJ 436 (gathered)', aliases=[], tic=None)))
+    assert gui.resolve_star('GJ 436', str(tmp_path / 'arch'))['main'] == (
+        'GJ 436 (gathered)')
+    gui.resolve_star('GJ 436', str(tmp_path / 'arch'), refresh=True)
+    assert calls == ['GJ 436', 'GJ 436']

@@ -91,7 +91,11 @@ or ~/.dacerc adds what its account may see) and CARMENES DR1 (corrected
 for the nightly zero points; `--no-carmenes` not to). The orbits are fitted
 with a trend in time in the likelihood, the acceleration of the star,
 reported in m/s/yr with its errors and drawn with the model
-(`--no-trend` not to, `--curvature` for its change too). Then the FIP of every instrument together in
+(`--no-trend` not to, `--curvature` for its change too). `--toi` fits
+the TESS Objects of Interest of the star with the ephemerides of TESS (its
+period and the time of a transit as gaussian priors, K free, its fold at
+the phase of the transit), whether the FIP finds them or not: all of them
+but the false positives, or the ones named (`--toi 175.01 175.02`). Then the FIP of every instrument together in
 two passes (the errors of each instrument inflated to its noise, first
 without planets, then with them), the signals fitted together and set
 against the known planets, the activity indicators, the duck test, and why

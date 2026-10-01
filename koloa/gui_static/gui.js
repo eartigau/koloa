@@ -10,6 +10,9 @@ const TEXT = {
     use: 'Used', exclude: 'Instruments left out', source: 'Source', src_file: 'input file',
     file: 'File (optional)', root: 'Archives folder', plot: 'Plot', browse: 'Browse...', picking: 'choosing...',
     new_target: 'New target', known: 'Known planets (NASA Exoplanet Archive)', none_known: 'none in the archive',
+    toi_title: 'TESS Objects of Interest', toi_pick: 'click a TOI to fit it with the ephemeris of TESS', toi_none: 'none',
+    toi_on: 'TESS ephemerides (TOIs)', tois: 'TOIs (empty: all)', transit: 'transit',
+    from_disk: 'from the disk', asked_now: 'asked the network now', refresh_star: 'Refresh',
     solution: 'solution', solutions: 'solutions',
     files_in: 'Files (optional): one per instrument or reduction', add_file: '+ Add a file', inst_auto: 'instrument (auto)', remove: 'remove',
     gather: 'Gather the archives',
@@ -48,6 +51,9 @@ const TEXT = {
     use: 'Utilisé', exclude: 'Instruments écartés', source: 'Source', src_file: 'fichier d’entrée',
     file: 'Fichier (facultatif)', root: 'Dossier des archives', plot: 'Tracer', browse: 'Parcourir...', picking: 'choix en cours...',
     new_target: 'Nouvelle cible', known: 'Planètes connues (NASA Exoplanet Archive)', none_known: 'aucune dans l’archive',
+    toi_title: 'TESS Objects of Interest', toi_pick: 'cliquez un TOI pour l’ajuster avec l’éphéméride de TESS', toi_none: 'aucun',
+    toi_on: 'éphémérides TESS (TOI)', tois: 'TOI (vide : tous)', transit: 'transit',
+    from_disk: 'lu sur le disque', asked_now: 'demandé au réseau à l’instant', refresh_star: 'Rafraîchir',
     solution: 'solution', solutions: 'solutions',
     files_in: 'Fichiers (facultatifs) : un par instrument ou réduction', add_file: '+ Ajouter un fichier', inst_auto: 'instrument (auto)', remove: 'retirer',
     gather: 'Récupérer les archives',
@@ -221,13 +227,13 @@ function tile(label, value, wide) {
   return `<div class="stat${wide ? ' wide' : ''}"><div class="label">${esc(label)}</div><div class="value">${value}</div></div>`;
 }
 
-async function resolveStar() {
+async function resolveStar(refresh) {
   const name = $('target').value.trim();
   if (!name) return;
   const box = $('ident');
   box.innerHTML = `<p class="hint"><span class="spin"></span> ${esc(t('resolving'))}</p>`;
   try {
-    const id = await api(`/api/resolve?name=${encodeURIComponent(name)}`);
+    const id = await api(`/api/resolve?${new URLSearchParams({ name, root: $('root').value.trim(), refresh: refresh === true ? '1' : '' })}`);
     const pos = id.ra != null ? `${id.ra.toFixed(5)}, ${id.dec.toFixed(5)}` : '-';
     const others = [id.gj, id.hd, id.hip].filter(Boolean).map(esc).join(', ') || '-';
     const chip = (per, text) => `<button type="button" class="chip" data-prot="${esc(per)}">${text}</button>`;
@@ -242,6 +248,13 @@ async function resolveStar() {
       + ` \u00b7 ${pl.solutions} ${esc(t(pl.solutions === 1 ? 'solution' : 'solutions'))}`
       + (pl.discovery ? ` \u00b7 ${esc(pl.discovery)}${pl.year ? ` ${esc(pl.year)}` : ''}` : '') + `</span></div>`).join('')
       || `<span class="hint">${esc(id.planets_error || t('none_known'))}</span>`;
+    const tois = (id.tois || []).map((ti) => `<button type="button" class="chip" data-toi="${esc(ti.toi)}"><b>TOI-${esc(ti.toi)}</b> ${esc(ti.disposition || '')} `
+      + `<span class="pnum">P ${num(ti.P, 6)} d \u00b7 ${esc(t('transit'))} ${num(ti.tc, 4)}`
+      + (ti.depth != null ? ` \u00b7 ${num(ti.depth, 0)} ppm` : '') + (ti.radius != null ? ` \u00b7 ${num(ti.radius, 2)} R\u2295` : '')
+      + `</span></button>`).join('');
+    const toiTile = tois ? tois + `<span class="hint">${esc(t('toi_pick'))}</span>`
+      : `<span class="hint">${esc(id.tois_error || t('toi_none'))}</span>`;
+    const where = id.disk ? `${t('from_disk')} (${id.disk}, ${id.disk_date})` : t('asked_now');
     if (rot.length) rot.push(`<span class="hint">${esc(t('pick'))}</span>`);
     const carm = id.carmenes ? `${esc(id.carmenes.carmenes_id)}, ${esc(id.carmenes.nobs)} ${esc(t('points'))}` : esc(t('not_in'));
     box.innerHTML = '<div class="stats-grid">'
@@ -249,7 +262,9 @@ async function resolveStar() {
       + tile(t('pos'), pos) + tile(t('gaia'), esc((id.gaia_dr3 || '-').replace('Gaia DR3 ', '')))
       + tile(t('names'), others, true) + tile(t('rotation'), rot.join('<br>') || esc(t('none')), true)
       + tile(t('known'), planets, true)
-      + tile(t('carmenes'), carm, true) + '</div>';
+      + tile(t('toi_title'), toiTile, true)
+      + tile(t('carmenes'), carm, true) + '</div>'
+      + `<p class="hint">${esc(where)} <button type="button" class="small" id="refresh-star">${esc(t('refresh_star'))}</button></p>`;
   } catch (err) {
     box.innerHTML = `<p class="hint bad">${esc(err.message)}</p>`;
   }
@@ -525,6 +540,15 @@ document.addEventListener('click', async (e) => {
     renderFiles();
     updateCommands();
   }
+  const toiChip = e.target.closest('[data-toi]');
+  if (toiChip) {
+    $('toi_on').checked = true;
+    const have = $('tois').value.split(/[\s,]+/).filter(Boolean);
+    if (!have.includes(toiChip.dataset.toi)) have.push(toiChip.dataset.toi);
+    $('tois').value = have.join(' ');
+    updateCommands();
+  }
+  if (e.target.id === 'refresh-star') resolveStar(true);
   const prot = e.target.closest('[data-prot]');
   if (prot) {
     $('rotation').value = prot.dataset.prot;

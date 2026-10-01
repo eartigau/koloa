@@ -124,6 +124,12 @@ def main(argv=None):
     parser.add_argument('--curvature', action='store_true',
                         help='with --detailed: fit the change of the '
                              'acceleration too, d2v/dt2 [m/s/yr^2]')
+    parser.add_argument('--toi', nargs='*', default=None, metavar='TOI',
+                        help='with --detailed: fit the TESS Objects of '
+                             'Interest of the star with the ephemerides of '
+                             'TESS (P and a transit as priors): all of them '
+                             '(but the false positives) with no number, or '
+                             'those given (175.01 175.02)')
     parser.add_argument('--rotation', type=float, default=None,
                         metavar='P',
                         help='with --detailed: a rotation period that can be '
@@ -207,6 +213,8 @@ def main(argv=None):
                                   or args.fip_gp == 'none' else
                                   args.fip_gp or ('sho' if args.rotation
                                                   else 'banded')),
+                          toi=(None if args.toi is None else
+                               (args.toi or True)),
                           rotation=args.rotation, trend=not args.no_trend,
                           curvature=args.curvature,
                           nightly=False if args.exposures else None,

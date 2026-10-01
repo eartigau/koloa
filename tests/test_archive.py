@@ -59,7 +59,7 @@ def test_the_archive_is_kept_and_looked_up_locally(tmp_path, monkeypatch):
                pl_refname='<a href=x>Someone et al. 2020</a>',
                pl_pubdate='2020-01')
     (tmp_path / 'tables.json').write_text(_json.dumps(dict(
-        fetched='2026-10-01 10:00', pscomppars=[row], ps=[sol])))
+        fetched='2026-10-01 10:00', pscomppars=[row], ps=[sol], toi=[])))
     monkeypatch.setattr(archive, 'CACHE', str(tmp_path))
     monkeypatch.setattr(archive, '_TABLES', None)
     monkeypatch.setattr(archive, '_query', lambda *a, **k: 1 / 0)

@@ -299,3 +299,35 @@ def test_several_files_each_its_instruments(tmp_path):
                             kmax=1, nsweep=150, nburn=80, duck=False,
                             gp=False, fip_gp=None, latex=False)
     assert out['data'].instruments == ['NIRPS', 'NIRPS_LBL2']
+
+
+def test_a_toi_is_fitted_with_the_ephemeris_of_tess(tmp_path, monkeypatch):
+    """a TOI of the star: fitted with P and the transit of TESS as priors
+    (whether the FIP finds it or not), its K back, its fold at the transit"""
+    from koloa import archive, detailed, kepler
+    from koloa.simulate import simulate
+    period, tp = 5.3, 60010.0
+    sim = simulate(planets=[dict(P=period, K=3.0, e=0.0, tp=tp)], err=1.5,
+                   seed=9, nvisits=40, per_visit=1, baseline=300)['data']
+    tc = kepler.tp_to_tc(tp, period, 0.0, 0.0)
+    monkeypatch.setattr(detailed, 'resolve', lambda name: dict(
+        main=name, aliases=[], gj=None, hd=None, hip=None, tic='TIC 1',
+        gaia_dr3=None, ra=None, dec=None))
+    monkeypatch.setattr(detailed, 'known_planets',
+                        lambda **kw: dict(host=None, planets=[]))
+    monkeypatch.setattr(archive, 'tois', lambda tic: [
+        dict(toi='999.01', disposition='PC', P=period, P_err=1e-5,
+             tc=tc + 40 * period, tc_err=1e-3, duration=1.0, depth=500.0,
+             radius=2.0),
+        dict(toi='999.02', disposition='FP', P=11.1, P_err=1e-5, tc=60000.0,
+             tc_err=1e-3, duration=1.0, depth=500.0, radius=2.0)])
+    out = detailed.detailed_analysis(
+        sim, outdir=str(tmp_path), target='TOI-999', dace=False,
+        carmenes=False, vizier=False, tess=False, toi=True, kmax=1,
+        nsweep=150, nburn=80, duck=False, gp=False, fip_gp=None,
+        latex=False)
+    assert [item['toi'] for item in out['tois']] == ['999.01']
+    orb = next(orb for orb in out['orbits'] if orb['origin'] == 'TOI 999.01')
+    assert abs(orb['P'][0] - period) < 1e-3
+    assert abs(orb['K'][0] - 3.0) < 4 * max(orb['K'][1], orb['K'][2])
+    assert 'TOI-999.01 (PC)' in out['report']

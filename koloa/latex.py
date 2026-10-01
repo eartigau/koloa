@@ -628,7 +628,9 @@ def _signals(rep: Dict[str, Any], folder: str) -> str:
                 sol = orb['comparisons'][0]
                 match += (f': K {sol["K"]} ({escape(sol["reference"])}, '
                           f'{sol["z"]:+.1f}$\\sigma$)')
-        origin = escape(orb.get('origin', 'FIP').split(' ')[0])
+        origin = str(orb.get('origin', 'FIP'))
+        origin = escape(origin.replace('TOI ', 'TOI-') if
+                        origin.startswith('TOI') else origin.split(' ')[0])
         fipv = rep['fip_second'].family_containing(per,
                                                    1 / rep['data'].baseline)
         if fipv is None:
@@ -658,6 +660,14 @@ def _signals(rep: Dict[str, Any], folder: str) -> str:
         if orb.get('activity'):
             out.append(f'\\status{{flag}}{{Activity at {per:.4f}\\,d:}}'
                        ' ' + pretty('; '.join(orb['activity'])) + '.\n')
+    if rep.get('tois'):
+        out.append('The TESS Objects of Interest ('
+                   + ', '.join(f'TOI-{escape(item["toi"])}'
+                               for item in rep['tois'])
+                   + ') are fitted with the ephemerides of TESS: their '
+                   'period and the time of a transit as gaussian priors, K '
+                   'free, the phase held by the transit (phase 0 of their '
+                   'folds).\n')
     out.append(_accel_tex(rep))
     out.append(model_fig)
     for ip, orb in enumerate(orbits):

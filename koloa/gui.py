@@ -141,6 +141,9 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
         args.append('--exposures')
     if opts.get('mcmc'):
         args.append('--mcmc')
+    if opts.get('toi_on'):
+        args += ['--toi'] + str(opts.get('tois') or '').replace(
+            ',', ' ').replace('TOI-', '').split()
     if opts.get('curvature'):
         args.append('--curvature')
     elif off['trend']:
@@ -256,17 +259,35 @@ class Job:
 # =============================================================================
 # What the page asks
 # =============================================================================
-def resolve_star(name: str) -> Dict[str, Any]:
+def resolve_star(name: str, root: str = '', refresh: bool = False
+                 ) -> Dict[str, Any]:
     """the SIMBAD resolver of the page: identifiers, position, TIC, the
     periods SIMBAD lists, CARMENES DR1, and the planets the NASA Exoplanet
     Archive knows (its copy kept here, koloa.archive)"""
-    from koloa.archive import host_name, known_planets, resolve
+    from koloa.archive import CACHE, host_name, known_planets, resolve, tois
     from koloa.gather import carmenes_star, folder_name, variability
-    ident = resolve(name)
-    out = dict(ident, folder=folder_name(name), variability=[],
-               carmenes=None, planets=[])
+    folder = folder_name(name)
+    # the disk first: the star's archives folder (koloa.gather), then what
+    #   an earlier question kept; the network only when neither has it
+    gathered = os.path.join(root or 'archives', folder, 'target.json')
+    kept = os.path.join(CACHE, 'stars', folder + '.json')
+    out = None
+    for path, where in ((gathered, 'the archives folder'),
+                        (kept, 'the copy kept')):
+        if not refresh and os.path.exists(path):
+            with open(path) as handle:
+                out = json.load(handle)
+            out.update(disk=where, disk_path=path, disk_date=time.strftime(
+                '%Y-%m-%d %H:%M', time.localtime(os.path.getmtime(path))))
+            break
+    if out is None:
+        out = _ask_star(name, refresh)
+        os.makedirs(os.path.dirname(kept), exist_ok=True)
+        with open(kept, 'w') as handle:
+            json.dump(out, handle, default=str)
+    out.update(folder=folder, planets=[], tois=[])
     try:
-        host = host_name(ident)
+        host = host_name(out)
         known = known_planets(host=host) if host else {}
         out['archive_host'] = host
         out['archive_rotation'] = (known.get('star') or {}).get('rotation')
@@ -280,13 +301,28 @@ def resolve_star(name: str) -> Dict[str, Any]:
             for pl in known.get('planets', [])]
     except Exception as err:  # a help, not a need
         out['planets_error'] = str(err)
+    if out.get('tic'):
+        try:
+            out['tois'] = tois(out['tic'])
+        except Exception as err:
+            out['tois_error'] = str(err)
+    return out
+
+
+def _ask_star(name: str, refresh: bool = False) -> Dict[str, Any]:
+    """what the network says of a star: SIMBAD (its names, its periods of
+    variability) and CARMENES DR1"""
+    from koloa.archive import resolve
+    from koloa.gather import carmenes_star, variability
+    out = dict(resolve(name, refresh=refresh), variability=[],
+               carmenes=None)
     try:
-        out['variability'] = variability(ident['main'])
+        out['variability'] = variability(out['main'])
     except Exception as err:  # a help, not a need
         out['variability_error'] = str(err)
-    if ident.get('ra') is not None:
+    if out.get('ra') is not None:
         try:
-            out['carmenes'] = carmenes_star(ident['ra'], ident['dec'])
+            out['carmenes'] = carmenes_star(out['ra'], out['dec'])
         except Exception as err:
             out['carmenes_error'] = str(err)
     return out
@@ -485,7 +521,9 @@ class Handler(BaseHTTPRequestHandler):
                                        defaults=DEFAULTS,
                                        archive=fetched()))
             if url.path == '/api/resolve':
-                return self._json(resolve_star(query.get('name', '')))
+                return self._json(resolve_star(
+                    query.get('name', ''), query.get('root', ''),
+                    query.get('refresh', '') == '1'))
             if url.path == '/api/pick':
                 return self._json(pick(query.get('kind', 'file'),
                                        query.get('start', '')))

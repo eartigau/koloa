@@ -530,6 +530,50 @@ def _map_lines(dmap: Dict[str, Any]) -> List[str]:
     return lines
 
 
+def _tois(toi: Any, ident: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """the TOIs asked for (True: all of the star's but the false positives;
+    or their numbers), with their ephemerides from TESS"""
+    if not toi:
+        return []
+    from koloa.archive import TOI_NOT_PLANETS, tois
+    if not ident or not ident.get('tic'):
+        log('TOI: SIMBAD gave no TIC number for the star: no TOI', 'warn')
+        return []
+    found = tois(ident['tic'])
+    if toi is True or (isinstance(toi, str) and toi.lower() == 'all'):
+        chosen = [item for item in found
+                  if item['disposition'] not in TOI_NOT_PLANETS]
+    else:
+        names = [toi] if isinstance(toi, (str, float, int)) else list(toi)
+        wanted = {f'{float(str(name).upper().replace("TOI", "").strip(" -")):.2f}'
+                  for name in names}
+        chosen = [item for item in found if item['toi'] in wanted]
+        for name in sorted(wanted - {item['toi'] for item in chosen}):
+            log(f'TOI-{name}: not a TOI of {ident["tic"]}', 'warn')
+    chosen = [item for item in chosen if item['tc'] is not None]
+    if not chosen:
+        log(f'TOI: none of {ident["tic"]} to fit', 'warn')
+    for item in chosen:
+        log(f'TOI-{item["toi"]} ({item["disposition"]}): P = {item["P"]:.7f} '
+            f'+- {item["P_err"] or 0:.1e} d, transit at {item["tc"]:.5f} '
+            f'+- {item["tc_err"] or 0:.1e}: fitted with these priors',
+            'value')
+    return chosen
+
+
+def _planet(period: float, toi: Optional[Dict[str, Any]] = None
+            ) -> Dict[str, Any]:
+    """an orbit to fit: its period free within 2 %, or a TOI's, with the
+    ephemeris of TESS as priors (P and the time of a transit)"""
+    if toi is None:
+        return dict(period=period, period_range=(0.98 * period,
+                                                 1.02 * period))
+    return dict(period=toi['P'], period_err=toi['P_err'] or 1e-4 * toi['P'],
+                tc=toi['tc'], tc_err=toi['tc_err'] or 0.01,
+                period_range=(0.98 * toi['P'], 1.02 * toi['P']),
+                toi=toi['toi'])
+
+
 def _acceleration(fit, trend: int, sampled: bool) -> Optional[Dict[str, Any]]:
     """the acceleration of the star (dv/dt) a fit measured, and its change
     when fitted, with their errors (koloa.secular.acceleration: the
@@ -759,7 +803,8 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
                       exclude: Optional[Sequence[str]] = None,
                       rotation: Optional[float] = None,
                       trend: bool = True, curvature: bool = False,
-                      instruments: Optional[Sequence[Optional[str]]] = None
+                      instruments: Optional[Sequence[Optional[str]]] = None,
+                      toi: Any = None
                       ) -> Dict[str, Any]:
     """
     Everything koloa can say about a star (see the module's docstring)
@@ -770,6 +815,13 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
                    instruments, named from its own columns, or as
                    instruments= says); None for the archives only (DACE,
                    CARMENES DR1, VizieR), from the star's name (target)
+    :param toi: None, True or a list of str: the TESS Objects of Interest
+                of the star (the toi table of the NASA Exoplanet Archive)
+                fitted with the ephemerides of TESS, P and the time of a
+                transit as gaussian priors (K free, the phase held by the
+                transit): True for all of them but the false positives,
+                or their numbers ('175.01'); each is fitted whether the
+                FIP finds it or not, its fold at the phase of the transit
     :param instruments: list of str or None, the instrument of each file,
                         in order ('auto', or None, for the name the file
                         gives)
@@ -924,6 +976,8 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
                     f'{last.get("K")} m/s ({last.get("reference")})', 'value')
         except OSError as err:
             log(f'NASA Exoplanet Archive: {err}', 'warn')
+    tois = _tois(toi, ident)
+    out['tois'] = tois
     if rotation:
         known['star'] = dict(known.get('star') or {},
                              rotation=float(rotation),
@@ -1092,7 +1146,9 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
     # 5. the signals, the known planets and the periods given, fitted
     #   together (a known planet the FIP does not find is tested all the
     #   same), against the known planets
-    tests = [(per, 'FIP') for per in found]
+    # the TOIs first: their ephemeris wins over a period found near theirs
+    tests = [(item['P'], f'TOI {item["toi"]}') for item in tois]
+    tests += [(per, 'FIP') for per in found]
     tests += [(float(pl['P']), f'known ({pl["name"]})')
               for pl in known.get('planets', [])
               if pl.get('P') and pmin <= pl['P'] < data.baseline]
@@ -1105,8 +1161,8 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
     mstar = (known.get('star') or {}).get('mass')
     fit, orbits, fip2, info2 = noise, [], fip1, info1
     if chosen:
-        planets = [dict(period=per, period_range=(0.98 * per, 1.02 * per))
-                   for per, _ in chosen]
+        bytoi = {f'TOI {item["toi"]}': item for item in tois}
+        planets = [_planet(per, bytoi.get(origin)) for per, origin in chosen]
         with blas_threads(1):
             if mcmc:
                 fit = mcmc_orbits(data, planets, likelihood='mixture',
@@ -1276,7 +1332,9 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
     for ip, orb in enumerate(orbits):
         keep(kplot.phase(
             fit, planet=ip, level='point',
-            title=f'{star}, {orb["P"][0]:.3f} d: K = {orb["K"][0]:.2f} m/s'),
+            title=f'{star}, {orb["P"][0]:.3f} d: K = {orb["K"][0]:.2f} m/s'
+                  + (f' ({orb["origin"]}; phase 0, the transit of TESS)'
+                     if str(orb.get('origin', '')).startswith('TOI') else '')),
             f'phase_{ip}')
         report = ducks.get(f'{orb["P"][0]:.4f}')
         if report is None:
@@ -1357,6 +1415,18 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
     gpsum = _gp_summary(gpres)
     text = _report(star, data, ident, known, fip1, fip2, orbits, indic,
                    ducks, why, time.time() - start, sources) + _gp_text(gpsum)
+    if tois:
+        text += ('\n\nTESS Objects of Interest, fitted with the ephemerides '
+                 'of TESS (P and the time of a transit as gaussian priors, K '
+                 'free; phase 0 of their folds is the transit)')
+        for item in tois:
+            orb = next((orb for orb in orbits if orb.get('origin')
+                        == f'TOI {item["toi"]}'), None)
+            text += (f'\n  TOI-{item["toi"]} ({item["disposition"]}): P = '
+                     f'{item["P"]:.7f} d, transit at {item["tc"]:.5f}'
+                     + (f'; K = {orb["K"][0]:.2f} -{orb["K"][1]:.2f} '
+                        f'+{orb["K"][2]:.2f} m/s' if orb else
+                        '; not fitted'))
     if accel:
         text += ('\n\nThe trend fitted with the planets (one for every '
                  'instrument)\n' + '\n'.join(f'  {line}' for line in
@@ -1394,8 +1464,10 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
             inflation_second=info2.get('inflation', {}), orbits=orbits,
             indicators=indic, duck=ducks, outliers=why, figures=named,
             gp=gpsum, threshold=THRESHOLD, runtime=time.time() - start,
-            tess=phot, detection_map=dmap, acceleration=accel,
+            tess=phot, detection_map=dmap, acceleration=accel, tois=tois,
             settings=dict(archive=archive, dace=dace, carmenes=carmenes,
+                          toi=', '.join(f'TOI-{item["toi"]}' for item in tois)
+                          or 'none',
                           trend=degree,
                           rotation=(f'{float(rotation):g} d, given' if rotation
                                     else 'the archive\'s'),

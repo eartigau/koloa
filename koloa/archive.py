@@ -63,6 +63,13 @@ PSCOMP_COLUMNS = ['hostname', 'gaia_dr3_id', 'tic_id', 'pl_name',
 #: the columns of ps kept (its solutions that give K)
 PS_COLUMNS = ['hostname', 'pl_name', 'pl_orbper', 'pl_rvamp', 'pl_rvamperr1',
               'pl_rvamperr2', 'pl_refname', 'pl_pubdate']
+#: the columns of the TESS Objects of Interest kept (the toi table)
+TOI_COLUMNS = ['toi', 'tid', 'tfopwg_disp', 'pl_orbper', 'pl_orbpererr1',
+               'pl_orbpererr2', 'pl_tranmid', 'pl_tranmiderr1',
+               'pl_tranmiderr2', 'pl_trandurh', 'pl_trandep', 'pl_rade']
+#: the dispositions of a TOI that is not a planet (false positive, false
+#: alarm), left out unless asked for by its number
+TOI_NOT_PLANETS = ('FP', 'FA')
 #: the tables, once read
 _TABLES: Optional[Dict[str, Any]] = None
 #: a fitted signal is a known planet when their periods are within this
@@ -87,19 +94,27 @@ PLANET_COLUMNS = dict(pl_tranmid='tc', pl_orbtper='tp', pl_orblper='omega',
 # =============================================================================
 # Define functions
 # =============================================================================
-def resolve(name: str, timeout: float = 30.0) -> Dict[str, Any]:
+def resolve(name: str, timeout: float = 30.0, refresh: bool = False
+            ) -> Dict[str, Any]:
     """
     The names of a star (CDS Sesame, SIMBAD's resolver, which takes most
-    spellings: Gl687, GJ 687, HD69830, Proxima...)
+    spellings: Gl687, GJ 687, HD69830, Proxima...), kept on disk once asked
+    (CACHE/sesame), since they do not change
 
     :param name: str, a name
     :param timeout: float [s]
+    :param refresh: bool, ask Sesame again
 
     :return: dict, name (as given), main (SIMBAD's main identifier), aliases
              (every identifier), and the ones koloa uses: gaia_dr3, tic,
              hip, hd, gj (None when SIMBAD has none), and ra, dec (J2000,
              degrees)
     """
+    kept = os.path.join(CACHE, 'sesame', re.sub(r'[^A-Za-z0-9+\-.]+', '_',
+                                                name.strip()) + '.json')
+    if os.path.exists(kept) and not refresh:
+        with open(kept) as handle:
+            return dict(json.load(handle), name=name)
     url = f'{SESAME}?{urllib.parse.quote(name)}'
     with urllib.request.urlopen(url, timeout=timeout) as resp:
         text = resp.read().decode('utf-8', 'replace')
@@ -115,12 +130,16 @@ def resolve(name: str, timeout: float = 30.0) -> Dict[str, Any]:
     # the position (J2000, degrees), for planning observations
     radeg = re.search(r'<jradeg>(.*?)</jradeg>', text)
     dedeg = re.search(r'<jdedeg>(.*?)</jdedeg>', text)
-    return dict(name=name, main=' '.join(main.group(1).split()),
-                aliases=aliases, gaia_dr3=first('Gaia DR3'),
-                tic=first('TIC'), hip=first('HIP'), hd=first('HD'),
-                gj=first('GJ'),
-                ra=float(radeg.group(1)) if radeg else None,
-                dec=float(dedeg.group(1)) if dedeg else None)
+    out = dict(name=name, main=' '.join(main.group(1).split()),
+               aliases=aliases, gaia_dr3=first('Gaia DR3'),
+               tic=first('TIC'), hip=first('HIP'), hd=first('HD'),
+               gj=first('GJ'),
+               ra=float(radeg.group(1)) if radeg else None,
+               dec=float(dedeg.group(1)) if dedeg else None)
+    os.makedirs(os.path.dirname(kept), exist_ok=True)
+    with open(kept, 'w') as handle:
+        json.dump(out, handle)
+    return out
 
 
 def _query(query: str, timeout: float = 60.0) -> List[Dict[str, Any]]:
@@ -154,6 +173,20 @@ def tables(refresh: bool = False) -> Dict[str, Any]:
     if os.path.exists(path) and not refresh:
         with open(path) as handle:
             out = json.load(handle)
+        if 'toi' not in out:
+            # a copy from before the TOIs were kept: they are added (and
+            #   without the network, the copy goes on without them)
+            log('fetching the TESS Objects of Interest of the archive')
+            try:
+                out['toi'] = _query(f'select {",".join(TOI_COLUMNS)} from '
+                                    f'toi', timeout=600)
+                with open(path + '.part', 'w') as handle:
+                    json.dump(out, handle)
+                os.replace(path + '.part', path)
+            except Exception as err:
+                log(f'the TOIs could not be fetched ({err}): none for now',
+                    'warn')
+                out['toi'] = []
     else:
         log(f'fetching the NASA Exoplanet Archive (a few MB, once; kept in '
             f'{CACHE})')
@@ -165,15 +198,18 @@ def tables(refresh: bool = False) -> Dict[str, Any]:
                    pscomppars=_query(f'select {cols} from pscomppars',
                                      timeout=600),
                    ps=_query(f'select {",".join(PS_COLUMNS)} from ps where '
-                             f'pl_rvamp is not null', timeout=600))
+                             f'pl_rvamp is not null', timeout=600),
+                   toi=_query(f'select {",".join(TOI_COLUMNS)} from toi',
+                              timeout=600))
         os.makedirs(CACHE, exist_ok=True)
         with open(path + '.part', 'w') as handle:
             json.dump(out, handle)
         os.replace(path + '.part', path)
         with open(os.path.join(CACHE, 'fetched.txt'), 'w') as handle:
             handle.write(out['fetched'] + '\n')
-        log(f'NASA Exoplanet Archive: {len(out["pscomppars"])} planets and '
-            f'{len(out["ps"])} published solutions with K, kept', 'value')
+        log(f'NASA Exoplanet Archive: {len(out["pscomppars"])} planets, '
+            f'{len(out["ps"])} published solutions with K and '
+            f'{len(out["toi"])} TOIs, kept', 'value')
     index: Dict[str, Dict[str, str]] = dict(gaia={}, tic={}, name={})
     for row in out['pscomppars']:
         for key, col in (('gaia', 'gaia_dr3_id'), ('tic', 'tic_id'),
@@ -183,6 +219,38 @@ def tables(refresh: bool = False) -> Dict[str, Any]:
     out['index'] = index
     _TABLES = out
     return out
+
+
+def tois(tic: Any) -> List[Dict[str, Any]]:
+    """
+    The TESS Objects of Interest of a star (the toi table of the archive,
+    its copy kept here): the ephemeris of each from the transits
+
+    :param tic: str or int, its TIC number ('TIC 307210830' will do)
+
+    :return: list of dict: toi ('175.01'), disposition (CP, KP, PC, APC,
+             FP, FA...), P and P_err [d], tc and tc_err (the time of a
+             transit, BJD - 2400000), duration [h], depth [ppm],
+             radius [Earth radii]; by TOI number
+    """
+    number = int(str(tic).replace('TIC', '').strip())
+
+    def err(row, col):
+        vals = [abs(row[key]) for key in (col + '1', col + '2')
+                if row.get(key) is not None]
+        return float(np.mean(vals)) if vals else None
+    out = []
+    for row in tables()['toi']:
+        if row.get('tid') != number or row.get('pl_orbper') is None:
+            continue
+        tc = row.get('pl_tranmid')
+        out.append(dict(
+            toi=f'{float(row["toi"]):.2f}', disposition=row.get('tfopwg_disp'),
+            P=float(row['pl_orbper']), P_err=err(row, 'pl_orbpererr'),
+            tc=None if tc is None else float(tc) - 2400000.0,
+            tc_err=err(row, 'pl_tranmiderr'), duration=row.get('pl_trandurh'),
+            depth=row.get('pl_trandep'), radius=row.get('pl_rade')))
+    return sorted(out, key=lambda item: float(item['toi']))
 
 
 def fetched() -> Optional[str]:
