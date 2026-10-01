@@ -81,6 +81,8 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
     fipgp = opts.get('fip_gp', 'banded')
     fipgp = {True: 'banded', False: 'none'}.get(fipgp, fipgp) or 'banded'
     rotation = _number(opts.get('rotation'))
+    if action == 'archive':
+        return ['--refresh-archive']
     if action == 'gather':
         if not target:
             raise ValueError('a SIMBAD name to gather the archives of')
@@ -362,9 +364,11 @@ class Handler(BaseHTTPRequestHandler):
                 name = os.path.basename(url.path)
                 return self._file(os.path.join(STATIC, name))
             if url.path == '/api/info':
+                from koloa.archive import fetched
                 return self._json(dict(cwd=os.getcwd(),
                                        python=sys.executable,
-                                       defaults=DEFAULTS))
+                                       defaults=DEFAULTS,
+                                       archive=fetched()))
             if url.path == '/api/resolve':
                 return self._json(resolve_star(query.get('name', '')))
             if url.path == '/api/archives':
@@ -417,6 +421,9 @@ class Handler(BaseHTTPRequestHandler):
                     if busy:
                         raise ValueError('the archives of this star are '
                                          'being gathered already')
+                elif body['action'] == 'archive':
+                    from koloa.archive import CACHE
+                    outputs = CACHE
                 else:
                     outputs = opts.get('outdir') or 'koloa_output'
                 job = Job(body['action'], args, outputs)

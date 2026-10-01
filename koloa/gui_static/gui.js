@@ -33,6 +33,8 @@ const TEXT = {
     fip_gp_sel: 'GP in the FIP', gp_banded: 'by period band', gp_sho: 'SHO at the rotation', gp_none: 'none',
     rotation_p: 'Rotation period [d]', refresh: 'Refresh', on_disk: 'already on disk', busy: 'being gathered...',
     pick: 'click a period to use it (an SHO at it in the FIP)',
+    archive_kept: 'NASA Exoplanet Archive: kept, of', archive_none: 'NASA Exoplanet Archive: not kept yet (fetched at the first report)',
+    refresh_archive: 'Refresh the archive',
   },
   fr: {
     tagline: 'Vitesses radiales robustes aux valeurs aberrantes · sur cette machine', docs: 'Docs',
@@ -65,6 +67,8 @@ const TEXT = {
     fip_gp_sel: 'GP dans le FIP', gp_banded: 'par bande de période', gp_sho: 'SHO à la rotation', gp_none: 'aucun',
     rotation_p: 'Période de rotation [j]', refresh: 'Rafraîchir', on_disk: 'déjà sur le disque', busy: 'récupération en cours...',
     pick: 'cliquez une période pour l’utiliser (un SHO à cette période dans le FIP)',
+    archive_kept: 'NASA Exoplanet Archive : copie locale du', archive_none: 'NASA Exoplanet Archive : pas encore de copie locale (faite au premier rapport)',
+    refresh_archive: 'Rafraîchir l’archive',
   },
 };
 // the instruments: eight hues checked for colour-blind separation on the
@@ -173,8 +177,17 @@ function checkArchives() {
 }
 
 let cwd = '';
+let archiveDate = null;
 function showCwd() {
   if (cwd) $('cwd').textContent = `${t('cwd')} ${cwd} ${t('rel')}`;
+  $('archive-date').textContent = archiveDate ? `${t('archive_kept')} ${archiveDate}` : t('archive_none');
+}
+
+async function refreshInfo() {
+  try {
+    const info = await api('/api/info');
+    cwd = info.cwd; archiveDate = info.archive; showCwd();
+  } catch (err) { /* later */ }
 }
 
 // -----------------------------------------------------------------------------
@@ -335,7 +348,7 @@ function renderJobs() {
     const base = `/api/output?id=${job.id}&name=`;
     const files = (job.files || []).map((f) => `<a href="${base}${encodeURIComponent(f)}" target="_blank">${esc(f)}</a>`).join('');
     const report = job.report ? `<a href="${base}${encodeURIComponent(job.report)}" target="_blank"><button type="button">${esc(t('report'))}</button></a>` : '';
-    const what = job.action === 'gather' ? t('gather') : t('detailed');
+    const what = { gather: t('gather'), archive: t('refresh_archive') }[job.action] || t('detailed');
     return `<div class="job" id="job-${job.id}">
       <div class="job-head"><span class="what">${esc(what)}</span>
         <span class="status ${job.status}">${esc(t(job.status))}</span>
@@ -367,6 +380,7 @@ async function poll() {
     try {
       keep(await api(`/api/job?id=${job.id}&since=${job.lines.length}`));
       if (job.action === 'gather' && jobs.get(job.id).status !== 'running') checkArchives();
+      if (job.action === 'archive' && jobs.get(job.id).status !== 'running') refreshInfo();
     } catch (err) { /* the server may be gone */ }
   }
   renderJobs();
@@ -400,6 +414,7 @@ $('target').addEventListener('keydown', (e) => { if (e.key === 'Enter') resolveS
 $('plot').addEventListener('click', plotVelocities);
 $('run-gather').addEventListener('click', () => run('gather'));
 $('run-detailed').addEventListener('click', () => run('detailed'));
+$('run-archive').addEventListener('click', () => run('archive'));
 $('lang').addEventListener('click', () => {
   lang = lang === 'fr' ? 'en' : 'fr';
   try { localStorage.setItem('koloa-lang', lang); } catch (e) { /* no storage */ }
@@ -425,11 +440,8 @@ document.addEventListener('click', async (e) => {
 
 (async () => {
   applyLang();
-  try {
-    const info = await api('/api/info');
-    cwd = info.cwd; showCwd();
-    (await api('/api/jobs')).forEach(keep);
-  } catch (err) { /* nothing yet */ }
+  await refreshInfo();
+  try { (await api('/api/jobs')).forEach(keep); } catch (err) { /* nothing yet */ }
   renderJobs();
   // the fields from the address (?target=GJ%20436&file=...&root=...&plot=1)
   const params = new URLSearchParams(location.search);

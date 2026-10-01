@@ -43,3 +43,31 @@ def test_reference_reads_the_archive_link():
                            'Harada et al. 2025</a>')
     assert text == 'Harada et al. 2025'
     assert url.endswith('2025AJ....170..343H/abstract')
+
+
+def test_the_archive_is_kept_and_looked_up_locally(tmp_path, monkeypatch):
+    """the two tables kept on disk: a star found by its Gaia DR3 number, its
+    TIC or a name (any case and spacing), without the network"""
+    import json as _json
+    from koloa import archive
+    row = {col: None for col in archive.PSCOMP_COLUMNS}
+    row.update(hostname='GJ 436', gaia_dr3_id='Gaia DR3 1', tic_id='TIC 2',
+               pl_name='GJ 436 b', pl_orbper=2.6439, pl_rvamp=17.1,
+               st_rotp=44.0)
+    sol = dict(hostname='GJ 436', pl_name='GJ 436 b', pl_orbper=2.6439,
+               pl_rvamp=17.4, pl_rvamperr1=0.2, pl_rvamperr2=-0.2,
+               pl_refname='<a href=x>Someone et al. 2020</a>',
+               pl_pubdate='2020-01')
+    (tmp_path / 'tables.json').write_text(_json.dumps(dict(
+        fetched='2026-10-01 10:00', pscomppars=[row], ps=[sol])))
+    monkeypatch.setattr(archive, 'CACHE', str(tmp_path))
+    monkeypatch.setattr(archive, '_TABLES', None)
+    monkeypatch.setattr(archive, '_query', lambda *a, **k: 1 / 0)
+    for ident in (dict(gaia_dr3='Gaia DR3 1'), dict(tic='TIC 2'),
+                  dict(main='Ross 905', aliases=['gj436'])):
+        assert archive.host_name(ident) == 'GJ 436'
+    assert archive.host_name(dict(main='Gliese 707', aliases=[])) is None
+    known = archive.known_planets(host='GJ 436')
+    assert known['fetched'] == '2026-10-01 10:00'
+    assert known['star']['rotation'] == 44.0
+    assert known['planets'][0]['solutions'][0]['K'] == 17.4

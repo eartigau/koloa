@@ -21,8 +21,12 @@ Who the star is, and what is known of its planets.
 known_planets also keeps what the archive knows of the star (rotation
 period, spectral type, Teff, radius, metallicity, v sin i, magnitudes).
 
-Everything needs the network; known_planets keeps what it found in a JSON
-file when given a path, and reads it back.
+The archive is fetched once and kept: its two tables (pscomppars, the
+default solution of every planet, and the solutions of ps that give K, a
+few MB in all) in ~/.cache/koloa/archive, where every star is then looked
+up without the network. tables(refresh=True) (koloa --refresh-archive, or
+--refresh with --detailed) fetches them again. known_planets also keeps
+what it found for a star in a JSON file when given a path.
 
 Created on 2026-09-29
 
@@ -46,6 +50,21 @@ from koloa.log import log
 # =============================================================================
 SESAME = 'https://cds.unistra.fr/cgi-bin/nph-sesame/-oxI/S'
 ARCHIVE = 'https://exoplanetarchive.ipac.caltech.edu/TAP/sync'
+#: where the archive's tables are kept, once fetched
+CACHE = os.path.join(os.path.expanduser('~'), '.cache', 'koloa', 'archive')
+#: the columns of pscomppars kept (the ones that find a star, and the ones
+#: known_planets gives)
+PSCOMP_COLUMNS = ['hostname', 'gaia_dr3_id', 'tic_id', 'pl_name',
+                  'pl_orbper', 'pl_orbpererr1', 'pl_orbpererr2', 'pl_rvamp',
+                  'pl_rvamperr1', 'pl_rvamperr2', 'pl_orbeccen', 'pl_bmasse',
+                  'pl_rvamp_reflink', 'st_rotperr1', 'st_rotperr2',
+                  'pl_tranmiderr1', 'pl_tranmiderr2', 'pl_orbtpererr1',
+                  'pl_orbtpererr2']
+#: the columns of ps kept (its solutions that give K)
+PS_COLUMNS = ['hostname', 'pl_name', 'pl_orbper', 'pl_rvamp', 'pl_rvamperr1',
+              'pl_rvamperr2', 'pl_refname', 'pl_pubdate']
+#: the tables, once read
+_TABLES: Optional[Dict[str, Any]] = None
 #: a fitted signal is a known planet when their periods are within this
 #: fraction (the periods of old solutions can be off by a few per cent)
 MATCH = 0.05
@@ -110,6 +129,69 @@ def _query(query: str, timeout: float = 60.0) -> List[Dict[str, Any]]:
                                                       format='json'))
     with urllib.request.urlopen(url, timeout=timeout) as response:
         return json.loads(response.read())
+
+
+def _key(name: Any) -> str:
+    """a name compared without its case and spaces"""
+    return re.sub(r'\s+', '', str(name)).lower()
+
+
+def tables(refresh: bool = False) -> Dict[str, Any]:
+    """
+    The NASA Exoplanet Archive, kept: pscomppars and the solutions of ps
+    that give K, fetched the first time (or with refresh) into CACHE and
+    read from there after
+
+    :param refresh: bool, fetch the tables again
+
+    :return: dict, fetched (date), pscomppars and ps (lists of rows), and
+             the indexes of the hosts (by Gaia DR3, TIC and name)
+    """
+    global _TABLES
+    path = os.path.join(CACHE, 'tables.json')
+    if _TABLES is not None and not refresh:
+        return _TABLES
+    if os.path.exists(path) and not refresh:
+        with open(path) as handle:
+            out = json.load(handle)
+    else:
+        log(f'fetching the NASA Exoplanet Archive (a few MB, once; kept in '
+            f'{CACHE})')
+        cols = ','.join(PSCOMP_COLUMNS + [col for col in
+                                          list(STAR_COLUMNS)
+                                          + list(PLANET_COLUMNS)
+                                          if col not in PSCOMP_COLUMNS])
+        out = dict(fetched=time.strftime('%Y-%m-%d %H:%M'),
+                   pscomppars=_query(f'select {cols} from pscomppars',
+                                     timeout=600),
+                   ps=_query(f'select {",".join(PS_COLUMNS)} from ps where '
+                             f'pl_rvamp is not null', timeout=600))
+        os.makedirs(CACHE, exist_ok=True)
+        with open(path + '.part', 'w') as handle:
+            json.dump(out, handle)
+        os.replace(path + '.part', path)
+        with open(os.path.join(CACHE, 'fetched.txt'), 'w') as handle:
+            handle.write(out['fetched'] + '\n')
+        log(f'NASA Exoplanet Archive: {len(out["pscomppars"])} planets and '
+            f'{len(out["ps"])} published solutions with K, kept', 'value')
+    index: Dict[str, Dict[str, str]] = dict(gaia={}, tic={}, name={})
+    for row in out['pscomppars']:
+        for key, col in (('gaia', 'gaia_dr3_id'), ('tic', 'tic_id'),
+                         ('name', 'hostname')):
+            if row.get(col):
+                index[key][_key(row[col])] = row['hostname']
+    out['index'] = index
+    _TABLES = out
+    return out
+
+
+def fetched() -> Optional[str]:
+    """when the kept archive was fetched (None: never)"""
+    path = os.path.join(CACHE, 'fetched.txt')
+    if not os.path.exists(path):
+        return None
+    with open(path) as handle:
+        return handle.read().strip()
 
 
 def _reference(link: str):
@@ -177,19 +259,14 @@ def host_name(ident: Dict[str, Any]) -> Optional[str]:
 
     :return: str or None (the archive has no planet of it)
     """
-    tries = [('gaia_dr3_id', ident.get('gaia_dr3')),
-             ('tic_id', ident.get('tic'))]
-    tries += [('hostname', alias) for alias in
+    index = tables()['index']
+    tries = [('gaia', ident.get('gaia_dr3')), ('tic', ident.get('tic'))]
+    tries += [('name', alias) for alias in
               [ident.get('main'), ident.get('name')] + ident.get('aliases',
                                                                  [])]
-    for column, value in tries:
-        if not value:
-            continue
-        safe = str(value).replace("'", "''")
-        rows = _query(f"select hostname from pscomppars where {column} = "
-                      f"'{safe}'")
-        if rows:
-            return rows[0]['hostname']
+    for kind, value in tries:
+        if value and _key(value) in index[kind]:
+            return index[kind][_key(value)]
     return None
 
 
@@ -201,9 +278,7 @@ def solutions(host: str) -> Dict[str, List[Dict[str, Any]]]:
     :return: dict, planet name -> list of (reference, reference_url, date,
              P, K, K_err), oldest first
     """
-    rows = _query(
-        f"select pl_name,pl_orbper,pl_rvamp,pl_rvamperr1,pl_rvamperr2,"
-        f"pl_refname,pl_pubdate from ps where hostname = '{host}'")
+    rows = [row for row in tables()['ps'] if row['hostname'] == host]
     out: Dict[str, List[Dict[str, Any]]] = {}
     for row in rows:
         if row.get('pl_rvamp') is None:
@@ -232,7 +307,8 @@ def known_planets(name: Optional[str] = None, host: Optional[str] = None,
     :param host: str or None, the archive's host name, when known
     :param path: str or None, a JSON file that keeps the answer (read back
                  when it exists, unless refresh)
-    :param refresh: bool, ask the archive even when the file exists
+    :param refresh: bool, fetch the archive again (tables(refresh=True)),
+                    even when the file exists
 
     :return: dict, host, fetched (date), star (mass, distance, and the
              STAR_COLUMNS the archive has: rotation, spectral type, Teff...),
@@ -248,21 +324,18 @@ def known_planets(name: Optional[str] = None, host: Optional[str] = None,
             return out
         # a file of an older koloa: ask again, for what it lacks
         host = out['host']
+    kept = tables(refresh=refresh)
     if host is None:
         if name is None:
             raise ValueError('known_planets needs a name or a host')
         host = host_name(resolve(name))
-    out = dict(host=host, fetched=time.strftime('%Y-%m-%d'), star={},
-               planets=[], schema=SCHEMA)
+    out = dict(host=host, fetched=kept['fetched'], star={}, planets=[],
+               schema=SCHEMA)
     if host is not None:
-        cols = ','.join(['pl_name,pl_orbper,pl_orbpererr1,pl_orbpererr2,'
-                         'pl_rvamp,pl_rvamperr1,pl_rvamperr2,pl_orbeccen,'
-                         'pl_bmasse,pl_rvamp_reflink,st_rotperr1,st_rotperr2,'
-                         'pl_tranmiderr1,pl_tranmiderr2,pl_orbtpererr1,'
-                         'pl_orbtpererr2'] + list(STAR_COLUMNS)
-                        + list(PLANET_COLUMNS))
-        rows = _query(f"select {cols} from pscomppars where hostname = "
-                      f"'{host}' order by pl_orbper")
+        rows = sorted((row for row in kept['pscomppars']
+                       if row['hostname'] == host),
+                      key=lambda row: (row.get('pl_orbper') is None,
+                                       row.get('pl_orbper') or 0))
         sols = solutions(host)
         if rows:
             out['star'] = {name: rows[0].get(col)
@@ -295,7 +368,7 @@ def known_planets(name: Optional[str] = None, host: Optional[str] = None,
         with open(path, 'w') as handle:
             json.dump(out, handle, indent=1)
     log(f'{len(out["planets"])} planets of {host or name} in the NASA '
-        f'Exoplanet Archive', 'value')
+        f'Exoplanet Archive (kept, of {kept["fetched"]})', 'value')
     return out
 
 

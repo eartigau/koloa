@@ -143,6 +143,9 @@ def main(argv=None):
                         help='with --detailed: instruments left out of the '
                              'analysis (NIRPS, HARPS03...), once the file, '
                              'DACE, CARMENES and VizieR are put together')
+    parser.add_argument('--refresh-archive', action='store_true',
+                        help='fetch the NASA Exoplanet Archive again (koloa '
+                             'keeps it in ~/.cache/koloa/archive)')
     parser.add_argument('--refresh', action='store_true',
                         help='with --gather or --detailed: ask the archives '
                              'again, whatever is already on disk')
@@ -157,6 +160,11 @@ def main(argv=None):
         from koloa.gui import serve
         serve(args.port)
         return
+    if args.refresh_archive:
+        from koloa.archive import tables
+        tables(refresh=True)
+        if args.filename is None:
+            return
     if args.filename is None and not (args.detailed and args.target):
         parser.error('give a file (or with --gather a star); --detailed '
                      'takes --target alone too')
