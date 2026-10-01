@@ -33,7 +33,11 @@ is shared between instruments (the covariance is block-diagonal across
 them): the activity an optical instrument sees is not the one a
 near-infrared one sees.
 
-The cost is a few dozen to a few hundred more columns in the linear model.
+The cost is a few dozen to a thousand more columns in the linear model.
+They reach the grid of periods through a projection the size of the
+data, once per sweep (koloa.linear.BaseProjection), so the number of
+bumps hardly changes the time of a FIP: what grows with it is the
+evidence of each step of the hyperparameters.
 
 Created on 2026-09-30
 

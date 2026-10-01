@@ -83,3 +83,47 @@ def test_one_gp_per_instrument():
     exact = gpbasis.kernel([comp[1]], [val[1]],
                            time[own][:, None] - time[own][None, :])
     assert np.max(np.abs(cov[np.ix_(own, own)] - exact)) < 1e-3 * exact.max()
+
+
+@pytest.mark.parametrize('npar', [6, 80])
+def test_the_base_projection_is_the_full_model(npar):
+    """the base projected once per sweep, the other slots as a small block
+    after it: the same gain as the whole model solved for every slot, with
+    fewer base columns than points and with more"""
+    from koloa.linear import BaseProjection, LinearModel, sinusoid_gain
+    from koloa.noise import BlockCov
+    rng = np.random.default_rng(3)
+    npts, size = 40, 300
+    time = np.sort(rng.uniform(0, 200, npts))
+    value = rng.normal(0, 3, npts)
+    block = np.repeat(np.arange(20), 2)
+    cov = BlockCov(rng.uniform(1, 2, npts), block, np.full(20, 0.5))
+    design = rng.normal(size=(npts, npar))
+    var = rng.uniform(0.5, 5, npar)
+    freq = np.linspace(0.01, 0.5, size)
+    arg = 2 * np.pi * time[:, None] * freq[None, :]
+    trig_cs = np.hstack([np.cos(arg), np.sin(arg)])
+    trig_sq = np.hstack([np.cos(arg) ** 2, np.sin(arg) ** 2,
+                         np.cos(arg) * np.sin(arg)])
+    others = trig_cs[:, [10, 10 + size, 200, 200 + size]]
+    var_o = np.array([4.0, 4.0, 9.0, 9.0])
+    tau2 = np.array([1.0, 10.0, 100.0])
+    cc, ss, cs = cov.grid_quad(trig_sq, trig_cs, size)
+    ry = cov.solve(value) @ trig_cs
+    proj = BaseProjection(design, cov.solve(design), var, value, trig_cs,
+                          size)
+    for cols, cvar in ((design, var), (np.hstack([design, others]),
+                                       np.concatenate([var, var_o]))):
+        model = LinearModel(cols, value, cov, cvar)
+        prod = model.wdesign.T @ trig_cs
+        old = sinusoid_gain(model, prod[:, :size], prod[:, size:],
+                            ry[:size], ry[size:], cc, ss, cs, tau2)
+        if cols is design:
+            new = proj.gain(cc, ss, cs, ry[:size], ry[size:], tau2)
+        else:
+            wothers = cov.solve(others)
+            new = proj.gain(cc, ss, cs, ry[:size], ry[size:], tau2,
+                            others=others, wothers=wothers,
+                            rothers=wothers.T @ trig_cs, var_others=var_o,
+                            value=value)
+        assert np.allclose(new, old, rtol=1e-8, atol=1e-8)

@@ -131,6 +131,13 @@ def sinusoid_gain(model: LinearModel, bcos: np.ndarray, bsin: np.ndarray,
         u2 = dsin - model.mean @ bsin
     else:
         s11, s22, s12, u1, u2 = cc, ss, cs, dcos, dsin
+    return _gain(s11, s22, s12, u1, u2, tau2)
+
+
+def _gain(s11: np.ndarray, s22: np.ndarray, s12: np.ndarray, u1: np.ndarray,
+          u2: np.ndarray, tau2: np.ndarray) -> np.ndarray:
+    """Delta log Z of a sinusoid from its Schur complement (s) and its
+    projection on the residuals (u), for every period and every tau"""
     lam = 1.0 / np.asarray(tau2)[None, :]
     a11 = s11[:, None] + lam
     a22 = s22[:, None] + lam
@@ -139,6 +146,101 @@ def sinusoid_gain(model: LinearModel, bcos: np.ndarray, bsin: np.ndarray,
     quad = (u1[:, None] ** 2 * a22 - 2 * u1[:, None] * u2[:, None] * a12
             + u2[:, None] ** 2 * a11) / det
     return 0.5 * quad - 0.5 * np.log(det) - np.log(np.asarray(tau2))[None, :]
+
+
+class BaseProjection:
+    """
+    What the base columns (offsets, trends, regressors, the GP) take from
+    every sinusoid of a grid, once for all the slots of a sweep
+
+    With K = X^T V^-1 X + Sigma^-1 = L L^T, the base's part of B^T K^-1 B for
+    a column c is |W c|^2, W = L^-1 X^T V^-1 (p x n), and its part of
+    b^T K^-1 B is (W y)^T (W c). When the base has more columns than there
+    are points (a GP of many bumps), a thin QR, W = Q R, leaves |W c| = |R c|
+    with R (n x n): the grid costs min(p, n) n G, whatever the number of
+    bumps, instead of p^2 G per slot.
+
+    The other active slots of a model then enter as a small block (two
+    columns each) after the base: their Schur complement S_O = K_OO -
+    M^T M, M = W O, and the whitened products L_S^-1 (O^T V^-1 c -
+    M^T W c).
+    """
+
+    def __init__(self, design: np.ndarray, wdesign: np.ndarray,
+                 prior_var: np.ndarray, value: np.ndarray,
+                 trig_cs: np.ndarray, size: int):
+        """
+        :param design: np.ndarray, X (n x p) the base columns
+        :param wdesign: np.ndarray, V^-1 X
+        :param prior_var: np.ndarray, (p) their prior variances
+        :param value: np.ndarray, y (n)
+        :param trig_cs: np.ndarray, (n x 2G) [cos | sin] of the grid
+        :param size: int, G
+        """
+        npts, npar = design.shape
+        if npar == 0:
+            self.wmat = np.zeros((0, npts))
+        else:
+            kmat = design.T @ wdesign
+            kmat[np.diag_indices_from(kmat)] += 1.0 / np.asarray(prior_var)
+            chol = cho_factor(kmat, lower=True)[0]
+            self.wmat = solve_triangular(chol, wdesign.T, lower=True)
+            if npar > npts:
+                self.wmat = np.linalg.qr(self.wmat, mode='r')
+        zed = self.wmat @ trig_cs
+        self.zc, self.zs = zed[:, :size], zed[:, size:]
+        self.zy = self.wmat @ value
+        self.qcc = np.einsum('ij,ij->j', self.zc, self.zc)
+        self.qss = np.einsum('ij,ij->j', self.zs, self.zs)
+        self.qcs = np.einsum('ij,ij->j', self.zc, self.zs)
+        self.uc = self.zy @ self.zc
+        self.us = self.zy @ self.zs
+
+    def gain(self, cc: np.ndarray, ss: np.ndarray, cs: np.ndarray,
+             dcos: np.ndarray, dsin: np.ndarray, tau2: np.ndarray,
+             others: Optional[np.ndarray] = None,
+             wothers: Optional[np.ndarray] = None,
+             rothers: Optional[np.ndarray] = None,
+             var_others: Optional[np.ndarray] = None,
+             value: Optional[np.ndarray] = None) -> np.ndarray:
+        """
+        Delta log Z of adding a sinusoid to the base and the other slots,
+        for every period and every tau (sinusoid_gain, the same numbers)
+
+        :param cc: np.ndarray, (G) cos^T V^-1 cos
+        :param ss: np.ndarray, (G) sin^T V^-1 sin
+        :param cs: np.ndarray, (G) cos^T V^-1 sin
+        :param dcos: np.ndarray, (G) y^T V^-1 cos
+        :param dsin: np.ndarray, (G) y^T V^-1 sin
+        :param tau2: np.ndarray, (M) the prior variances of the amplitudes
+        :param others: np.ndarray or None, O (n x q) the other slots
+        :param wothers: np.ndarray or None, V^-1 O
+        :param rothers: np.ndarray or None, (q x 2G) O^T V^-1 [cos | sin]
+        :param var_others: np.ndarray or None, (q) their prior variances
+        :param value: np.ndarray or None, y (with the others)
+
+        :return: np.ndarray, (G x M) the gain in log evidence
+        """
+        s11, s22, s12 = cc - self.qcc, ss - self.qss, cs - self.qcs
+        u1, u2 = dcos - self.uc, dsin - self.us
+        if others is not None and others.shape[1] > 0:
+            size = len(cc)
+            mmat = self.wmat @ others
+            kmat = others.T @ wothers - mmat.T @ mmat
+            kmat[np.diag_indices_from(kmat)] += 1.0 / np.asarray(var_others)
+            chol = cho_factor(kmat, lower=True)[0]
+            wc = solve_triangular(chol, rothers[:, :size] - mmat.T @ self.zc,
+                                  lower=True)
+            ws = solve_triangular(chol, rothers[:, size:] - mmat.T @ self.zs,
+                                  lower=True)
+            wy = solve_triangular(chol, wothers.T @ value - mmat.T @ self.zy,
+                                  lower=True)
+            s11 = s11 - np.einsum('ij,ij->j', wc, wc)
+            s22 = s22 - np.einsum('ij,ij->j', ws, ws)
+            s12 = s12 - np.einsum('ij,ij->j', wc, ws)
+            u1 = u1 - wy @ wc
+            u2 = u2 - wy @ ws
+        return _gain(s11, s22, s12, u1, u2, tau2)
 
 
 def weighted_lstsq(design: np.ndarray, value: np.ndarray, err: np.ndarray

@@ -59,7 +59,7 @@ from scipy.special import gammaln
 
 from koloa import gpbasis
 from koloa.data import RVData, night_index, robust_std
-from koloa.linear import LinearModel, sinusoid_gain
+from koloa.linear import BaseProjection, LinearModel, sinusoid_gain
 from koloa.log import log
 from koloa.noise import BlockCov, block_gauss_loglike, block_indicator
 from koloa.noise import _point_mixture_blocks
@@ -655,16 +655,15 @@ class _Chain:
     def sweep(self, record: bool):
         """One update of every part of the state"""
         cov = self.make_cov()
-        logdet_v = cov.logdet()
         size = self.gsize
         wy = cov.solve(self.y)
-        wbase = cov.solve(self.base)
         cc, ss, cs = cov.grid_quad(self.trig_sq, self.trig_cs, size)
-        # X^T V^-1 [cos | sin] for the base columns and y, in one product
-        prod = np.vstack([wbase.T, wy[None, :]]) @ self.trig_cs
-        nbase = wbase.shape[1]
-        rbase_c, rbase_s = prod[:nbase, :size], prod[:nbase, size:]
-        ry_c, ry_s = prod[nbase, :size], prod[nbase, size:]
+        ry = wy @ self.trig_cs
+        ry_c, ry_s = ry[:size], ry[size:]
+        # what the base (and the GP) takes from every sinusoid of the grid,
+        #   once for all the slots
+        proj = BaseProjection(self.base, cov.solve(self.base), self.base_var,
+                              self.y, self.trig_cs, size)
         # what each active slot contributes to the products
         wslot, rslot = {}, {}
         for jj in np.where(self.active)[0]:
@@ -676,21 +675,19 @@ class _Chain:
         ntau = len(self.tau2)
         for jj in range(self.kmax):
             others = [ii for ii in np.where(self.active)[0] if ii != jj]
-            cols = [self.base] + [self.grid.columns(self.gidx[ii])
-                                  for ii in others]
-            wcols = [wbase] + [wslot[ii] for ii in others]
-            var = [self.base_var] + [np.full(2, self.tau2[self.tidx[ii]])
-                                     for ii in others]
-            model = LinearModel(np.hstack(cols), self.y, cov,
-                                np.concatenate(var),
-                                wdesign=np.hstack(wcols), wvalue=wy,
-                                logdet_v=logdet_v)
-            bcos = np.vstack([rbase_c] + [rslot[ii][:, :size]
-                                          for ii in others])
-            bsin = np.vstack([rbase_s] + [rslot[ii][:, size:]
-                                          for ii in others])
-            gain = sinusoid_gain(model, bcos, bsin, ry_c, ry_s, cc, ss, cs,
-                                 self.tau2)
+            if others:
+                gain = proj.gain(
+                    cc, ss, cs, ry_c, ry_s, self.tau2,
+                    others=np.hstack([self.grid.columns(self.gidx[ii])
+                                      for ii in others]),
+                    wothers=np.hstack([wslot[ii] for ii in others]),
+                    rothers=np.vstack([rslot[ii] for ii in others]),
+                    var_others=np.concatenate([
+                        np.full(2, self.tau2[self.tidx[ii]])
+                        for ii in others]),
+                    value=self.y)
+            else:
+                gain = proj.gain(cc, ss, cs, ry_c, ry_s, self.tau2)
             kother = len(others)
             log_on = (self.logprior_k[kother + 1]
                       - _log_binom(self.kmax, kother + 1))
