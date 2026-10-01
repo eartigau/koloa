@@ -76,18 +76,26 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
     rvfile = str(opts.get('file') or '').strip()
     off = {key: not opts.get(key, True) for key in
            ('dace', 'carmenes', 'tess', 'vizier', 'archive', 'gpcheck',
-            'fip_gp', 'duck', 'latex')}
+            'duck', 'latex')}
+    # the GP of the FIP: banded, sho (at the rotation given) or none
+    fipgp = opts.get('fip_gp', 'banded')
+    fipgp = {True: 'banded', False: 'none'}.get(fipgp, fipgp) or 'banded'
+    rotation = _number(opts.get('rotation'))
     if action == 'gather':
         if not target:
             raise ValueError('a SIMBAD name to gather the archives of')
         args = [target, '--gather', str(opts.get('root') or 'archives')]
         args += ['--no-dace'] * off['dace'] + ['--no-carmenes'] * off[
             'carmenes'] + ['--no-tess'] * off['tess']
+        if opts.get('refresh'):
+            args.append('--refresh')
         return args
     if action != 'detailed':
         raise ValueError(f'no action {action}')
     if not target and not rvfile:
         raise ValueError('a file, a SIMBAD name, or (best) both')
+    if fipgp == 'sho' and not rotation:
+        raise ValueError('an SHO GP needs the rotation period')
     args = ([rvfile] if rvfile else []) + ['--detailed']
     if target:
         args += ['--target', target]
@@ -100,6 +108,12 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
     periods = str(opts.get('periods') or '').replace(',', ' ').split()
     if periods:
         args += ['--periods'] + [f'{float(per):g}' for per in periods]
+    if rotation:
+        args += ['--rotation', f'{rotation:g}']
+    if fipgp == 'none':
+        args.append('--no-fip-gp')
+    elif rotation and fipgp == 'banded':
+        args += ['--fip-gp', 'banded']
     exclude = str(opts.get('exclude') or '').replace(',', ' ').split()
     if exclude:
         args += ['--exclude'] + exclude
@@ -112,7 +126,7 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
         args.append('--exposures')
     if opts.get('mcmc'):
         args.append('--mcmc')
-    for key, flag in (('fip_gp', '--no-fip-gp'), ('dace', '--no-dace'),
+    for key, flag in (('dace', '--no-dace'),
                       ('carmenes', '--no-carmenes'), ('tess', '--no-tess'),
                       ('vizier', '--no-vizier'), ('archive', '--no-archive'),
                       ('gpcheck', '--no-gp'), ('duck', '--no-duck'),
@@ -243,6 +257,30 @@ def resolve_star(name: str) -> Dict[str, Any]:
     return out
 
 
+def archives(target: str, root: str = '') -> Dict[str, Any]:
+    """what koloa.gather already put on disk for a star (its manifest), so
+    that the page offers to refresh it rather than to gather it again"""
+    from koloa.gather import folder_name
+    folder = os.path.join(root or 'archives', folder_name(target))
+    path = os.path.join(folder, 'manifest.json')
+    if not target.strip() or not os.path.exists(path):
+        return dict(exists=False, folder=folder)
+    with open(path) as handle:
+        manifest = json.load(handle)
+    return dict(exists=True, folder=folder, created=manifest.get('created'),
+                archives={key: val.get('status') for key, val in
+                          manifest.get('archives', {}).items()})
+
+
+def gathering(target: str, root: str = '') -> bool:
+    """whether the archives of a star are being gathered by a run"""
+    from koloa.gather import folder_name
+    folder = os.path.abspath(os.path.join(root or 'archives',
+                                          folder_name(target)))
+    return any(job.action == 'gather' and job.returncode is None
+               and job.outputs == folder for job in JOBS.values())
+
+
 def velocities(rvfile: str = '', target: str = '', root: str = ''
                ) -> Dict[str, Any]:
     """
@@ -329,6 +367,12 @@ class Handler(BaseHTTPRequestHandler):
                                        defaults=DEFAULTS))
             if url.path == '/api/resolve':
                 return self._json(resolve_star(query.get('name', '')))
+            if url.path == '/api/archives':
+                state = archives(query.get('target', ''),
+                                 query.get('root', ''))
+                state['busy'] = gathering(query.get('target', ''),
+                                          query.get('root', ''))
+                return self._json(state)
             if url.path == '/api/rv':
                 return self._json(velocities(query.get('file', ''),
                                              query.get('target', ''),
@@ -366,6 +410,13 @@ class Handler(BaseHTTPRequestHandler):
                     from koloa.gather import folder_name
                     outputs = os.path.join(opts.get('root') or 'archives',
                                            folder_name(opts['target']))
+                    busy = [job for job in JOBS.values()
+                            if job.action == 'gather'
+                            and job.returncode is None and job.outputs
+                            == os.path.abspath(outputs)]
+                    if busy:
+                        raise ValueError('the archives of this star are '
+                                         'being gathered already')
                 else:
                     outputs = opts.get('outdir') or 'koloa_output'
                 job = Job(body['action'], args, outputs)

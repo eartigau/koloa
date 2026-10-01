@@ -110,6 +110,15 @@ def main(argv=None):
                         help='with --detailed: the quicker detection map of a '
                              'blind periodogram search (no GP; an alias '
                              'counts as missed)')
+    parser.add_argument('--rotation', type=float, default=None,
+                        metavar='P',
+                        help='with --detailed: a rotation period that can be '
+                             'trusted [d]: the GP of the FIP is then an SHO at '
+                             'it and at its half, over every period (no bands)')
+    parser.add_argument('--fip-gp', default=None,
+                        choices=['banded', 'sho', 'none'],
+                        help='with --detailed: the GP of the FIP (banded by '
+                             'default, sho with --rotation)')
     parser.add_argument('--no-fip-gp', action='store_true',
                         help='with --detailed: no GP of the activity inside '
                              'the FIP')
@@ -134,6 +143,9 @@ def main(argv=None):
                         help='with --detailed: instruments left out of the '
                              'analysis (NIRPS, HARPS03...), once the file, '
                              'DACE, CARMENES and VizieR are put together')
+    parser.add_argument('--refresh', action='store_true',
+                        help='with --gather or --detailed: ask the archives '
+                             'again, whatever is already on disk')
     parser.add_argument('--no-carmenes', action='store_true',
                         help='with --detailed or --gather: not CARMENES '
                              'DR1')
@@ -151,14 +163,15 @@ def main(argv=None):
     if args.gather is not None:
         from koloa.gather import gather
         gather(args.filename, args.gather, dace=not args.no_dace,
-               carmenes=not args.no_carmenes, tess=not args.no_tess)
+               carmenes=not args.no_carmenes, tess=not args.no_tess,
+               refresh=args.refresh)
         return
     if args.detailed:
         detailed_analysis(args.filename, outdir=args.outdir, name=args.name,
                           target=args.target, archive=not args.no_archive,
                           dace=not args.no_dace,
                           carmenes=not args.no_carmenes,
-                          exclude=args.exclude,
+                          exclude=args.exclude, refresh=args.refresh,
                           literature=args.literature,
                           vizier=not args.no_vizier, periods=args.periods,
                           gp=not args.no_gp, kmax=args.kmax,
@@ -167,7 +180,11 @@ def main(argv=None):
                           duck=not args.no_duck, style=args.style,
                           latex=not args.no_latex,
                           tess=not args.no_tess, site=args.site,
-                          fip_gp=None if args.no_fip_gp else 'banded',
+                          fip_gp=(None if args.no_fip_gp
+                                  or args.fip_gp == 'none' else
+                                  args.fip_gp or ('sho' if args.rotation
+                                                  else 'banded')),
+                          rotation=args.rotation,
                           nightly=False if args.exposures else None,
                           detection_map=('search' if args.search_map else
                                          'fip' if args.detection_map

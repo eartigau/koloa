@@ -65,7 +65,8 @@ from koloa import gpbasis
 from koloa.data import RVData, night_index, robust_std
 from koloa.linear import BaseProjection, LinearModel, sinusoid_gain
 from koloa.log import log
-from koloa.noise import BlockCov, block_gauss_loglike, block_indicator
+from koloa.noise import BlockCov, DenseCov, block_gauss_loglike
+from koloa.noise import block_indicator
 from koloa.noise import _point_mixture_blocks
 from koloa.periodogram import aliases, find_peaks, frequency_grid, window
 from koloa.utils import blas_threads
@@ -76,6 +77,9 @@ from koloa.weights import hard_clip, soft_clip
 # =============================================================================
 #: a trial largest number of bytes for the cached trigonometric matrices
 TRIG_CACHE_BYTES = 6.0e8
+#: the most points for which a GP enters the FIP by its kernel, in the
+#: covariance of the noise (koloa.noise.DenseCov), and not by a basis
+KERNEL_MAX = 2000
 
 
 # =============================================================================
@@ -525,6 +529,9 @@ class _Chain:
         self.inst = data.inst
         self.gp_comp = cfg.get('gp') or []
         self.gp_val = gpbasis.initial(self.gp_comp)
+        # the GP as basis columns, or (kernel mode) its kernel in the noise
+        self.gp_mode = cfg.get('gp_mode', 'basis')
+        self.kmat = None
         self._set_base()
         self.grid = grid
         self.trig_cs, self.trig_sq = grid.trig()
@@ -568,9 +575,15 @@ class _Chain:
         self.slot_records = []
 
     def _set_base(self):
-        """the base columns: offsets, trend and regressors, then the GP"""
+        """the base columns: offsets, trend and regressors, then the GP (or,
+        in the kernel mode, the GP's covariance at the points)"""
         if not self.gp_comp:
             self.base, self.base_var = self.fixed_base, self.fixed_var
+            return
+        if self.gp_mode == 'kernel':
+            self.base, self.base_var = self.fixed_base, self.fixed_var
+            self.kmat = gpbasis.matrix(self.gp_comp, self.gp_val, self.time,
+                                       self.inst)
             return
         cols, var = gpbasis.columns(self.gp_comp, self.gp_val, self.time,
                                     self.inst)
@@ -583,7 +596,8 @@ class _Chain:
         logarithm), the linear parameters (the GP's weights among them)
         integrated out
 
-        :return: tuple, the model and its log evidence after the steps
+        :return: tuple, the noise covariance (new in the kernel mode), the
+                 model and its log evidence after the steps
         """
         for ic, comp in enumerate(self.gp_comp):
             for name, prior in comp['priors'].items():
@@ -598,18 +612,20 @@ class _Chain:
                 if not np.isfinite(lp_new):
                     continue
                 lp_old = gpbasis.log_prior(prior, current)
-                old = (self.base, self.base_var)
+                old = (self.base, self.base_var, self.kmat)
                 self.gp_val[ic][name] = prop
                 self._set_base()
-                model_new = self.full_model(cov)
+                # the kernel mode: the GP is in the noise, which changes
+                cov_new = cov if self.kmat is None else self.make_cov()
+                model_new = self.full_model(cov_new)
                 if (np.log(self.rng.random())
                         < model_new.logz + lp_new - logz - lp_old):
-                    model, logz = model_new, model_new.logz
+                    cov, model, logz = cov_new, model_new, model_new.logz
                     self.accept[key][0] += 1
                 else:
                     self.gp_val[ic][name] = current
-                    self.base, self.base_var = old
-        return model, logz
+                    self.base, self.base_var, self.kmat = old
+        return cov, model, logz
 
     @property
     def nbad(self) -> int:
@@ -633,7 +649,8 @@ class _Chain:
             diag = diag + self.q_pt * wpt ** 2
         if self.use_seq:
             blockval = blockval + self.q_seq * wseq ** 2
-        return BlockCov(diag, self.block, blockval, self.indicator)
+        cov = BlockCov(diag, self.block, blockval, self.indicator)
+        return cov if self.kmat is None else DenseCov(cov, self.kmat)
 
     def design(self, exclude: Optional[int] = None):
         """The design matrix and prior variances of the active slots"""
@@ -755,7 +772,7 @@ class _Chain:
                 cov, model, logz = cov_new, model_new, model_new.logz
                 self.accept[name][0] += 1
         if self.gp_comp:
-            model, logz = self.update_gp(cov, model, logz)
+            cov, model, logz = self.update_gp(cov, model, logz)
         # ---------------------------------------------------------------------
         # 3. the outlier indicators, linear parameters integrated out, then
         #    a draw of the linear parameters for the amplitude records
@@ -823,11 +840,7 @@ class _Chain:
         Rao-Blackwellised on the point's own indicator.
         """
         # Sigma_y^-1 = V^-1 - V^-1 X K^-1 X^T V^-1, dense
-        vinv = np.diag(cov.inv)
-        if cov.has_blocks:
-            same = self.block[:, None] == self.block[None, :]
-            vinv = vinv - (cov.inv[:, None] * cov.inv[None, :]
-                           * cov.wblock[self.block][:, None] * same)
+        vinv = cov.dense_inv()
         wdes = model.wdesign
         sinv = vinv - wdes @ model.kinv() @ wdes.T
         aval = sinv @ self.y
@@ -1169,7 +1182,8 @@ def oafip(data: RVData, kmax: int = 3, outliers: Optional[str] = 'both',
           npeaks: int = 5,
           freq: Optional[np.ndarray] = None,
           gp: Union[None, str, Dict[str, Any], Sequence[Any]] = None,
-          nightly: Optional[bool] = None) -> FIPResult:
+          nightly: Optional[bool] = None, gp_mode: str = 'auto'
+          ) -> FIPResult:
     """
     The outlier-aware FIP periodogram of a series
 
@@ -1206,7 +1220,13 @@ def oafip(data: RVData, kmax: int = 3, outliers: Optional[str] = 'both',
                weights are integrated out and whose hyperparameters are
                sampled with the jitters (koloa.gpbasis.setup: e.g.
                dict(kind='rotation', period=dict(mu=np.log(116), sd=0.1)),
-               or dict(kind='local', length=(10, 100)))
+               or dict(kind='local', length=(10, 100)), or dict(kind='sho',
+               period=2.704) for a rotation known well)
+    :param gp_mode: str, how the GP enters: 'kernel' (its exact kernel in
+                    the covariance of the noise, dense: whatever its scales,
+                    for up to a few thousand points), 'basis' (the finite
+                    basis, for longer series; not for an SHO), or 'auto'
+                    (the kernel up to KERNEL_MAX points)
     :param nightly: bool, run on the nightly means (RVData.nightly, koloa's
                     default): a night is then one point, and an outlier a
                     whole night; the outlier probability of each night is
@@ -1238,6 +1258,12 @@ def oafip(data: RVData, kmax: int = 3, outliers: Optional[str] = 'both',
                prior_k=prior_k, frac_prior=tuple(frac_prior), nsweep=nsweep,
                nburn=nburn, progress=progress,
                gp=gpbasis.setup(gp, data.time, scale, data.inst), **setup)
+    if gp_mode == 'auto':
+        gp_mode = ('kernel' if data.n <= KERNEL_MAX
+                   or gpbasis.needs_kernel(cfg['gp']) else 'basis')
+    if gp_mode == 'basis' and gpbasis.needs_kernel(cfg['gp']):
+        raise ValueError('an SHO GP has no finite basis: gp_mode="kernel"')
+    cfg['gp_mode'] = gp_mode
     gridargs = dict(time=data.time, pmin=pmin, pmax=pmax,
                     oversample=oversample, tref=data.tref, freq=freq)
     grid = PeriodGrid(**gridargs)

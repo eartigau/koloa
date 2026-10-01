@@ -30,6 +30,9 @@ const TEXT = {
     no_rv: 'No velocity: give a file, or gather the archives of the star first.',
     starting: 'starting', need: 'Give a file, a SIMBAD name, or (best) both.',
     left_fip: 'left for this FIP', pass_left: 'the whole pass: at most about', of_up_to: 'of at most',
+    fip_gp_sel: 'GP in the FIP', gp_banded: 'by period band', gp_sho: 'SHO at the rotation', gp_none: 'none',
+    rotation_p: 'Rotation period [d]', refresh: 'Refresh', on_disk: 'already on disk', busy: 'being gathered...',
+    pick: 'click a period to use it (an SHO at it in the FIP)',
   },
   fr: {
     tagline: 'Vitesses radiales robustes aux valeurs aberrantes · sur cette machine', docs: 'Docs',
@@ -59,6 +62,9 @@ const TEXT = {
     no_rv: 'Aucune vitesse : donnez un fichier, ou récupérez d’abord les archives de l’étoile.',
     starting: 'démarrage', need: 'Donnez un fichier, un nom SIMBAD, ou (le mieux) les deux.',
     left_fip: 'restantes pour ce FIP', pass_left: 'toute la passe : au plus environ', of_up_to: 'sur au plus',
+    fip_gp_sel: 'GP dans le FIP', gp_banded: 'par bande de période', gp_sho: 'SHO à la rotation', gp_none: 'aucun',
+    rotation_p: 'Période de rotation [j]', refresh: 'Rafraîchir', on_disk: 'déjà sur le disque', busy: 'récupération en cours...',
+    pick: 'cliquez une période pour l’utiliser (un SHO à cette période dans le FIP)',
   },
 };
 // the instruments: eight hues checked for colour-blind separation on the
@@ -78,6 +84,7 @@ function applyLang() {
   $('lang').textContent = lang === 'fr' ? 'EN' : 'FR';
   showCwd();
   renderJobs();
+  checkArchives();
 }
 
 async function api(path, body) {
@@ -109,13 +116,18 @@ function options(action) {
   document.querySelectorAll(`[data-for="${action}"]`).forEach((el) => {
     opts[el.dataset.opt] = el.type === 'checkbox' ? el.checked : el.value;
   });
+  if (action === 'gather') opts.refresh = !!(onDisk && onDisk.exists);
   return opts;
 }
 
 let cmdTimer = null;
 function updateCommands() {
   clearTimeout(cmdTimer);
-  cmdTimer = setTimeout(async () => {
+  cmdTimer = setTimeout(updateCommandsNow, 150);
+}
+
+async function updateCommandsNow() {
+  {
     $('outdir').placeholder = defaultOutdir();
     for (const action of ['gather', 'detailed']) {
       const box = $(`cmd-${action}`);
@@ -130,7 +142,34 @@ function updateCommands() {
         $(`run-${action}`).disabled = true;
       }
     }
-  }, 150);
+    if (onDisk && onDisk.busy) $('run-gather').disabled = true;
+  }
+}
+
+let onDisk = null;
+let diskTimer = null;
+function checkArchives() {
+  clearTimeout(diskTimer);
+  diskTimer = setTimeout(async () => {
+    const target = $('target').value.trim();
+    const btn = $('run-gather');
+    if (!target) { onDisk = null; $('ondisk').textContent = ''; btn.textContent = t('run_gather'); return; }
+    try {
+      onDisk = await api(`/api/archives?${new URLSearchParams({ target, root: $('root').value.trim() })}`);
+    } catch (err) { onDisk = null; }
+    if (onDisk && onDisk.busy) {
+      btn.textContent = t('busy'); btn.disabled = true;
+      $('ondisk').textContent = '';
+    } else if (onDisk && onDisk.exists) {
+      btn.textContent = t('refresh');
+      const what = Object.entries(onDisk.archives || {}).map(([k, v]) => `${k} ${v}`).join(', ');
+      $('ondisk').textContent = `${t('on_disk')} (${onDisk.created || ''}): ${what}`;
+    } else {
+      btn.textContent = t('run_gather');
+      $('ondisk').textContent = '';
+    }
+    updateCommandsNow();
+  }, 250);
 }
 
 let cwd = '';
@@ -154,8 +193,10 @@ async function resolveStar() {
     const id = await api(`/api/resolve?name=${encodeURIComponent(name)}`);
     const pos = id.ra != null ? `${id.ra.toFixed(5)}, ${id.dec.toFixed(5)}` : '-';
     const others = [id.gj, id.hd, id.hip].filter(Boolean).map(esc).join(', ') || '-';
-    const rot = (id.variability || []).map((v) => `${esc(v.type)} ${v.period} d <span class="hint">(${esc(v.bibcode || '')})</span>`);
-    if (id.carmenes && id.carmenes.p_rot) rot.push(`ROT ${esc(id.carmenes.p_rot)} d <span class="hint">(CARMENES, ${esc(id.carmenes.p_rot_source || '')})</span>`);
+    const chip = (per, text) => `<button type="button" class="chip" data-prot="${esc(per)}">${text}</button>`;
+    const rot = (id.variability || []).map((v) => chip(v.period, `${esc(v.type)} ${v.period} d <span class="hint">(${esc(v.bibcode || '')})</span>`));
+    if (id.carmenes && id.carmenes.p_rot) rot.push(chip(id.carmenes.p_rot, `ROT ${esc(id.carmenes.p_rot)} d <span class="hint">(CARMENES, ${esc(id.carmenes.p_rot_source || '')})</span>`));
+    if (rot.length) rot.push(`<span class="hint">${esc(t('pick'))}</span>`);
     const carm = id.carmenes ? `${esc(id.carmenes.carmenes_id)}, ${esc(id.carmenes.nobs)} ${esc(t('points'))}` : esc(t('not_in'));
     box.innerHTML = '<div class="stats-grid">'
       + tile(t('main'), esc(id.main)) + tile(t('tic'), esc((id.tic || '-').replace('TIC ', '')))
@@ -325,6 +366,7 @@ async function poll() {
     if (job.status !== 'running') continue;
     try {
       keep(await api(`/api/job?id=${job.id}&since=${job.lines.length}`));
+      if (job.action === 'gather' && jobs.get(job.id).status !== 'running') checkArchives();
     } catch (err) { /* the server may be gone */ }
   }
   renderJobs();
@@ -334,6 +376,7 @@ async function run(action) {
   try {
     keep(await api('/api/run', { action, options: options(action) }));
     renderJobs();
+    if (action === 'gather') checkArchives();
     $('jobs').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (err) {
     alert(err.message);
@@ -345,6 +388,7 @@ async function run(action) {
 // -----------------------------------------------------------------------------
 document.addEventListener('input', (e) => {
   updateCommands();
+  if (e.target.id === 'target' || e.target.id === 'root') checkArchives();
   if (e.target.id === 'exclude') styleExcluded();
 });
 document.addEventListener('change', (e) => {
@@ -369,6 +413,12 @@ document.addEventListener('click', async (e) => {
     copy.textContent = t('copied');
     setTimeout(() => { copy.textContent = t('copy'); }, 1200);
   }
+  const prot = e.target.closest('[data-prot]');
+  if (prot) {
+    $('rotation').value = prot.dataset.prot;
+    $('fipgp').value = 'sho';
+    updateCommands();
+  }
   const stop = e.target.closest('[data-stop]');
   if (stop) { await api('/api/stop', { id: stop.dataset.stop }); poll(); }
 });
@@ -387,6 +437,7 @@ document.addEventListener('click', async (e) => {
     if (params.get(key)) $(key).value = params.get(key);
   }
   updateCommands();
+  checkArchives();
   if (params.get('target')) resolveStar();
   if (params.get('plot')) plotVelocities();
   setInterval(poll, 1500);

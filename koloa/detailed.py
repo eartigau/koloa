@@ -259,15 +259,23 @@ def fetch_dace(names: Sequence[str], folder: str, exclude: Sequence[str] = (),
 def _gp_spec(fip_gp: Any, known: Dict[str, Any]) -> Any:
     """
     The GP of the FIP: 'auto' is a local GP, with a rotation GP beside it
-    when the archive knows the rotation period (its prior, +- 10 %)
+    when the archive knows the rotation period (its prior, +- 10 %); 'sho'
+    an SHO at the rotation period (held) and at its half
     """
     if fip_gp in (None, False):
         return None
     if fip_gp == 'banded':
         return 'banded'
+    prot = (known.get('star') or {}).get('rotation')
+    if fip_gp == 'sho':
+        if prot:
+            # a rotation that can be trusted: its period held
+            return [dict(kind='sho', period=float(prot))]
+        log('an SHO GP needs the rotation period (rotation=, --rotation): '
+            'the FIP by bands instead', 'warn')
+        return 'banded'
     if fip_gp is not True and fip_gp != 'auto':
         return fip_gp
-    prot = (known.get('star') or {}).get('rotation')
     if prot:
         return ['local', dict(kind='rotation', period=dict(
             mu=float(np.log(float(prot))), sd=0.1))]
@@ -634,7 +642,8 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
                       nightly: Optional[bool] = None,
                       detection_map: Any = False,
                       map_ninj: int = 10,
-                      exclude: Optional[Sequence[str]] = None
+                      exclude: Optional[Sequence[str]] = None,
+                      rotation: Optional[float] = None
                       ) -> Dict[str, Any]:
     """
     Everything koloa can say about a star (see the module's docstring)
@@ -700,7 +709,10 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
                    as flexible as the data ask for, koloa.bandfip), 'auto'
                    (one local GP, and a rotation GP beside it when the
                    archive knows the rotation period, its prior +- 10 %),
-                   None or False (none), or a spec of oafip(gp=)
+                   'sho' (an SHO at the rotation period and one at its
+                   half, celerite's RotationTerm, over every period: no
+                   bands; the default when a rotation is given), None or
+                   False (none), or a spec of oafip(gp=)
     :param detection_map: 'fip', 'search' or False (the default): map
                           which planets the series could have found, with
                           the signals found taken out. 'fip' looks for each
@@ -712,6 +724,10 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
                           an alias counts as missed)
     :param map_ninj: int, the injections per cell of the map (and
                      gp_workers the processes)
+    :param rotation: float or None, a rotation period that can be trusted
+                     [days] (a published one): the star's rotation for
+                     every check, and the GP of the FIP an SHO at it
+                     (fip_gp='sho', instead of the bands)
     :param exclude: list of str or None, instruments left out of the
                     analysis once the series is assembled (the file, DACE,
                     CARMENES, VizieR), by name (any case): NIRPS, HARPS03...
@@ -773,6 +789,15 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
                     f'{last.get("K")} m/s ({last.get("reference")})', 'value')
         except OSError as err:
             log(f'NASA Exoplanet Archive: {err}', 'warn')
+    if rotation:
+        known['star'] = dict(known.get('star') or {},
+                             rotation=float(rotation),
+                             rotation_source='given')
+        if fip_gp == 'banded':
+            fip_gp = 'sho'
+        log(f'rotation period given: {float(rotation):g} d'
+            + (', the GP of the FIP an SHO at it and at its half (no bands)'
+               if fip_gp == 'sho' else ''), 'value')
     out['ident'], out['known'] = ident, known
     step('more velocities: DACE, CARMENES, VizieR')
     # 3. more velocities: DACE, CARMENES, the ones given, the ones on VizieR
@@ -1217,6 +1242,8 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
             gp=gpsum, threshold=THRESHOLD, runtime=time.time() - start,
             tess=phot, detection_map=dmap,
             settings=dict(archive=archive, dace=dace, carmenes=carmenes,
+                          rotation=(f'{float(rotation):g} d, given' if rotation
+                                    else 'the archive\'s'),
                           exclude=', '.join(exclude or []) or 'none',
                           vizier=vizier,
                           literature=len(literature or []),

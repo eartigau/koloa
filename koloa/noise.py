@@ -29,6 +29,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 from scipy import sparse
+from scipy.linalg import cho_solve, solve_triangular
 
 # =============================================================================
 # Define variables
@@ -189,6 +190,23 @@ class BlockCov:
         return self.grid_quad(np.hstack([c2, s2, cs]), np.hstack([cos, sin]),
                               size)
 
+    def dense(self) -> np.ndarray:
+        """V itself, (n x n)"""
+        mat = np.diag(self.diag)
+        if self.has_blocks:
+            same = self.block[:, None] == self.block[None, :]
+            mat = mat + self.blockval[self.block][:, None] * same
+        return mat
+
+    def dense_inv(self) -> np.ndarray:
+        """V^-1, (n x n)"""
+        vinv = np.diag(self.inv)
+        if self.has_blocks:
+            same = self.block[:, None] == self.block[None, :]
+            vinv = vinv - (self.inv[:, None] * self.inv[None, :]
+                           * self.wblock[self.block][:, None] * same)
+        return vinv
+
     def loglike(self, resid: np.ndarray) -> float:
         """
         log N(resid | 0, V)
@@ -200,6 +218,52 @@ class BlockCov:
         quad = float(resid @ self.solve(resid))
         return -0.5 * (quad + self.logdet() + len(resid) * LOG2PI)
 
+
+
+class DenseCov:
+    """
+    V = (diag + blocks) + K: the noise of BlockCov and a GP of the activity
+    (K, its kernel at the times of the points), dense, with the algebra the
+    FIP asks of a covariance (solve, logdet, the grid's quadratic forms)
+
+    For a few hundred points (the nightly means), its Cholesky factor costs
+    little, and the GP is its exact kernel, whatever its scales.
+    """
+
+    def __init__(self, base: BlockCov, kmat: np.ndarray):
+        """
+        :param base: BlockCov, the noise without the GP
+        :param kmat: np.ndarray, (n x n) the covariance of the GP
+        """
+        self.base = base
+        self.chol = np.linalg.cholesky(base.dense() + kmat)
+        self._logdet = 2.0 * float(np.sum(np.log(np.diag(self.chol))))
+
+    def logdet(self) -> float:
+        """log|V|"""
+        return self._logdet
+
+    def solve(self, x: np.ndarray) -> np.ndarray:
+        """V^-1 x, for a vector or a (n x m) matrix"""
+        return cho_solve((self.chol, True), np.asarray(x, dtype=float))
+
+    def grid_quad(self, trig_sq: np.ndarray, trig_cs: np.ndarray, size: int
+                  ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """cos^T V^-1 cos, sin^T V^-1 sin and cos^T V^-1 sin over a grid
+        (trig_sq is not needed: the whitened sinusoids give all three)"""
+        zed = solve_triangular(self.chol, trig_cs, lower=True)
+        zcos, zsin = zed[:, :size], zed[:, size:]
+        return (np.einsum('ij,ij->j', zcos, zcos),
+                np.einsum('ij,ij->j', zsin, zsin),
+                np.einsum('ij,ij->j', zcos, zsin))
+
+    def dense(self) -> np.ndarray:
+        """V itself"""
+        return self.chol @ self.chol.T
+
+    def dense_inv(self) -> np.ndarray:
+        """V^-1"""
+        return cho_solve((self.chol, True), np.eye(len(self.chol)))
 
 # =============================================================================
 # Define functions

@@ -33,6 +33,20 @@ is shared between instruments (the covariance is block-diagonal across
 them): the activity an optical instrument sees is not the one a
 near-infrared one sees.
 
+- 'sho': the rotation of a spotted star as celerite's RotationTerm, two
+  stochastically driven damped harmonic oscillators (SHO), one at the
+  rotation period P and one at P/2, with one quality factor Q and each its
+  own amplitude: sigma^2 e^(-w tau / 2Q) [cos(2 pi tau / P) + sin(2 pi
+  tau / P) / (2 eta Q)], eta = sqrt(1 - 1/4Q^2), w = 2 pi / (eta P), and the
+  same at P/2 with sigma2. It has no finite basis: the FIP takes it in its
+  kernel mode only (below).
+
+In the kernel mode (koloa.fip, the default up to a few thousand points),
+the GP is not a basis at all: its kernel at the times of the points (one
+block per instrument, zero between them) goes into the covariance of the
+noise (koloa.noise.DenseCov), exact whatever its scales. The basis is kept
+for longer series.
+
 The cost is a few dozen to a thousand more columns in the linear model.
 They reach the grid of periods through a projection the size of the
 data, once per sweep (koloa.linear.BaseProjection), so the number of
@@ -53,7 +67,7 @@ import numpy as np
 #: the spacing of the bumps, as a fraction of their width
 STEP_FRAC = 1.0 / 3
 #: the kinds of component
-KINDS = ('local', 'rotation')
+KINDS = ('local', 'rotation', 'sho')
 
 
 # =============================================================================
@@ -81,9 +95,9 @@ def setup(spec: Union[str, Dict[str, Any], Sequence[Any], None],
     """
     The components of a GP, with the priors of their hyperparameters
 
-    :param spec: 'local', 'rotation', a dict (kind, and the priors: sigma,
-                 length, period, sigma2 for the harmonic of a rotation), or
-                 a list of them. A prior is (low, high) (log-uniform), a
+    :param spec: 'local', 'rotation', 'sho', a dict (kind, and the priors:
+                 sigma, length, period, sigma2 for the harmonic of a
+                 rotation, quality for an SHO), or a list of them. A prior is (low, high) (log-uniform), a
                  number (fixed) or dict(mu=ln P, sd=) (gaussian on the log).
                  A rotation needs its period: a dict with period
     :param time: np.ndarray, the times of the series [days]
@@ -111,6 +125,15 @@ def setup(spec: Union[str, Dict[str, Any], Sequence[Any], None],
             comp['priors']['length'] = _bounds(
                 item.get('length'), (5.0, max(15.0, base / 3)))
             comp['priors']['sigma'] = _bounds(item.get('sigma'), amp)
+        elif kind == 'sho':
+            if item.get('period') is None:
+                raise ValueError('an SHO GP needs its period: a number, a '
+                                 'range (low, high), or dict(mu=ln P, sd=)')
+            comp['priors']['period'] = _bounds(item['period'], (1.0, 1.0))
+            comp['priors']['quality'] = _bounds(item.get('quality'),
+                                                (0.55, 100.0))
+            comp['priors']['sigma'] = _bounds(item.get('sigma'), amp)
+            comp['priors']['sigma2'] = _bounds(item.get('sigma2'), amp)
         else:
             if item.get('period') is None:
                 raise ValueError('a rotation GP needs its period: a range '
@@ -187,6 +210,9 @@ def columns(components: List[Dict[str, Any]],
 
     :return: tuple, (n x m) columns, (m) prior variances
     """
+    if needs_kernel(components):
+        raise ValueError('an SHO GP has no finite basis: the FIP takes it in '
+                         'its kernel mode (koloa.fip.oafip, gp_mode)')
     cols, var = [], []
     for comp, val in zip(components, values):
         name = comp.get('instrument')
@@ -225,6 +251,11 @@ def kernel(components: List[Dict[str, Any]],
     """
     out = np.zeros_like(np.asarray(tau, dtype=float))
     for comp, val in zip(components, values):
+        if comp['kind'] == 'sho':
+            out = out + (sho(tau, val['sigma'], val['period'], val['quality'])
+                         + sho(tau, val['sigma2'], val['period'] / 2,
+                               val['quality']))
+            continue
         env = np.exp(-0.5 * (tau / val['length']) ** 2)
         if comp['kind'] == 'local':
             out = out + val['sigma'] ** 2 * env
@@ -232,6 +263,60 @@ def kernel(components: List[Dict[str, Any]],
             out = out + env * (val['sigma'] ** 2 * np.cos(
                 2 * np.pi * tau / val['period']) + val['sigma2'] ** 2
                 * np.cos(4 * np.pi * tau / val['period']))
+    return out
+
+
+def sho(tau: np.ndarray, sigma: float, period: float, quality: float
+        ) -> np.ndarray:
+    """
+    The kernel of a stochastically driven damped harmonic oscillator that
+    oscillates at the period P (celerite's SHOTerm, Q > 1/2, its undamped
+    frequency set so that it oscillates at exactly P, as in its
+    RotationTerm), sigma^2 at tau = 0
+
+    :return: np.ndarray, the covariance at the lags tau
+    """
+    tau = np.abs(np.asarray(tau, dtype=float))
+    quality = max(float(quality), 0.5 + 1e-6)
+    eta = np.sqrt(1.0 - 1.0 / (4.0 * quality ** 2))
+    omega = 2.0 * np.pi / (eta * period)
+    arg = 2.0 * np.pi * tau / period
+    return sigma ** 2 * np.exp(-omega * tau / (2.0 * quality)) * (
+        np.cos(arg) + np.sin(arg) / (2.0 * eta * quality))
+
+
+def needs_kernel(components: List[Dict[str, Any]]) -> bool:
+    """whether a GP has no finite basis (an SHO), so the FIP must take it
+    in its kernel mode"""
+    return any(comp['kind'] == 'sho' for comp in components)
+
+
+def matrix(components: List[Dict[str, Any]], values: List[Dict[str, float]],
+           time: np.ndarray, inst: Optional[np.ndarray] = None) -> np.ndarray:
+    """
+    The covariance of a GP at the times of the points (the kernel mode of
+    the FIP): each component on the points of its instrument only, zero
+    between instruments
+
+    :param components: list of dict, from setup()
+    :param values: list of dict, the hyperparameters of each component
+    :param time: np.ndarray, the times [days]
+    :param inst: np.ndarray or None, the instrument of each point
+
+    :return: np.ndarray, (n x n)
+    """
+    lag = time[:, None] - time[None, :]
+    out = np.zeros_like(lag)
+    names = None if inst is None else np.asarray(inst).astype(str)
+    for comp, val in zip(components, values):
+        name = comp.get('instrument')
+        if name is not None and names is not None:
+            rows = np.where(names == name)[0]
+            if len(rows):
+                out[np.ix_(rows, rows)] += kernel([comp], [val],
+                                                  lag[np.ix_(rows, rows)])
+        else:
+            out += kernel([comp], [val], lag)
     return out
 
 

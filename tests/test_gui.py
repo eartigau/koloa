@@ -26,14 +26,27 @@ def test_the_command_lines():
     args = gui.command('detailed', dict(
         target='GJ 436', file='star.rdb', outdir='out', kmax='4',
         nsweep='2000', pmin='1.1', periods='113.46, 27', detection_map='fip',
-        fip_gp=False, tess=False, exclude='NIRPS, HARPS03'))
+        fip_gp='none', tess=False, exclude='NIRPS, HARPS03'))
     # the defaults of the command line are not written
     assert args == ['star.rdb', '--detailed', '--target', 'GJ 436',
                     '--outdir', 'out', '--kmax', '4', '--periods', '113.46',
-                    '27', '--exclude', 'NIRPS', 'HARPS03', '--detection-map',
-                    '--no-fip-gp', '--no-tess']
+                    '27', '--no-fip-gp', '--exclude', 'NIRPS', 'HARPS03',
+                    '--detection-map', '--no-tess']
     assert gui.line(args).startswith("koloa star.rdb --detailed --target "
                                      "'GJ 436'")
+    # a rotation that can be trusted: an SHO at it, unless asked otherwise
+    args = gui.command('detailed', dict(target='GL 406', rotation='2.704',
+                                        fip_gp='sho'))
+    assert args[-2:] == ['--rotation', '2.704']
+    assert gui.command('detailed', dict(target='GL 406', rotation='2.704',
+                                        fip_gp='banded'))[-2:] == [
+        '--fip-gp', 'banded']
+    with pytest.raises(ValueError):
+        gui.command('detailed', dict(target='GL 406', fip_gp='sho'))
+    assert gui.command('detailed', dict(target='x', fip_gp='none'))[-1] == (
+        '--no-fip-gp')
+    assert gui.command('gather', dict(target='x', refresh=True))[-1] == (
+        '--refresh')
     # the name alone, or the file alone, will do; neither will not
     assert gui.command('detailed', dict(target='GJ 436'))[0] == '--detailed'
     assert gui.command('detailed', dict(file='a.rdb'))[0] == 'a.rdb'

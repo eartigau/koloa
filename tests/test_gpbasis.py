@@ -127,3 +127,45 @@ def test_the_base_projection_is_the_full_model(npar):
                             rothers=wothers.T @ trig_cs, var_others=var_o,
                             value=value)
         assert np.allclose(new, old, rtol=1e-8, atol=1e-8)
+
+
+def test_the_kernel_mode_is_the_basis():
+    """the GP in the covariance of the noise (its exact kernel) and as a
+    basis: the same evidence"""
+    from koloa.fip import PeriodGrid, _Chain, _default_setup
+    sim = simulate(planets=[dict(P=5.3, K=4.0, e=0.0, tp=0.0)], seed=7,
+                   err=1.5)
+    data = sim['data']
+    for spec in (dict(kind='local', length=20.0, sigma=4.0),
+                 dict(kind='rotation', period=12.0, length=30.0, sigma=4.0,
+                      sigma2=2.0)):
+        logz = []
+        for mode in ('basis', 'kernel'):
+            cfg = dict(kmax=1, unit='both', trend=0, regressors=None,
+                       prior_k='uniform', frac_prior=(1.0, 20.0), nsweep=1,
+                       nburn=0, progress=False, gp_mode=mode,
+                       gp=gpbasis.setup(spec, data.time, 3.0, data.inst),
+                       **_default_setup(data, 'both', None, True, None, 12,
+                                        None))
+            grid = PeriodGrid(time=data.time, pmin=1.1, pmax=None,
+                              oversample=5, tref=data.tref)
+            chain = _Chain(data, grid, cfg, 1)
+            logz.append(chain.full_model(chain.make_cov()).logz)
+        assert logz[0] == pytest.approx(logz[1], abs=1e-2)
+
+
+def test_an_sho_at_the_rotation_finds_the_planet_under_it():
+    """a planet under a rotation at 12 d: missed without a GP, found with
+    an SHO at the rotation (the kernel mode)"""
+    sim = simulate(planets=[dict(P=5.3, K=4.0, e=0.0, tp=0.0)],
+                   activity=dict(kernel='sho', sigma=5.0, period=12.0,
+                                 quality=8.0), seed=7, err=1.5)
+    with pytest.raises(ValueError):
+        gpbasis.columns(gpbasis.setup(dict(kind='sho', period=12.0),
+                                      sim['data'].time, 3.0),
+                        [dict(period=12.0, quality=5.0, sigma=1.0,
+                              sigma2=1.0)], sim['data'].time)
+    res = oafip(sim['data'], kmax=2, nsweep=400, nburn=200, nchains=1,
+                progress=False, gp=dict(kind='sho', period=12.0))
+    assert 'GP sho' in res.method
+    assert res.family_containing(5.3, 1 / sim['data'].baseline) < 0.05

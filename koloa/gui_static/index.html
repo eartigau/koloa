@@ -65,7 +65,7 @@
         <label><input type="checkbox" data-opt="tess" data-for="gather" checked> TESS</label>
       </div>
       <div class="cmd"><pre id="cmd-gather" class="codeblock"></pre><button class="copy" data-copy="cmd-gather" type="button" data-i18n="copy">Copy</button></div>
-      <div class="row"><button id="run-gather" class="go" type="button" data-i18n="run_gather">Gather</button></div>
+      <div class="row"><button id="run-gather" class="go" type="button" data-i18n="run_gather">Gather</button><span id="ondisk" class="hint"></span></div>
     </section>
 
     <!-- the detailed report -->
@@ -81,6 +81,13 @@
         <label><span data-i18n="pmin">Shortest period [d]</span><input data-opt="pmin" data-for="detailed" type="number" step="0.1" value="1.1"></label>
         <label><span data-i18n="pmax">Longest period [d]</span><input data-opt="pmax" data-for="detailed" type="number" step="1" placeholder="2 x baseline"></label>
         <label><span data-i18n="periods">More periods to test [d]</span><input data-opt="periods" data-for="detailed" type="text" placeholder="113.46 27.1"></label>
+        <label><span data-i18n="fip_gp_sel">GP in the FIP</span>
+          <select id="fipgp" data-opt="fip_gp" data-for="detailed">
+            <option value="banded" data-i18n="gp_banded">by period band</option>
+            <option value="sho" data-i18n="gp_sho">SHO at the rotation</option>
+            <option value="none" data-i18n="gp_none">none</option>
+          </select></label>
+        <label><span data-i18n="rotation_p">Rotation period [d]</span><input id="rotation" data-opt="rotation" data-for="detailed" type="number" step="any" min="0" placeholder="2.704"></label>
         <label><span data-i18n="exclude">Instruments left out</span><input id="exclude" data-opt="exclude" data-for="detailed" type="text" placeholder="NIRPS HARPS03" autocomplete="off"></label>
         <label><span data-i18n="dmap">Detection map</span>
           <select data-opt="detection_map" data-for="detailed">
@@ -90,7 +97,6 @@
           </select></label>
       </div>
       <div class="checks">
-        <label><input type="checkbox" data-opt="fip_gp" data-for="detailed" checked> <span data-i18n="fip_gp">GP in the FIP, by band</span></label>
         <label><input type="checkbox" data-opt="exposures" data-for="detailed"> <span data-i18n="exposures">every exposure (not nightly means)</span></label>
         <label><input type="checkbox" data-opt="dace" data-for="detailed" checked> DACE</label>
         <label><input type="checkbox" data-opt="carmenes" data-for="detailed" checked> CARMENES DR1</label>
