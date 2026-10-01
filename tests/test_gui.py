@@ -74,3 +74,24 @@ def test_the_server_answers():
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_the_dialog_that_picks_a_file(monkeypatch, tmp_path):
+    """the dialog of the machine (here a stand-in): the path chosen, a
+    folder under the one koloa runs from made relative, a cancel"""
+    import subprocess
+    import types
+    answers = iter([
+        types.SimpleNamespace(returncode=0, stdout='/data/lbl_GJ436.rdb\n',
+                              stderr=''),
+        types.SimpleNamespace(returncode=0, stdout=f'{tmp_path}/out/\n',
+                              stderr=''),
+        types.SimpleNamespace(returncode=1, stdout='',
+                              stderr='execution error: User canceled. '
+                                     '(-128)')])
+    monkeypatch.setattr(subprocess, 'run', lambda *a, **k: next(answers))
+    monkeypatch.setattr(gui.sys, 'platform', 'darwin')
+    monkeypatch.chdir(tmp_path)
+    assert gui.pick('file') == dict(path='/data/lbl_GJ436.rdb')
+    assert gui.pick('folder', str(tmp_path)) == dict(path='out')
+    assert gui.pick('file') == dict(cancelled=True)

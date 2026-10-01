@@ -40,6 +40,10 @@ button.stop { border-color: rgba(230, 103, 103, 0.6); background: rgba(230, 103,
   gap: 8px 12px;
   margin: 8px 0;
 }
+.fields label.wide { grid-column: span 2; }
+.picker { display: flex; gap: 6px; }
+.picker input { flex: 1; }
+.picker button { padding: 5px 10px; font-size: 0.8rem; }
 .fields label { display: flex; flex-direction: column; gap: 4px; font-size: 0.82rem; color: var(--muted); }
 .checks { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0; font-size: 0.9rem; }
 .checks label { display: flex; align-items: center; gap: 6px; cursor: pointer; }

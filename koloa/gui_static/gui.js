@@ -8,7 +8,7 @@ const TEXT = {
     resolve: 'Resolve', velocities: 'Velocities',
     velocities_hint: 'A file of velocities (LBL .rdb, csv, DACE csv), the archives gathered for the star, or both. Untick an instrument (or click it in the legend) to leave it out of the report.',
     use: 'Used', exclude: 'Instruments left out',
-    file: 'File (optional)', root: 'Archives folder', plot: 'Plot',
+    file: 'File (optional)', root: 'Archives folder', plot: 'Plot', browse: 'Browse...', picking: 'choosing...',
     gather: 'Gather the archives',
     gather_hint: 'What DACE (with your key when there is one), CARMENES DR1 and TESS have of the star, kept in the archives folder, one folder per star.',
     copy: 'Copy', copied: 'Copied', run_gather: 'Gather', detailed: 'Detailed report',
@@ -42,7 +42,7 @@ const TEXT = {
     resolve: 'Résoudre', velocities: 'Vitesses',
     velocities_hint: 'Un fichier de vitesses (LBL .rdb, csv, csv de DACE), les archives récupérées pour l’étoile, ou les deux. Décochez un instrument (ou cliquez-le dans la légende) pour l’écarter du rapport.',
     use: 'Utilisé', exclude: 'Instruments écartés',
-    file: 'Fichier (facultatif)', root: 'Dossier des archives', plot: 'Tracer',
+    file: 'Fichier (facultatif)', root: 'Dossier des archives', plot: 'Tracer', browse: 'Parcourir...', picking: 'choix en cours...',
     gather: 'Récupérer les archives',
     gather_hint: 'Ce que DACE (avec votre clé s’il y en a une), CARMENES DR1 et TESS ont de l’étoile, rangé dans le dossier des archives, un dossier par étoile.',
     copy: 'Copier', copied: 'Copié', run_gather: 'Récupérer', detailed: 'Rapport détaillé',
@@ -427,6 +427,24 @@ document.addEventListener('click', async (e) => {
     try { await navigator.clipboard.writeText(text); } catch (err) { /* old browsers */ }
     copy.textContent = t('copied');
     setTimeout(() => { copy.textContent = t('copy'); }, 1200);
+  }
+  const picker = e.target.closest('[data-pick]');
+  if (picker) {
+    const field = $(picker.dataset.into);
+    const label = picker.textContent;
+    picker.disabled = true; picker.textContent = t('picking');
+    try {
+      const res = await api(`/api/pick?${new URLSearchParams({ kind: picker.dataset.pick, start: field.value || field.placeholder || '' })}`);
+      if (res.path) {
+        field.value = res.path;
+        updateCommands();
+        if (picker.dataset.into === 'root') checkArchives();
+      }
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      picker.disabled = false; picker.textContent = label;
+    }
   }
   const prot = e.target.closest('[data-prot]');
   if (prot) {

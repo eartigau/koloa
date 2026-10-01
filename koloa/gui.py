@@ -274,6 +274,67 @@ def archives(target: str, root: str = '') -> Dict[str, Any]:
                           manifest.get('archives', {}).items()})
 
 
+#: what a dialog of this machine says, by what it picks
+PROMPTS = dict(file='A file of velocities (LBL .rdb, csv, DACE csv)',
+               folder='A folder')
+
+
+def pick(kind: str = 'file', start: str = '') -> Dict[str, Any]:
+    """
+    A dialog of this machine to choose a file or a folder (the page cannot:
+    a browser never gives it the path of a file): Finder's on macOS
+    (osascript), Tk's elsewhere, in a process of its own
+
+    :param kind: str, file or folder
+    :param start: str, where the dialog opens (the folder of a path given,
+                  or the folder koloa runs from)
+
+    :return: dict, path, or cancelled
+    """
+    start = os.path.abspath(os.path.expanduser(start)) if start else ''
+    while start and not os.path.isdir(start):
+        start = os.path.dirname(start)
+    start = start or os.getcwd()
+    what = 'folder' if kind == 'folder' else 'file'
+    if sys.platform == 'darwin':
+        place = start.replace('\\', '\\\\').replace('"', '\\"')
+        proc = subprocess.run(
+            ['osascript', '-e', 'activate', '-e',
+             f'POSIX path of (choose {what} with prompt "{PROMPTS[what]}" '
+             f'default location (POSIX file "{place}"))'],
+            capture_output=True, text=True)
+        if proc.returncode != 0:
+            if '-128' in proc.stderr:
+                return dict(cancelled=True)
+            raise RuntimeError(proc.stderr.strip() or 'osascript failed')
+        path = proc.stdout.strip()
+    else:
+        code = ('import sys, tkinter as tk\n'
+                'from tkinter import filedialog\n'
+                'root = tk.Tk(); root.withdraw()\n'
+                "root.attributes('-topmost', True)\n"
+                + ("print(filedialog.askdirectory(initialdir=sys.argv[1], "
+                   "title=sys.argv[2]))" if what == 'folder' else
+                   "print(filedialog.askopenfilename(initialdir=sys.argv[1], "
+                   "title=sys.argv[2], filetypes=[('velocities', '*.rdb "
+                   "*.csv *.dat *.txt'), ('all', '*')]))"))
+        proc = subprocess.run([sys.executable, '-c', code, start,
+                               PROMPTS[what]], capture_output=True,
+                              text=True)
+        if proc.returncode != 0:
+            raise RuntimeError('no dialog on this machine (Tk): type the '
+                               'path')
+        path = proc.stdout.strip()
+    if not path:
+        return dict(cancelled=True)
+    if what == 'folder':
+        path = path.rstrip('/') or '/'
+        # a folder under the one koloa runs from: written relative to it
+        rel = os.path.relpath(path, os.getcwd())
+        path = rel if not rel.startswith('..') else path
+    return dict(path=path)
+
+
 def gathering(target: str, root: str = '') -> bool:
     """whether the archives of a star are being gathered by a run"""
     from koloa.gather import folder_name
@@ -371,6 +432,9 @@ class Handler(BaseHTTPRequestHandler):
                                        archive=fetched()))
             if url.path == '/api/resolve':
                 return self._json(resolve_star(query.get('name', '')))
+            if url.path == '/api/pick':
+                return self._json(pick(query.get('kind', 'file'),
+                                       query.get('start', '')))
             if url.path == '/api/archives':
                 state = archives(query.get('target', ''),
                                  query.get('root', ''))

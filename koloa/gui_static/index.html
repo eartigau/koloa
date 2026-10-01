@@ -43,10 +43,10 @@
       <h2 data-i18n="velocities">Velocities</h2>
       <p class="hint" data-i18n="velocities_hint">A file of velocities (LBL .rdb, csv, DACE csv), the archives gathered for the star, or both. Untick an instrument (or click it in the legend) to leave it out of the report.</p>
       <div class="fields">
-        <label><span data-i18n="file">File (optional)</span>
-          <input id="file" type="text" placeholder="/path/to/lbl_STAR.rdb" autocomplete="off"></label>
+        <label class="wide"><span data-i18n="file">File (optional)</span>
+          <span class="picker"><input id="file" type="text" placeholder="/path/to/lbl_STAR.rdb" autocomplete="off"><button type="button" data-pick="file" data-into="file" data-i18n="browse">Browse...</button></span></label>
         <label><span data-i18n="root">Archives folder</span>
-          <input id="root" type="text" value="archives" autocomplete="off"></label>
+          <span class="picker"><input id="root" type="text" value="archives" autocomplete="off"><button type="button" data-pick="folder" data-into="root" title="..." >...</button></span></label>
       </div>
       <div class="row">
         <button id="plot" type="button" data-i18n="plot">Plot</button>
@@ -75,7 +75,7 @@
       <p class="hint" data-i18n="detailed_hint">Everything koloa can say about the star, as a PDF report: from the file, from the SIMBAD name (the archives only), or (best) from both.</p>
       <div class="fields">
         <label><span data-i18n="outdir">Report folder</span>
-          <input id="outdir" type="text" placeholder="reports/GJ_436" autocomplete="off"></label>
+          <span class="picker"><input id="outdir" type="text" placeholder="reports/GJ_436" autocomplete="off"><button type="button" data-pick="folder" data-into="outdir">...</button></span></label>
         <label><span data-i18n="kmax">Signals (kmax)</span><input data-opt="kmax" data-for="detailed" type="number" min="1" max="8" value="3"></label>
         <label><span data-i18n="nsweep">Sweeps</span><input data-opt="nsweep" data-for="detailed" type="number" min="100" step="100" value="2000"></label>
         <label><span data-i18n="nburn">Burn-in</span><input data-opt="nburn" data-for="detailed" type="number" min="50" step="50" value="400"></label>
