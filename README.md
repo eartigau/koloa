@@ -31,6 +31,7 @@ exactly. That is what makes the outlier-aware FIP affordable.
 | `koloa.secular` | the acceleration of a star in both senses of "secular acceleration": `acceleration(fit)` reads the trend of a fit as the acceleration of the star (m/s/yr) and its change (m/s/yr^2), with their errors; `companion_min_mass(accel, distance, separation)` gives the smallest companion that makes it (Torres 1999); and the perspective acceleration mu^2 d from the Gaia DR3 astrometry, with its error propagated from the covariance of the proper motions and the parallax, which `RVModel(perspective=(value, error))` fits as a parameter with that prior (only for velocities whose barycentric correction did not remove it; APERO's did) |
 | `koloa.outliers` | why an outlier is an outlier: `explain_outliers(fit)` compares every outlier (a whole visit, or a single exposure) with the good data on everything recorded with it, the header keywords of LBL files (smart lists for SPIRou and NIRPS: S/N, airmass, telluric absorption, the shape of the image, the Fabry-Perot, the age of the wavelength solution...), DACE's columns for HARPS and ESPRESSO, the activity indicators and the error bars; which keys are significantly off for each outlier, and which the outliers share |
 | `koloa.dace` | the public velocities of a star on DACE, every instrument, one instrument per era, with every column kept |
+| `koloa.gather` | everything public about a star from its SIMBAD name, kept in one folder: the velocities of DACE and of CARMENES DR1, the TESS light curves, the identifiers and periods of variability of SIMBAD, and a manifest of what each archive gave |
 | `koloa.archive` | the names of a star (CDS Sesame) and its planets in the NASA Exoplanet Archive, with every published solution; a fitted K against them, the most recent first |
 | `koloa.radvel_bridge` | `OutlierRVLikelihood`, a drop-in replacement for radvel's `RVLikelihood` |
 | `koloa.doppler` | relativistic Doppler conversions (velocity, wavelength ratio, log-wavelength shift) |
@@ -106,6 +107,18 @@ published solutions, the FIP, the signals against the known planets
 (their K and the published ephemeris carried to the data), the GP, the
 duck test of each signal, the activity indicators and the rotation, the
 outliers, and every figure.
+
+`koloa "GJ 436" --gather archives` gathers what is public about a star
+from its SIMBAD name, in `archives/GJ_436`: the velocities of DACE (one
+file per instrument era, with the indicators), those of CARMENES DR1
+(corrected for the nightly zero points, through GAVO's TAP service), the
+TESS light curves of every sector, every velocity together in
+`rv/all_rv.csv`, the identifiers and the periods of variability SIMBAD
+lists in `target.json`, and what each archive gave (or why not) in
+`manifest.json`. From Python, `koloa.gather.gather('GJ 436', 'archives')`,
+and `koloa.gather.load('archives/GJ_436')` reads it back. DACE is filtered
+from some networks: it is then reported as unreachable and the rest goes
+on.
 
 From Python:
 

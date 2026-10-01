@@ -10,6 +10,8 @@ koloa from the command line.
                                                  # two passes, why each
                                                  # outlier, a PDF report
     koloa star.rdb --detailed --literature paper_rvs.dat
+    koloa "GJ 436" --gather archives             # DACE, CARMENES DR1 and
+                                                 # TESS in archives/GJ_436
 
 Created on 2026-09-27
 
@@ -31,7 +33,8 @@ def main(argv=None):
         prog='koloa', description='Outlier-aware radial velocity analysis: '
         'periodograms, FIPs, fits and the duck test.')
     parser.add_argument('filename', help='csv or rdb file (rjd, vrad, svrad '
-                        'and indicators with their errors)')
+                        'and indicators with their errors), or with --gather '
+                        'the name of a star')
     parser.add_argument('--outdir', default='koloa_output')
     parser.add_argument('--name', default=None, help='the target name')
     parser.add_argument('--kmax', type=int, default=3,
@@ -102,12 +105,25 @@ def main(argv=None):
                         help='with --detailed: no GP of the activity inside '
                              'the FIP')
     parser.add_argument('--no-tess', action='store_true',
-                        help='with --detailed: do not fetch the TESS light '
-                             'curves of the star')
+                        help='with --detailed or --gather: do not fetch '
+                             'the TESS light curves of the star')
+    parser.add_argument('--gather', nargs='?', const='.', default=None,
+                        metavar='ROOT',
+                        help='gather what DACE, CARMENES DR1 and TESS have '
+                             'of the star named instead of a file, in '
+                             'ROOT/<star> (koloa.gather); --no-dace, '
+                             '--no-carmenes, --no-tess leave one out')
+    parser.add_argument('--no-carmenes', action='store_true',
+                        help='with --gather: not CARMENES DR1')
     parser.add_argument('--periods', nargs='+', type=float, default=None,
                         help='more periods to test (detailed analysis: '
                              'candidates the archive does not list) [d]')
     args = parser.parse_args(argv)
+    if args.gather is not None:
+        from koloa.gather import gather
+        gather(args.filename, args.gather, dace=not args.no_dace,
+               carmenes=not args.no_carmenes, tess=not args.no_tess)
+        return
     if args.detailed:
         detailed_analysis(args.filename, outdir=args.outdir, name=args.name,
                           target=args.target, archive=not args.no_archive,

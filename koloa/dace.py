@@ -31,7 +31,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
@@ -155,6 +155,21 @@ def fetch(target: str, path: str, api_key: Optional[str] = None,
                              for name in names])
     log(f'{nrow} velocities of {target} written to {path}', 'value')
     return path
+
+
+def names(ident: Dict[str, Any], target: str) -> List[str]:
+    """the names DACE may know a star by: its catalogue names without
+    spaces (HD69830, GJ687, HIP86162...), then as SIMBAD writes them"""
+    out = []
+    for key in ('hd', 'gj', 'hip', 'main'):
+        if ident.get(key):
+            out.append(ident[key].replace('NAME ', '').replace(' ', ''))
+    out.append(target.replace(' ', ''))
+    for alias in ident.get('aliases', []):
+        if alias.split()[0] in ('GJ', 'Gl', 'HD', 'HIP', 'TOI', 'K2',
+                                'Kepler', 'LHS', 'Wolf', 'Ross'):
+            out.append(alias.replace(' ', ''))
+    return list(dict.fromkeys(name for name in out if name))
 
 
 def _float(value) -> float:

@@ -66,6 +66,7 @@ from koloa import literature as klit
 from koloa import kepler
 from koloa import plotting as kplot
 from koloa.archive import MATCH, compare, conjunction, known_planets, resolve
+from koloa.dace import names as dace_names
 from koloa.data import RVData, merge, robust_std
 from koloa.diagnostics import duck_test
 from koloa.fip import inflate_to_fit, oafip
@@ -158,21 +159,6 @@ def _target(data: RVData, target: Optional[str]) -> Optional[str]:
             if best:
                 return best
     return data.name
-
-
-def dace_names(ident: Dict[str, Any], target: str) -> List[str]:
-    """the names DACE may know a star by: its catalogue names without
-    spaces (HD69830, GJ687, HIP86162...), then as SIMBAD writes them"""
-    out = []
-    for key in ('hd', 'gj', 'hip', 'main'):
-        if ident.get(key):
-            out.append(ident[key].replace('NAME ', '').replace(' ', ''))
-    out.append(target.replace(' ', ''))
-    for alias in ident.get('aliases', []):
-        if alias.split()[0] in ('GJ', 'Gl', 'HD', 'HIP', 'TOI', 'K2',
-                                'Kepler', 'LHS', 'Wolf', 'Ross'):
-            out.append(alias.replace(' ', ''))
-    return list(dict.fromkeys(name for name in out if name))
 
 
 def fetch_dace(names: Sequence[str], folder: str, exclude: Sequence[str] = (),
