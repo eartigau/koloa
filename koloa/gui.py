@@ -258,12 +258,28 @@ class Job:
 # =============================================================================
 def resolve_star(name: str) -> Dict[str, Any]:
     """the SIMBAD resolver of the page: identifiers, position, TIC, the
-    periods SIMBAD lists, CARMENES DR1"""
-    from koloa.archive import resolve
+    periods SIMBAD lists, CARMENES DR1, and the planets the NASA Exoplanet
+    Archive knows (its copy kept here, koloa.archive)"""
+    from koloa.archive import host_name, known_planets, resolve
     from koloa.gather import carmenes_star, folder_name, variability
     ident = resolve(name)
     out = dict(ident, folder=folder_name(name), variability=[],
-               carmenes=None)
+               carmenes=None, planets=[])
+    try:
+        host = host_name(ident)
+        known = known_planets(host=host) if host else {}
+        out['archive_host'] = host
+        out['archive_rotation'] = (known.get('star') or {}).get('rotation')
+        out['planets'] = [
+            dict(name=pl['name'], P=pl.get('P'), K=pl.get('K'),
+                 mass_earth=pl.get('mass_earth'), e=pl.get('e'),
+                 reference=pl.get('reference'),
+                 reference_url=pl.get('reference_url'),
+                 solutions=len(pl.get('solutions') or []),
+                 discovery=pl.get('discovery'), year=pl.get('disc_year'))
+            for pl in known.get('planets', [])]
+    except Exception as err:  # a help, not a need
+        out['planets_error'] = str(err)
     try:
         out['variability'] = variability(ident['main'])
     except Exception as err:  # a help, not a need
