@@ -29,6 +29,7 @@ const TEXT = {
     not_in: 'not in DR1', points: 'points', inst: 'Instrument', n: 'N', rms: 'rms [m/s]',
     no_rv: 'No velocity: give a file, or gather the archives of the star first.',
     starting: 'starting', need: 'Give a file, a SIMBAD name, or (best) both.',
+    left_fip: 'left for this FIP', pass_left: 'the whole pass: at most about', of_up_to: 'of at most',
   },
   fr: {
     tagline: 'Vitesses radiales robustes aux valeurs aberrantes · sur cette machine', docs: 'Docs',
@@ -57,6 +58,7 @@ const TEXT = {
     not_in: 'pas dans DR1', points: 'points', inst: 'Instrument', n: 'N', rms: 'rms [m/s]',
     no_rv: 'Aucune vitesse : donnez un fichier, ou récupérez d’abord les archives de l’étoile.',
     starting: 'démarrage', need: 'Donnez un fichier, un nom SIMBAD, ou (le mieux) les deux.',
+    left_fip: 'restantes pour ce FIP', pass_left: 'toute la passe : au plus environ', of_up_to: 'sur au plus',
   },
 };
 // the instruments: eight hues checked for colour-blind separation on the
@@ -256,6 +258,25 @@ function clock(sec) {
   return h ? `${h} h ${String(m).padStart(2, '0')} min` : m ? `${m} min ${String(s).padStart(2, '0')} s` : `${s} s`;
 }
 
+// the sweeps of the FIP that runs: a bar, the time left for it, and for the
+// whole pass when it is one FIP of several (the descent of the banded FIP)
+function progressHtml(p) {
+  const frac = Math.min(1, p.done / Math.max(p.total, 1));
+  const pct = Math.round(100 * frac);
+  const perFip = frac > 0.02 ? p.seconds / frac : null;
+  const m = p.label.match(/FIP (\d+) of up to (\d+) \((.*)\)$/);
+  let name = p.label;
+  let pass = '';
+  if (m) {
+    const k = +m[1], n = +m[2];
+    name = `FIP ${k} ${t('of_up_to')} ${n} (${m[3]})`;
+    if (perFip && n > k) pass = ` \u00b7 ${t('pass_left')} ${clock((1 - frac) * perFip + (n - k) * perFip)}`;
+  }
+  const left = perFip ? ` \u00b7 ~${clock((1 - frac) * perFip)} ${t('left_fip')}` : '';
+  return `<span class="pbar"><span style="width:${pct}%"></span></span>`
+    + `<span class="ptext">${esc(name)}: ${pct} %${left}${pass}</span>`;
+}
+
 function renderJobs() {
   const box = $('jobs');
   if (!jobs.size) { box.innerHTML = `<p class="hint">${esc(t('no_runs'))}</p>`; return; }
@@ -265,7 +286,9 @@ function renderJobs() {
       const last = i === job.steps.length - 1;
       const icon = last && running ? '<span class="hourglass">⏳</span>'
         : last && job.status !== 'done' ? '<span class="bad">✗</span>' : '<span class="ok">✓</span>';
-      const detail = last && running && st.detail ? `<span class="detail">${esc(st.detail)}</span>` : '';
+      const detail = (last && running && st.progress ? progressHtml(st.progress) : '')
+        + (last && running && st.detail && !(st.progress && st.detail.includes('% of the sweeps'))
+          ? `<span class="detail">${esc(st.detail)}</span>` : '');
       return `<li><span class="icon">${icon}</span><span>${esc(st.name)}</span><span class="time">${clock(st.elapsed)}</span>${detail}</li>`;
     }).join('') || (running ? `<li><span class="icon"><span class="hourglass">⏳</span></span><span>${esc(t('starting'))}</span><span></span></li>` : '');
     const base = `/api/output?id=${job.id}&name=`;

@@ -991,13 +991,18 @@ def _share_counter(counter):
 class _Progress:
     """
     The sweeps of the chains of a FIP as they go: a bar (tqdm) on a
-    terminal, a log line at every tenth otherwise (a pipe, koloa's GUI)
+    terminal, a log line at every tenth otherwise (a pipe); for koloa's GUI
+    (KOLOA_PROGRESS=gui), also a 'progress: label | done | total | seconds'
+    line every two seconds, which it draws as a bar
     """
 
     def __init__(self, label: str, total: int):
+        import os
         from koloa import log as klog
         self.label, self.total = label, total
         self.start, self.shown = _time.time(), 0
+        self.gui = os.environ.get('KOLOA_PROGRESS', '') == 'gui'
+        self.last = 0.0
         self.bar = None
         if klog.VERBOSE and _sys.stderr.isatty():
             try:
@@ -1009,6 +1014,11 @@ class _Progress:
 
     def update(self, done: int):
         done = min(int(done), self.total)
+        now = _time.time()
+        if self.gui and (now - self.last >= 2.0 or done >= self.total):
+            self.last = now
+            log(f'progress: {self.label} | {done} | {self.total} | '
+                f'{now - self.start:.0f}')
         if self.bar is not None:
             self.bar.update(done - self.bar.n)
             return

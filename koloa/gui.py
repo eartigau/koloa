@@ -26,6 +26,7 @@ import json
 import mimetypes
 import os
 import shlex
+import signal
 import subprocess
 import sys
 import threading
@@ -144,7 +145,7 @@ class Job:
         self.start, self.end = time.time(), None
         self.returncode: Optional[int] = None
         # the koloa of this page, whatever the folder it runs from
-        env = dict(os.environ, PYTHONUNBUFFERED='1')
+        env = dict(os.environ, PYTHONUNBUFFERED='1', KOLOA_PROGRESS='gui')
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         env['PYTHONPATH'] = root + os.pathsep + env.get('PYTHONPATH', '')
         self.proc = subprocess.Popen(
@@ -157,8 +158,16 @@ class Job:
         """the log, line by line, and the steps it marks"""
         for text in self.proc.stdout:
             text = text.rstrip('\n')
-            self.lines.append(text)
             message = text.split(' | ', 1)[-1]
+            if message.startswith('progress: '):
+                # the sweeps of a FIP: a bar on the page, not a log line
+                part = message[10:].rsplit(' | ', 3)
+                if self.steps and len(part) == 4:
+                    self.steps[-1]['progress'] = dict(
+                        label=part[0], done=int(part[1]), total=int(part[2]),
+                        seconds=float(part[3]), at=time.time())
+                continue
+            self.lines.append(text)
             if message.startswith('step: '):
                 now = time.time()
                 if self.steps and self.steps[-1]['end'] is None:
@@ -394,6 +403,11 @@ def serve(port: int = 8765, browser: bool = True):
           flush=True)
     if browser:
         threading.Timer(0.5, webbrowser.open, args=(url,)).start()
+
+    def stop(*_):
+        raise KeyboardInterrupt
+    # a kill stops the runs too, as Ctrl-C does
+    signal.signal(signal.SIGTERM, stop)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

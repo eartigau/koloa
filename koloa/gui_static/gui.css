@@ -79,6 +79,9 @@ ol.steps li { display: grid; grid-template-columns: 1.6em 1fr auto; gap: 6px; pa
 ol.steps .icon { text-align: center; }
 ol.steps .time { font-family: "IBM Plex Mono", monospace; color: var(--muted); font-size: 0.85rem; }
 ol.steps .detail { grid-column: 2 / 4; font-family: "IBM Plex Mono", monospace; color: var(--muted); font-size: 0.76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ol.steps .pbar { grid-column: 2 / 4; height: 6px; margin-top: 4px; background: rgba(200, 220, 255, 0.12); border-radius: 999px; overflow: hidden; }
+ol.steps .pbar span { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width 1s linear; }
+ol.steps .ptext { grid-column: 2 / 4; font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; color: var(--text); }
 .ok { color: #6ce2ad; }
 .bad { color: #e66767; }
 .hourglass { display: inline-block; animation: turn 2s ease-in-out infinite; }
