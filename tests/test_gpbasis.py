@@ -51,3 +51,16 @@ def test_fip_with_a_gp_samples_its_hyperparameters():
     assert all(low <= mid <= high for mid, low, high in summ.values())
     assert 'GP local' in res.method
     assert res.fip_containing(5.3, 1 / sim['data'].baseline) < 0.5
+
+
+def test_banded_fip_puts_the_bands_together():
+    """two bands from the top down: a GP kept or not, every frequency of the
+    periodogram from its own band"""
+    from koloa.bandfip import banded_fip, fip_at
+    sim = simulate(planets=[dict(P=5.3, K=6.0, e=0.0, tp=0.0)], seed=4,
+                   err=1.5)
+    res = banded_fip(sim['data'], nband=2, kmax=1, nsweep=120, nburn=80,
+                     nchains=1, quiet=True)
+    assert len(res['bands']) == 2 and len(res['freq']) == len(res['fip'])
+    assert np.all(np.diff(res['freq']) > 0)
+    assert fip_at(res, 5.3) < 0.5
