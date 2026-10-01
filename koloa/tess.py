@@ -481,6 +481,7 @@ def figure(res: Dict[str, Any], periods: Sequence[float] = (),
                          color=C['outlier'], fontsize=7, va='top',
                          transform=ax1.get_xaxis_transform())
     ax1.set_xscale('log')
+    kplot.plain_log_ticks(ax1, 'x')
     ax1.set_xlabel('period [d]')
     ax1.set_ylabel('GLS power')
     ax1.set_xlim(PMIN, grid[-1])

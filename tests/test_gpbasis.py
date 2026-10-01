@@ -64,3 +64,22 @@ def test_banded_fip_puts_the_bands_together():
     assert len(res['bands']) == 2 and len(res['freq']) == len(res['fip'])
     assert np.all(np.diff(res['freq']) > 0)
     assert fip_at(res, 5.3) < 0.5
+
+
+def test_one_gp_per_instrument():
+    """two instruments: two independent GPs, each zero on the other's
+    points, with their own hyperparameters"""
+    time = np.sort(np.random.default_rng(2).uniform(0, 200, 80))
+    inst = np.where(np.arange(80) % 2 == 0, 'SPIRou', 'HARPS')
+    comp = gpbasis.setup('local', time, 3.0, inst)
+    assert [c['instrument'] for c in comp] == ['HARPS', 'SPIRou']
+    assert len(gpbasis.names(comp)) == 4
+    val = gpbasis.initial(comp)
+    cols, var = gpbasis.columns(comp, val, time, inst)
+    cov = (cols * var) @ cols.T
+    # no covariance between the instruments, the SE kernel within each
+    assert np.allclose(cov[np.ix_(inst == 'SPIRou', inst == 'HARPS')], 0)
+    own = inst == 'SPIRou'
+    exact = gpbasis.kernel([comp[1]], [val[1]],
+                           time[own][:, None] - time[own][None, :])
+    assert np.max(np.abs(cov[np.ix_(own, own)] - exact)) < 1e-3 * exact.max()

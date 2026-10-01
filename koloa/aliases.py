@@ -240,8 +240,8 @@ def figure(sols: Sequence[Dict[str, Any]], title: Optional[str] = None,
     """
     from koloa import plotting as kplot
     shown = list(sols[:nmax])
-    fig, axes = kplot.plt.subplots(1, len(shown),
-                                   figsize=(3.3 * len(shown) + 0.6, 3.3),
+    fig, axes = kplot.plt.subplots(1, len(shown) + 1,
+                                   figsize=(3.3 * (len(shown) + 1) + 0.6, 3.3),
                                    squeeze=False)
     for ax, sol in zip(axes[0], shown):
         share = (f'{100 * sol["share"]:.2f} %' if np.isfinite(sol['share'])
@@ -251,12 +251,40 @@ def figure(sols: Sequence[Dict[str, Any]], title: Optional[str] = None,
                     title=f'{sol["period"]:.4f} d, {label(sol["name"])}\n'
                           f'{share}; $\\Delta\\ln$ post '
                           f'{sol["dlogpost"]:+.1f}')
-    for ax in axes[0][1:]:
+    for ax in axes[0][1:len(shown)]:
         ax.set_ylabel('')
+    _residuals(axes[0][-1], shown)
     if title:
         fig.suptitle(title, x=0.01, ha='left', fontsize=9)
     fig.tight_layout()
     return fig
+
+
+def residuals(sol: Dict[str, Any]) -> np.ndarray:
+    """the residuals of a solution's fit [m/s], its outliers left out"""
+    fit = sol['fit']
+    data = fit.model.data
+    resid = data.rv - fit.model.mean_model(fit.theta)
+    rel = 1 - (fit.outlier_prob if fit.outlier_prob is not None
+               else np.zeros(data.n))
+    return resid[rel > 0.5]
+
+
+def _residuals(ax, sols: Sequence[Dict[str, Any]]):
+    """the histograms of the residuals of every solution, overplotted"""
+    from koloa import plotting as kplot
+    colours = [kplot.C['koloa'], kplot.C['outlier'], kplot.C['text'],
+               kplot.C['muted']]
+    allres = [residuals(sol) for sol in sols]
+    span = max(float(np.max(np.abs(res))) for res in allres if len(res))
+    bins = np.linspace(-span, span, 25)
+    for sol, res, colour in zip(sols, allres, colours):
+        ax.hist(res, bins=bins, histtype='step', lw=1.4, color=colour,
+                label=f'{sol["period"]:.4f} d: rms {np.std(res):.2f}')
+    ax.set_xlabel('residual [m s$^{-1}$]')
+    ax.set_ylabel('points')
+    ax.set_title('residuals of each fit', loc='left')
+    ax.legend(loc='upper left', fontsize=6.5)
 
 
 # =============================================================================

@@ -116,7 +116,7 @@ def main(argv=None):
                           duck=not args.no_duck, style=args.style,
                           latex=not args.no_latex,
                           tess=not args.no_tess, site=args.site,
-                          fip_gp=None if args.no_fip_gp else 'auto',
+                          fip_gp=None if args.no_fip_gp else 'banded',
                           nightly=False if args.exposures else None,
                           detection_map=(False if args.no_detection_map else
                                          'search' if args.search_map else 'fip'))

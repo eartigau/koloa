@@ -508,6 +508,67 @@ def _mark_period(ax, period, label=None, color=None):
                     fontsize=7, color=C['text'])
 
 
+def plain_log_ticks(ax, axis: str = 'x'):
+    """
+    Plain numbers on a log axis (1, 2, 5, 10, 20...) instead of 10^0, 10^1
+
+    :param ax: matplotlib axes
+    :param axis: str, 'x', 'y' or 'both'
+    """
+    from matplotlib.ticker import FuncFormatter, LogLocator
+    major = FuncFormatter(lambda val, _: f'{val:g}')
+
+    def minor(val, _):
+        text = f'{val:g}'
+        return text if text.lstrip('0.').startswith(('2', '5')) else ''
+    for name in (('x', 'y') if axis == 'both' else (axis,)):
+        sub = getattr(ax, f'{name}axis')
+        sub.set_major_locator(LogLocator(base=10))
+        sub.set_major_formatter(major)
+        sub.set_minor_locator(LogLocator(base=10, subs=(2, 5)))
+        sub.set_minor_formatter(FuncFormatter(minor))
+
+
+def fip_family(res: Any, marks: Sequence[float] = (),
+               threshold: float = 0.01, title: Optional[str] = None):
+    """
+    The FIP of the period OR any of its aliases at every period (thick, what
+    decides on a planet), and of the period alone (thin grey: which alias
+    holds the probability), with the threshold and the periods marked
+
+    :param res: FIPResult (with family)
+    :param marks: list of float, periods marked (dashed), e.g. known planets
+    :param threshold: float, the FIP of a detection (dotted)
+    :param title: str or None
+
+    :return: the figure
+    """
+    fig, ax = plt.subplots(figsize=(7.2, 2.8))
+    period = 1.0 / np.asarray(res.freq)
+    floor = 1e-12
+    alone = -np.log10(np.clip(res.fip, floor, 1.0))
+    ax.plot(*_decimate(period, alone), color=C['muted'], lw=0.6,
+            label='the period alone')
+    if getattr(res, 'family', None) is not None:
+        fam = -np.log10(np.clip(res.family, floor, 1.0))
+        ax.plot(*_decimate(period, fam), color=C['koloa'], lw=1.2,
+                label='the period or any of its aliases')
+    ax.axhline(-np.log10(threshold), color=C['text'], lw=0.8,
+               ls=(0, (1, 2)), label=f'FIP = {threshold:g}')
+    for per in marks:
+        ax.axvline(per, color=C['outlier'], lw=0.8, ls=(0, (4, 2)))
+    ax.set_xscale('log')
+    plain_log_ticks(ax, 'x')
+    ax.set_xlabel('period [d]')
+    ax.set_ylabel('$-\\log_{10}$ FIP')
+    ax.set_ylim(bottom=0)
+    ax.legend(loc='upper right', fontsize=7)
+    if title:
+        ax.set_title(title, loc='left')
+    fig.tight_layout()
+    return fig
+
+
 def periodograms(freq: np.ndarray, gls_power: Optional[np.ndarray] = None,
                  oap_gauss: Optional[np.ndarray] = None,
                  oap_mix: Optional[np.ndarray] = None,

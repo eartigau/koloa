@@ -26,6 +26,13 @@ competes with it. Their priors: log-uniform within bounds, or for P_rot a
 gaussian on its logarithm (a rotation period from photometry or the
 indicators, with its uncertainty).
 
+With several instruments, every component is one GP per instrument,
+independent of the others: its own amplitude and scale, its bumps only where
+the instrument has data and zero for the points of the others. No activity
+is shared between instruments (the covariance is block-diagonal across
+them): the activity an optical instrument sees is not the one a
+near-infrared one sees.
+
 The cost is a few dozen to a few hundred more columns in the linear model.
 
 Created on 2026-09-30
@@ -65,7 +72,8 @@ def _bounds(value: Any, default: Sequence[float]) -> Dict[str, Any]:
 
 
 def setup(spec: Union[str, Dict[str, Any], Sequence[Any], None],
-          time: np.ndarray, scale: float) -> List[Dict[str, Any]]:
+          time: np.ndarray, scale: float,
+          inst: Optional[np.ndarray] = None) -> List[Dict[str, Any]]:
     """
     The components of a GP, with the priors of their hyperparameters
 
@@ -77,8 +85,11 @@ def setup(spec: Union[str, Dict[str, Any], Sequence[Any], None],
     :param time: np.ndarray, the times of the series [days]
     :param scale: float, the scale of the velocities [m/s] (the default
                   amplitudes run from 0.05 to 10 times it)
+    :param inst: np.ndarray or None, the instrument of each point: with
+                 several, one independent GP per instrument and component
 
-    :return: list of dict, kind and priors (name: prior)
+    :return: list of dict, kind, priors (name: prior) and instrument (None
+             with one instrument)
     """
     if spec is None:
         return []
@@ -108,7 +119,14 @@ def setup(spec: Union[str, Dict[str, Any], Sequence[Any], None],
             comp['priors']['sigma'] = _bounds(item.get('sigma'), amp)
             comp['priors']['sigma2'] = _bounds(item.get('sigma2'), amp)
         out.append(comp)
-    return out
+    insts = [] if inst is None else [str(val) for val in np.unique(inst)]
+    if len(insts) < 2:
+        for comp in out:
+            comp['instrument'] = None
+        return out
+    # one independent GP per instrument
+    return [dict(comp, instrument=name, priors=dict(comp['priors']))
+            for comp in out for name in insts]
 
 
 def initial(components: List[Dict[str, Any]]) -> List[Dict[str, float]]:
@@ -152,19 +170,33 @@ def bumps(time: np.ndarray, length: float,
 
 
 def columns(components: List[Dict[str, Any]],
-            values: List[Dict[str, float]], time: np.ndarray):
+            values: List[Dict[str, float]], time: np.ndarray,
+            inst: Optional[np.ndarray] = None):
     """
     The basis of a GP and the prior variance of each weight
 
     :param components: list of dict, from setup()
     :param values: list of dict, the hyperparameters of each component
     :param time: np.ndarray, the times [days]
+    :param inst: np.ndarray or None, the instrument of each point (for the
+                 components of one instrument)
 
     :return: tuple, (n x m) columns, (m) prior variances
     """
     cols, var = [], []
     for comp, val in zip(components, values):
-        phi = bumps(time, val['length'])
+        name = comp.get('instrument')
+        if name is not None and inst is not None:
+            # this instrument's GP: its bumps where it has data, zero for
+            #   the points of the others
+            rows = np.asarray(inst).astype(str) == name
+            phi = np.zeros((len(time), 0))
+            if rows.any():
+                own = bumps(time[rows], val['length'])
+                phi = np.zeros((len(time), own.shape[1]))
+                phi[rows] = own
+        else:
+            phi = bumps(time, val['length'])
         unit = STEP_FRAC / np.sqrt(np.pi / 2)
         if comp['kind'] == 'local':
             cols.append(phi)
@@ -197,6 +229,12 @@ def kernel(components: List[Dict[str, Any]],
                 2 * np.pi * tau / val['period']) + val['sigma2'] ** 2
                 * np.cos(4 * np.pi * tau / val['period']))
     return out
+
+
+def label(comp: Dict[str, Any]) -> str:
+    """a component in words: its kind, and its instrument when it has one"""
+    return comp['kind'] + (f' ({comp["instrument"]})'
+                           if comp.get('instrument') else '')
 
 
 def names(components: List[Dict[str, Any]]) -> List[str]:

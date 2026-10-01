@@ -99,3 +99,16 @@ def test_detection_map_by_the_fip():
     lnk = np.linspace(-1, 3, 40)
     k50, k90 = _levels(*_logistic_fit(lnk, lnk > 1))
     assert abs(np.log(k50) - 1) < 0.2 and k90 > k50
+
+
+def test_fip_map_recovers_the_injected_phase():
+    """a strong planet injected: found, with its phase; told the wrong
+    phase, the same recovery is not counted"""
+    from koloa.fipmap import _one
+    sim = simulate(seed=6, err=1.0)
+    job = dict(series=sim['data'], period=7.3, amp=8.0, phase=1.0, gp=None,
+               kmax=1, nsweep=200, nburn=100, seed=3, threshold=0.01,
+               band=0, round=0)
+    out = _one(job)
+    assert out['found'] and abs(out['dphase']) < 0.5
+    assert 0.6 < out['amp_found'] / 8.0 < 1.5

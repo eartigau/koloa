@@ -235,6 +235,8 @@ def _gp_spec(fip_gp: Any, known: Dict[str, Any]) -> Any:
     """
     if fip_gp in (None, False):
         return None
+    if fip_gp == 'banded':
+        return 'banded'
     if fip_gp is not True and fip_gp != 'auto':
         return fip_gp
     prot = (known.get('star') or {}).get('rotation')
@@ -246,10 +248,15 @@ def _gp_spec(fip_gp: Any, known: Dict[str, Any]) -> Any:
 
 def _fip_gp_text(res) -> str:
     """the GP of a FIP, in words"""
+    if res.settings.get('bands'):
+        from koloa.bandfip import gp_text
+        return 'GP by band (local, its shortest scale): ' + gp_text(
+            res.settings['bands'])
     comps = res.settings.get('gp') or []
     if not comps:
         return 'no GP'
-    kinds = ' + '.join(comp['kind'] for comp in comps)
+    from koloa.gpbasis import label
+    kinds = ' + '.join(label(comp) for comp in comps)
     vals = '; '.join(f'{key.split("_", 1)[1]} {mid:.3g} ({low:.3g} to '
                      f'{high:.3g})' for key, (mid, low, high)
                      in res.gp_summary().items())
@@ -330,6 +337,18 @@ def _fip_detection_map(data: RVData, fit: Any, nplanet: int, pmin: float,
     if nplanet:
         series.rv = data.rv - sum(fit.model.planet_rv(fit.theta, ip)
                                   for ip in range(nplanet))
+    if isinstance(gp, list) and gp and isinstance(gp[0], dict) \
+            and 'low' in gp[0]:
+        # the FIP by bands: each planet with the GP of its band
+        from koloa.bandfip import spec
+        bands = gp
+
+        def gp(period, bands=bands):
+            for band in bands:
+                if band['low'] <= period < band['high']:
+                    return spec(band['gp'], data.baseline)
+            edge = bands[0] if period >= bands[0]['high'] else bands[-1]
+            return spec(edge['gp'], data.baseline)
     out = fip_map(series, pmin, gp=gp, workers=workers, seed=seed)
     _map_masses(out, mstar)
     edges = out['period_edges']
@@ -383,7 +402,7 @@ def _map_lines(dmap: Dict[str, Any]) -> List[str]:
                          f'{dmap["msini90"][ib]:5.2f} Me')
             if dmap['unreliable'][ib]:
                 line += (f'  (holds the rotation, {dmap["prot"]:.0f} d, or '
-                         f'its half: the GP of the rotation competes)')
+                         f'its half: the activity is there)')
             lines.append(line)
         return lines
     rmap = dmap['map']
@@ -403,16 +422,27 @@ def _map_lines(dmap: Dict[str, Any]) -> List[str]:
     return lines
 
 
-def _fip(data, fit, kmax, nsweep, nburn, seed, label, gp=None):
+def _fip(data, fit, kmax, nsweep, nburn, seed, label, gp=None,
+         decided=None):
     """the FIP of a series, the errors of each instrument inflated to a fit
-    (and a GP of the activity inside it)"""
+    (and a GP of the activity inside it; 'banded': the FIP by period bands
+    of koloa.bandfip, decided from the top down or as `decided` says)"""
     inflated, info = inflate_to_fit(fit)
     log(f'{label}: errors inflated by ' + ', '.join(
         f'{inst} {val:.2f}' for inst, val in info['inflation'].items())
         + ' m/s', 'value')
     with blas_threads(1):
-        res = oafip(inflated, kmax=kmax, outliers='both', nsweep=nsweep,
-                    nburn=nburn, nchains=2, seed=seed, progress=False, gp=gp)
+        if gp == 'banded':
+            from koloa.bandfip import as_result, banded_fip
+            band = banded_fip(inflated, kmax=kmax, nsweep=nsweep, nburn=nburn,
+                              nchains=2, seed=seed, decided=decided,
+                              quiet=True)
+            res = as_result(band)
+            info['banded'] = band['decided']
+        else:
+            res = oafip(inflated, kmax=kmax, outliers='both', nsweep=nsweep,
+                        nburn=nburn, nchains=2, seed=seed, progress=False,
+                        gp=gp)
     res.settings['width'] = 1 / inflated.baseline
     if gp:
         log(f'{label}: {_fip_gp_text(res)}', 'value')
@@ -570,7 +600,7 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                       style: str = 'paper', seed: int = 1,
                       latex: bool = True, tess: bool = True,
                       site: Optional[str] = None,
-                      fip_gp: Any = 'auto',
+                      fip_gp: Any = 'banded',
                       nightly: Optional[bool] = None,
                       detection_map: Any = 'fip',
                       map_ninj: int = 10) -> Dict[str, Any]:
@@ -625,7 +655,10 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                  alias (a key of koloa.aliases.SITES; from the instruments
                  when None)
     :param fip_gp: a GP of the activity inside both FIPs (koloa.gpbasis):
-                   'auto' (a local GP, and a rotation GP beside it when the
+                   'banded' (the default: the FIP by period bands, a local
+                   GP that cannot reach the periods of each band and is only
+                   as flexible as the data ask for, koloa.bandfip), 'auto'
+                   (one local GP, and a rotation GP beside it when the
                    archive knows the rotation period, its prior +- 10 %),
                    None or False (none), or a spec of oafip(gp=)
     :param detection_map: 'fip', 'search' or False: map which planets the
@@ -825,7 +858,8 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                     f'ephemeris carried {eph["ncycle"]} cycles', 'value')
         # 6. the FIP again, with the noise of the fit with the planets
         fip2, info2 = _fip(data, fit, kmax, nsweep, nburn, seed + 1,
-                           'FIP, noise with the planets', gp=gpspec)
+                           'FIP, noise with the planets', gp=gpspec,
+                           decided=info1.get('banded'))
     else:
         log('no interval with FIP < 1 %, no known planet and no period '
             'given: nothing to fit', 'warn')
@@ -892,9 +926,10 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                 dmap = _detection_map(data, fit, len(orbits), pmin, map_ninj,
                                       gp_workers, seed, mstar, prot)
             else:
-                dmap = _fip_detection_map(data, fit, len(orbits), pmin,
-                                          gpspec, gp_workers, seed, mstar,
-                                          prot)
+                dmap = _fip_detection_map(
+                    data, fit, len(orbits), pmin,
+                    fip2.settings['bands'] if gpspec == 'banded' else gpspec,
+                    gp_workers, seed, mstar, prot)
         except Exception as err:  # the map is a help, not a stop
             log(f'detection map: {err}', 'warn')
     out['detection_map'] = dmap
@@ -941,8 +976,8 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                                        f'and the other signals removed',
                              published), f'gp_fold_{ip}')
     for label, res in (('first', fip1), ('second', fip2)):
-        keep(kplot.periodograms(
-            res.freq, fips=dict(koloa=res), mark=marks,
+        keep(kplot.fip_family(
+            res, marks=marks, threshold=THRESHOLD,
             title=f'{star}: FIP ({label} pass; known planets dashed)'),
             f'fip_{label}')
     for ip, orb in enumerate(orbits):
@@ -1071,7 +1106,8 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                           fip_gp=_fip_gp_text(fip2),
                           nightly=(f'{nexp} exposures in {data.n} nights'
                                    if data.n < nexp else 'no')),
-            files=sorted(set(os.listdir(outdir)) | {
+            files=sorted({name for name in os.listdir(outdir)
+                          if not name.startswith('.')} | {
                 f'{safe}_summary.json', f'{safe}_report.tex',
                 f'{safe}_report.pdf'}))
         try:

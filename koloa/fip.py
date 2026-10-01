@@ -346,6 +346,10 @@ class FIPResult:
     #:  at any of its aliases (1 day, 1 year, 1 month); whether there is a
     #:  planet, whichever alias it is (None for a FIP without a sampler)
     family: np.ndarray = None
+    #: every active slot of every recorded sweep: (grid index, K, phase),
+    #:  the phase that of A cos + B sin about the grid's reference time,
+    #:  atan2(B, A)
+    slots: np.ndarray = None
 
     @property
     def period(self) -> np.ndarray:
@@ -514,6 +518,7 @@ class _Chain:
         # the GP of the activity: more base columns, their prior from its
         #   hyperparameters (koloa.gpbasis)
         self.time = data.time
+        self.inst = data.inst
         self.gp_comp = cfg.get('gp') or []
         self.gp_val = gpbasis.initial(self.gp_comp)
         self._set_base()
@@ -563,7 +568,8 @@ class _Chain:
         if not self.gp_comp:
             self.base, self.base_var = self.fixed_base, self.fixed_var
             return
-        cols, var = gpbasis.columns(self.gp_comp, self.gp_val, self.time)
+        cols, var = gpbasis.columns(self.gp_comp, self.gp_val, self.time,
+                                    self.inst)
         self.base = np.hstack([self.fixed_base, cols])
         self.base_var = np.concatenate([self.fixed_var, var])
 
@@ -1161,7 +1167,7 @@ def oafip(data: RVData, kmax: int = 3, outliers: Optional[str] = 'both',
     cfg = dict(kmax=kmax, unit=unit, trend=trend, regressors=regressors,
                prior_k=prior_k, frac_prior=tuple(frac_prior), nsweep=nsweep,
                nburn=nburn, progress=progress,
-               gp=gpbasis.setup(gp, data.time, scale), **setup)
+               gp=gpbasis.setup(gp, data.time, scale, data.inst), **setup)
     gridargs = dict(time=data.time, pmin=pmin, pmax=pmax,
                     oversample=oversample, tref=data.tref, freq=freq)
     grid = PeriodGrid(**gridargs)
@@ -1169,7 +1175,8 @@ def oafip(data: RVData, kmax: int = 3, outliers: Optional[str] = 'both',
     if night is not None:
         method += ', nightly means'
     if cfg['gp']:
-        method += ', GP ' + ' + '.join(comp['kind'] for comp in cfg['gp'])
+        method += ', GP ' + ' + '.join(gpbasis.label(comp)
+                                       for comp in cfg['gp'])
     if progress:
         log(f'OAFIP {method}: {data.n} points, {data.nseq} sequences, '
             f'{grid.size} frequencies, kmax = {kmax}, {nchains} chain(s) of '
@@ -1237,6 +1244,7 @@ def _combine(outs: List[Dict[str, Any]], data: RVData, grid: PeriodGrid,
                        unit=cfg['unit'], chains=records, settings=settings,
                        chain_fip=chain_fip, rhat=rhat, family=family)
     slots = np.vstack([out['slot_records'] for out in outs])
+    result.slots = slots
     result.peaks = describe_peaks(data, grid, fip, npeaks, slots,
                                   chain_fip=chain_fip)
     for peak in result.peaks:

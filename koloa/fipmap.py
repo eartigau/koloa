@@ -8,7 +8,10 @@ Circular planets are injected into the series (the signals found taken out
 first) and looked for exactly as koloa decides on a signal: the
 outlier-aware FIP, with the same GP of the activity inside it, a planet
 counting as found when the FIP of its period OR any of its aliases is below
-the threshold (1 %). A blind periodogram search (koloa.completeness) is
+the threshold (1 %) and the signal recovered at its period is the one
+injected: its phase within 60 degrees and its amplitude within a factor of
+two (a small planet that only tips a peak of the activity over the
+threshold is not found). A blind periodogram search (koloa.completeness) is
 harsher: it counts a planet found on its daily alias as missed, has no GP
 for the activity, and sets its threshold for the whole grid; on G 203-42 it
 found 8 of 12 planets of K = 5 m/s near 7 d that this rule finds 11 times.
@@ -38,6 +41,10 @@ from koloa.log import log
 # =============================================================================
 #: the FIP below which a planet (its period or any of its aliases) is found
 THRESHOLD = 0.01
+#: the recovered signal is the injected one: its phase within this [rad]
+#:  and its amplitude within this factor
+PHASE_MATCH = np.pi / 3
+AMP_MATCH = 2.0
 #: the logistic slope prior: ln K from 50 to 73 % of detection, a gaussian
 #:  on its log (keeps the fit finite when the injections are all found or
 #:  all missed)
@@ -60,9 +67,32 @@ def _one(job: Dict[str, Any]) -> Dict[str, Any]:
     width = 1.0 / data.baseline
     fam = res.family_containing(job['period'], width)
     fam = res.fip_containing(job['period'], width) if fam is None else fam
+    match, amp, dphase = _matches(res, job, width)
     out = {key: val for key, val in job.items() if key not in ('series', 'gp')}
-    out.update(fip=float(fam), found=bool(fam < job['threshold']))
+    out.update(fip=float(fam), amp_found=amp, dphase=dphase,
+               found=bool(fam < job['threshold'] and match))
     return out
+
+
+def _matches(res, job, width):
+    """whether the signal the FIP holds at the injected period is the one
+    injected (phase and amplitude); a detection through an alias, with too
+    few samples at the period itself, is not checked"""
+    slots = getattr(res, 'slots', None)
+    if slots is None or not len(slots):
+        return True, np.nan, np.nan
+    freq = res.freq[slots[:, 0].astype(int)]
+    near = np.abs(freq - 1.0 / job['period']) <= 0.5 * width
+    if near.sum() < 20:
+        return True, np.nan, np.nan
+    amp = float(np.median(slots[near, 1]))
+    phase = float(np.angle(np.mean(np.exp(1j * slots[near, 2]))))
+    # injected: K sin(w t + phi) = K sin(phi) cos(w t) + K cos(phi) sin(w t)
+    expected = np.pi / 2 - job['phase']
+    dphase = float(np.angle(np.exp(1j * (phase - expected))))
+    ok = (abs(dphase) < PHASE_MATCH
+          and 1 / AMP_MATCH < amp / job['amp'] < AMP_MATCH)
+    return bool(ok), amp, dphase
 
 
 def _logistic_fit(lnk: np.ndarray, found: np.ndarray):
@@ -115,7 +145,9 @@ def fip_map(series: RVData, pmin: float, pmax: Optional[float] = None,
                    nightly means when the analysis runs on them)
     :param pmin: float, the shortest period [days]
     :param pmax: float or None, the longest (the baseline when None)
-    :param gp: the GP of the FIP (oafip(gp=)), as in the analysis
+    :param gp: the GP of the FIP (oafip(gp=)), as in the analysis, or a
+               function of the injected period that returns it (the FIP by
+               bands: each planet with the GP of its band)
     :param nband: int, the period bands (log-spaced)
     :param nround: int, the rounds of injections per band
     :param per_round: int, the injections per band and round (half at the
@@ -150,12 +182,13 @@ def fip_map(series: RVData, pmin: float, pmax: Optional[float] = None,
             mine = [inj for inj in injections if inj['band'] == band]
             amps = (start if iround == 0 else _next(mine, ampmin, ampmax))
             for k in range(per_round):
+                period = float(np.exp(rng.uniform(np.log(edges[band]),
+                                                  np.log(edges[band + 1]))))
                 jobs.append(dict(
-                    series=series, gp=gp, kmax=kmax, nsweep=nsweep,
-                    nburn=nburn, threshold=threshold, band=band,
-                    round=iround, amp=float(amps[k % len(amps)]),
-                    period=float(np.exp(rng.uniform(np.log(edges[band]),
-                                                    np.log(edges[band + 1])))),
+                    series=series, gp=gp(period) if callable(gp) else gp,
+                    kmax=kmax, nsweep=nsweep, nburn=nburn,
+                    threshold=threshold, band=band, round=iround,
+                    amp=float(amps[k % len(amps)]), period=period,
                     phase=float(rng.uniform(0, 2 * np.pi)),
                     seed=int(rng.integers(1, 2 ** 31))))
         with ProcessPoolExecutor(max_workers=workers) as pool:
@@ -268,6 +301,7 @@ def figure(dmap: Dict[str, Any], marks: Sequence[Dict[str, Any]] = (),
         ax.axvline(edge, color=C['muted'], lw=0.4, alpha=0.4)
     ax.set_xscale('log')
     ax.set_yscale('log')
+    kplot.plain_log_ticks(ax, 'both')
     ax.set_xlabel('period [d]')
     ax.set_ylabel('K [m s$^{-1}$]')
     ax.legend(loc='upper left', fontsize=7)

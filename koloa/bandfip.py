@@ -58,14 +58,28 @@ def _lnz(res) -> float:
     return float(np.percentile(logz, 90)) if len(logz) else np.nan
 
 
+def spec(lmin: Optional[float], baseline: float) -> Any:
+    """the GP of a band: a local GP whose scale is at least lmin (None: no
+    GP)"""
+    if lmin is None:
+        return None
+    return [dict(kind='local', length=(float(lmin),
+                                       float(max(3 * baseline, 2 * lmin))))]
+
+
 def banded_fip(data: RVData, pmin: float = 1.1, pmax: Optional[float] = None,
                nband: int = 6, alpha: float = ALPHA,
                threshold: float = THRESHOLD, kmax: int = 2,
                nsweep: int = 1000, nburn: int = 300, nchains: int = 2,
-               seed: int = 1, quiet: bool = False) -> Dict[str, Any]:
+               seed: int = 1, decided: Optional[List[Optional[float]]] = None,
+               quiet: bool = False) -> Dict[str, Any]:
     """
     The FIP by period bands, the GP of each band only as flexible as needed
     (see the module)
+
+    Every FIP covers every period, so one run with a given GP serves every
+    band that keeps that GP: the descent costs one FIP per band at most,
+    plus the first one without a GP.
 
     :param data: RVData, the series
     :param pmin: float, the shortest period [days]
@@ -79,56 +93,113 @@ def banded_fip(data: RVData, pmin: float = 1.1, pmax: Optional[float] = None,
     :param nburn: int, burn-in sweeps
     :param nchains: int, chains per FIP
     :param seed: int, the seed
+    :param decided: list or None, the shortest GP scale of each band, the
+                    longest band first (a previous descent's 'decided'): no
+                    descent, one FIP per GP
     :param quiet: bool, no log lines
 
-    :return: dict, bands (per band, the longest first: edges, gp (the shortest
-             scale kept, None for no GP), gain, the FIP kept), and the
-             periodogram put together: freq, fip, family, period
+    :return: dict, bands (per band, the longest first: low, high, gp (the
+             shortest scale kept, None for no GP), gain, result (the FIP
+             kept)), decided, the periodogram put together (freq, fip,
+             family, period, width), and the settings
     """
     from koloa.fip import oafip
     pmax = pmax or 2 * data.baseline
     edges = np.geomspace(pmin, pmax, nband + 1)
-    scale_max = 3 * data.baseline
-    kept: Any = None
-    kept_lmin: Optional[float] = None
+    runs: Dict[Any, Any] = {}
+
+    def run(lmin):
+        """the FIP with the GP of shortest scale lmin (once)"""
+        key = None if lmin is None else round(float(lmin), 6)
+        if key not in runs:
+            runs[key] = oafip(data, kmax=kmax, nsweep=nsweep, nburn=nburn,
+                              nchains=nchains, progress=False, pmin=pmin,
+                              pmax=pmax, gp=spec(lmin, data.baseline),
+                              seed=seed + 7 * len(runs))
+        return runs[key]
+    kept: Optional[float] = None
     bands: List[Dict[str, Any]] = []
-    kw = dict(kmax=kmax, nsweep=nsweep, nburn=nburn, nchains=nchains,
-              progress=False, pmin=pmin)
     for ib in range(nband - 1, -1, -1):
         low, high = float(edges[ib]), float(edges[ib + 1])
         lmin = alpha * high
-        cand = [dict(kind='local', length=(lmin, max(scale_max, 2 * lmin)))]
-        with_kept = oafip(data, pmax=pmax, gp=kept, seed=seed + ib, **kw)
-        flexible = oafip(data, pmax=pmax, gp=cand, seed=seed + ib, **kw)
-        gain = _lnz(flexible) - _lnz(with_kept)
-        if gain > threshold:
-            kept, kept_lmin, res = cand, lmin, flexible
+        gain = np.nan
+        if decided is not None:
+            kept = decided[nband - 1 - ib]
         else:
-            res = with_kept
-        bands.append(dict(low=low, high=high, gp=kept_lmin, gain=float(gain),
-                          result=res, candidate_lmin=lmin))
+            gain = _lnz(run(lmin)) - _lnz(run(kept))
+            if gain > threshold:
+                kept = lmin
+        bands.append(dict(low=low, high=high, gp=kept, gain=float(gain),
+                          candidate_lmin=lmin, result=run(kept)))
         if not quiet:
-            log(f'band {low:7.2f} to {high:7.2f} d: GP L >= {lmin:.1f} d gains '
-                f'{gain:+.1f} in ln Z -> '
-                + (f'GP L >= {kept_lmin:.1f} d' if kept_lmin else 'no GP'),
-                'value')
+            log(f'band {low:7.2f} to {high:7.2f} d: '
+                + ('' if decided is not None else
+                   f'GP L >= {lmin:.1f} d gains {gain:+.1f} in ln Z -> ')
+                + (f'GP L >= {kept:.1f} d' if kept else 'no GP'), 'value')
     # the periodogram put together: each frequency from its band's FIP
-    freq, fip, family = [], [], []
+    freq, fip, family, density = [], [], [], []
     for band in bands:
         res = band['result']
         per = 1.0 / res.freq
         sel = (per >= band['low']) & (per < band['high'])
         freq.append(res.freq[sel])
         fip.append(res.fip[sel])
+        density.append(res.density[sel])
         fam = res.family if res.family is not None else res.fip
         family.append(fam[sel])
     order = np.argsort(np.concatenate(freq))
     freq = np.concatenate(freq)[order]
     return dict(bands=bands, edges=edges, freq=freq, width=1.0 / data.baseline,
                 fip=np.concatenate(fip)[order],
-                family=np.concatenate(family)[order], period=1.0 / freq,
+                family=np.concatenate(family)[order],
+                density=np.concatenate(density)[order], period=1.0 / freq,
+                decided=[band['gp'] for band in bands], nrun=len(runs),
                 settings=dict(alpha=alpha, threshold=threshold, kmax=kmax,
                               nsweep=nsweep, nburn=nburn, nchains=nchains))
+
+
+def as_result(banded: Dict[str, Any], npeaks: int = 5):
+    """
+    The banded FIP as one FIPResult (what the rest of koloa reads): the
+    periodogram put together, the peaks of each band from its own FIP, the
+    outlier probabilities averaged over the FIPs, and P(k) and the chains of
+    the band of the strongest peak
+
+    :return: FIPResult, with settings['bands'] (low, high, gp, gain)
+    """
+    from koloa.fip import FIPResult
+    peaks = []
+    for band in banded['bands']:
+        for peak in band['result'].peaks:
+            if band['low'] <= peak['period'] < band['high']:
+                peaks.append(dict(peak))
+    peaks.sort(key=lambda peak: peak['fip'])
+    peaks = peaks[:npeaks]
+    best = band_of(banded, peaks[0]['period'])['result'] if peaks else \
+        banded['bands'][-1]['result']
+    runs = {id(band['result']): band['result'] for band in banded['bands']}
+    probs = [res.outlier_prob for res in runs.values()
+             if res.outlier_prob is not None]
+    settings = dict(best.settings)
+    settings.pop('gp', None)
+    settings['bands'] = [dict(low=band['low'], high=band['high'],
+                              gp=band['gp'], gain=band['gain'])
+                         for band in banded['bands']]
+    settings['banded'] = dict(banded['settings'])
+    return FIPResult(freq=banded['freq'], fip=banded['fip'],
+                     density=banded['density'],
+                     method=best.method.split(', GP')[0] + ', GP by band',
+                     pk=best.pk, outlier_prob=(np.mean(probs, axis=0)
+                                               if probs else None),
+                     unit=best.unit, chains=best.chains, peaks=peaks,
+                     settings=settings, family=banded['family'])
+
+
+def gp_text(bands: List[Dict[str, Any]]) -> str:
+    """the GP of each band, in words"""
+    return '; '.join(f'{band["low"]:.1f}-{band["high"]:.1f} d: '
+                     + (f'L >= {band["gp"]:.0f} d' if band['gp'] else 'none')
+                     for band in bands)
 
 
 def band_of(result: Dict[str, Any], period: float) -> Dict[str, Any]:

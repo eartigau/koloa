@@ -437,6 +437,7 @@ def duck_test(data: RVData, period: float,
               archive: bool = True, outdir: Optional[str] = None,
               tess: Union[None, bool, Dict[str, Any]] = None,
               aliases: Optional[bool] = None, site: Optional[str] = None,
+              plan: bool = False,
               nightly: Optional[bool] = None) -> DuckReport:
     """
     Every test of planethood koloa knows, at one period
@@ -477,6 +478,8 @@ def duck_test(data: RVData, period: float,
                     report is written
     :param site: str or None, the observatory of the plan (a key of
                  koloa.aliases.SITES; from the instruments when None)
+    :param plan: bool, when the period is ambiguous, plan the observations
+                 that lift the alias (koloa.aliases.plan; off by default)
     :param nightly: bool, test the nightly means (RVData.nightly, koloa's
                     default; the outlier probability of each exposure is
                     averaged into its night, and an outlier is a night);
@@ -578,7 +581,7 @@ def duck_test(data: RVData, period: float,
             try:
                 sols = kal.solutions(data, period, fipres, unit=unit)
                 report.details['alias_solutions'] = sols
-                if kal.ambiguous(sols) and archive:
+                if plan and kal.ambiguous(sols) and archive:
                     from koloa.archive import resolve
                     where = site or kal.site_of(data.instruments)
                     ident = resolve(target or data.name)

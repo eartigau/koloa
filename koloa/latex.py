@@ -36,6 +36,8 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from koloa.gpbasis import label as gp_label
+
 from koloa.data import robust_std
 from koloa.log import log
 from koloa.plotting import STYLES
@@ -488,13 +490,24 @@ def _fip(rep: Dict[str, Any], folder: str) -> str:
     for key, title, res in passes:
         out.append(f'\\subsection{{{title}}}')
         comps = res.settings.get('gp') or []
+        if res.settings.get('bands'):
+            out.append('The FIP by period bands (koloa.bandfip): each band '
+                       'decided by a FIP whose local GP cannot reach it (its '
+                       'shortest scale half the longest period of the band), '
+                       'the GP made more flexible from the longest band down '
+                       'only when the data ask for it (a gain above 3 in '
+                       'ln Z). The GP of each band: '
+                       + escape('; '.join(
+                           f'{b["low"]:.1f}-{b["high"]:.1f} d '
+                           + (f'L >= {b["gp"]:.0f} d' if b['gp'] else 'none')
+                           for b in res.settings['bands'])) + '.\n')
         if comps:
             vals = '; '.join(f'{escape(name.split("_", 1)[1])} {mid:.3g} '
                              f'({low:.3g} to {high:.3g})' for name, (mid, low,
                                                                   high)
                              in res.gp_summary().items())
             out.append('A GP of the activity inside the FIP ('
-                       + ' + '.join(comp['kind'] for comp in comps)
+                       + ' + '.join(escape(gp_label(comp)) for comp in comps)
                        + ', a finite basis whose weights are integrated out, '
                          'its hyperparameters sampled with the signals): '
                        + vals + '.\n')
@@ -528,8 +541,10 @@ def _fip(rep: Dict[str, Any], folder: str) -> str:
                        f'\\\\')
         out.append('\\bottomrule\n\\end{tabular}\n')
         out.append(_figure(rep['figures'].get(f'fip_{key}'), folder,
-                           f'{title}: the FIP of every interval (the known '
-                           f'planets dashed).', '0.3'))
+                           f'{title}: the FIP of the period or any of its '
+                           f'aliases (blue, what decides on a planet) and of '
+                           f'the period alone (grey), the threshold dotted, '
+                           f'the known planets dashed.', '0.3'))
     return '\n'.join(out) + '\n'
 
 
@@ -812,8 +827,8 @@ def _detection_fip(rep: Dict[str, Any], dmap: Dict[str, Any],
     out.append('\\bottomrule\n\\end{tabular}\n')
     if np.any(dmap['unreliable']):
         out.append(f'$^\\ast$ The band holds the rotation period '
-                   f'({dmap["prot"]:.0f}\\,d) or its half, where the GP of '
-                   f'the rotation competes with a planet.\n')
+                   f'({dmap["prot"]:.0f}\\,d) or its half, where the '
+                   f'activity is.\n')
     if any(dmap.get('notes90') or []):
         out.append('Not reached: even the largest planets injected in the '
                    'band were not found often enough. The GP of the activity '
