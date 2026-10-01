@@ -602,7 +602,7 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                       site: Optional[str] = None,
                       fip_gp: Any = 'banded',
                       nightly: Optional[bool] = None,
-                      detection_map: Any = 'fip',
+                      detection_map: Any = False,
                       map_ninj: int = 10) -> Dict[str, Any]:
     """
     Everything koloa can say about a star (see the module's docstring)
@@ -661,13 +661,13 @@ def detailed_analysis(source: Union[str, RVData], outdir: str = 'koloa_detailed'
                    (one local GP, and a rotation GP beside it when the
                    archive knows the rotation period, its prior +- 10 %),
                    None or False (none), or a spec of oafip(gp=)
-    :param detection_map: 'fip', 'search' or False: map which planets the
-                          series could have found, with the signals found
-                          taken out. 'fip' (the default) looks for each
+    :param detection_map: 'fip', 'search' or False (the default): map
+                          which planets the series could have found, with
+                          the signals found taken out. 'fip' looks for each
                           injected planet with the rule that decides (the
                           FIP with the GP, the period or any alias; adaptive
-                          rounds per period band, koloa.fipmap; about 15 min
-                          on 8 processes); 'search' is the quicker blind
+                          rounds per period band, koloa.fipmap; hours on a
+                          long series); 'search' is the quicker blind
                           periodogram search of koloa.completeness (no GP,
                           an alias counts as missed)
     :param map_ninj: int, the injections per cell of the map (and

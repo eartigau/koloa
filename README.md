@@ -79,11 +79,13 @@ two passes (the errors of each instrument inflated to its noise, first
 without planets, then with them), the signals fitted together and set
 against the known planets, the activity indicators, the duck test, and why
 each outlier is one. It runs on the nightly means, with a GP of the activity
-inside the FIP (a rotation GP when the archive knows the rotation period),
-decides planet or no planet on the period or any of its aliases, and adds a
-detection map (which planets the series could have found: injections on a
-grid of period and K, a blind search; `--no-detection-map` to skip it, about
-five minutes). From Python: `koloa.detailed_analysis('star.rdb')`.
+inside the FIP (one per instrument, by period band, only as flexible as the
+data ask for), and decides planet or no planet on the period or any of its
+aliases. On request, a detection map (which planets the series could have
+found): `--detection-map` looks for injected planets with the FIP and the
+GP, the rule that decides (hours on a long series); `--search-map` with a
+quicker blind periodogram search. From Python:
+`koloa.detailed_analysis('star.rdb')`.
 
 Beyond the FIP's signals, the known planets are tested at their periods,
 and so are the periods given (`--periods 113.46`, a candidate the archive

@@ -89,12 +89,15 @@ def main(argv=None):
     parser.add_argument('--exposures', action='store_true',
                         help='analyse every exposure (koloa runs on the '
                              'nightly means by default)')
-    parser.add_argument('--no-detection-map', action='store_true',
-                        help='with --detailed: no detection map')
+    parser.add_argument('--detection-map', action='store_true',
+                        help='with --detailed: a detection map, which planets '
+                             'the series could have found (injections looked '
+                             'for by the FIP with the GP; hours on a long '
+                             'series)')
     parser.add_argument('--search-map', action='store_true',
                         help='with --detailed: the quicker detection map of a '
                              'blind periodogram search (no GP; an alias '
-                             'counts as missed) instead of the FIP one')
+                             'counts as missed)')
     parser.add_argument('--no-fip-gp', action='store_true',
                         help='with --detailed: no GP of the activity inside '
                              'the FIP')
@@ -118,8 +121,9 @@ def main(argv=None):
                           tess=not args.no_tess, site=args.site,
                           fip_gp=None if args.no_fip_gp else 'banded',
                           nightly=False if args.exposures else None,
-                          detection_map=(False if args.no_detection_map else
-                                         'search' if args.search_map else 'fip'))
+                          detection_map=('search' if args.search_map else
+                                         'fip' if args.detection_map
+                                         else False))
         return
     data = RVData.from_csv(args.filename, name=args.name, inst=args.inst,
                            sequence_gap=args.gap)
