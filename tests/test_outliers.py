@@ -241,3 +241,25 @@ def test_detailed_analysis_from_the_name_alone(tmp_path, monkeypatch):
     assert 'left out' in kinds
     with pytest.raises(ValueError):
         detailed.detailed_analysis(None, outdir=str(tmp_path))
+
+
+def test_the_acceleration_is_fitted_and_reported(tmp_path):
+    """a planet and an acceleration of the star: the acceleration and its
+    change fitted with the planet in the likelihood, reported in m/s/yr
+    with errors, and drawn with the model"""
+    from koloa.detailed import detailed_analysis
+    from koloa.data import RVData
+    from koloa.simulate import simulate
+    sim = simulate(planets=[dict(P=7.3, K=8.0)], err=1.5, seed=5,
+                   nvisits=40, per_visit=1, baseline=900)['data']
+    years = (sim.time - sim.time.mean()) / 365.25
+    data = RVData(sim.time, sim.rv + 6.0 * years, sim.err, name='star')
+    out = detailed_analysis(data, outdir=str(tmp_path), archive=False,
+                            dace=False, carmenes=False, kmax=1, nsweep=200,
+                            nburn=100, duck=False, gp=False, fip_gp=None,
+                            latex=False, curvature=True)
+    val, low, high = out['acceleration']['accel']
+    assert abs(val - 6.0) < 4 * max(low, high) and 0 < low < 3
+    assert 'jerk' in out['acceleration']
+    assert list(tmp_path.glob('*_model.pdf'))
+    assert 'acceleration of the star' in out['report']

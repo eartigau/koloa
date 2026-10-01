@@ -252,6 +252,17 @@ def _summary(rep: Dict[str, Any]) -> str:
             ', '.join(f'{escape(inst)} ({num})'
                       for inst, num in src['instruments'].items())
             for src in dropped) + '.')
+    acc = rep.get('acceleration') or {}
+    if acc.get('accel'):
+        val, low, high = acc['accel']
+        sig = 0.5 * (low + high)
+        items.append(f'Acceleration of the star: ${val:+.3g} \\pm {sig:.2g}$'
+                     f'\\,m\\,s$^{{-1}}$\\,yr$^{{-1}}$ '
+                     f'({abs(val) / max(sig, 1e-30):.1f}$\\sigma$)'
+                     + (f', its change ${acc["jerk"][0]:+.3g} \\pm '
+                        f'{0.5 * (acc["jerk"][1] + acc["jerk"][2]):.2g}$'
+                        f'\\,m\\,s$^{{-1}}$\\,yr$^{{-2}}$'
+                        if acc.get('jerk') else '') + '.')
     known = rep['known'] or {}
     star = known.get('star') or {}
     words = [escape(val) for val in (star.get('spectral_type'),) if val]
@@ -557,13 +568,45 @@ def _fip(rep: Dict[str, Any], folder: str) -> str:
     return '\n'.join(out) + '\n'
 
 
+def _accel_tex(rep: Dict[str, Any]) -> str:
+    """the acceleration of the star and its change, with their errors"""
+    acc = rep.get('acceleration')
+    if not acc:
+        return ''
+    words = []
+    for key, name, unit in (('accel', 'the acceleration of the star, '
+                             '$\\mathrm{d}v/\\mathrm{d}t$', 'm\\,s$^{-1}$\\,yr$^{-1}$'),
+                            ('jerk', 'its change, $\\mathrm{d}^2v/'
+                             '\\mathrm{d}t^2$', 'm\\,s$^{-1}$\\,yr$^{-2}$')):
+        if key not in acc:
+            continue
+        val, low, high = acc[key]
+        err = (f'\\pm {0.5 * (low + high):.2g}' if abs(low - high)
+               < 0.05 * max(low, high) else f'_{{-{low:.2g}}}^{{+{high:.2g}}}')
+        sig = abs(val) / max(0.5 * (low + high), 1e-30)
+        words.append(f'{name} ${val:+.3g}{err}$\\,{unit} '
+                     f'({sig:.1f}$\\sigma$)')
+    return ('The trend in time, fitted with the planets in the likelihood '
+            '(one for every instrument, beside their offsets): '
+            + '; '.join(words) + f', at BJD $-$ 2400000 = {acc["tref"]:.1f}; '
+            f'errors from {escape(acc.get("errors", ""))}.\n')
+
+
 def _signals(rep: Dict[str, Any], folder: str) -> str:
     """the orbits, against the known planets and the activity"""
     out = ['\\section{The signals}']
     orbits = rep['orbits']
+    model_fig = _figure(rep['figures'].get('model'), folder,
+                        'The velocities and the best model: every instrument '
+                        'with its offset taken out, with the Keplerians and '
+                        'the trend fitted together (top); the planets taken '
+                        'out, with the trend, the acceleration of the star '
+                        'and its change (middle); the residuals (bottom). '
+                        'Hollow: more likely an outlier than not.')
     if not orbits:
         return (out[0] + f'\nNo interval has a FIP below '
-                f'{rep["threshold"]:g}: nothing was fitted.\n\n')
+                f'{rep["threshold"]:g}: nothing was fitted.\n\n'
+                + _accel_tex(rep) + '\n' + model_fig)
     method = ('sampled by MCMC' if rep['settings'].get('mcmc') else
               'the maximum a posteriori, with Laplace errors')
     out.append(f'Every interval with a FIP below {rep["threshold"]:g}, the '
@@ -615,6 +658,8 @@ def _signals(rep: Dict[str, Any], folder: str) -> str:
         if orb.get('activity'):
             out.append(f'\\status{{flag}}{{Activity at {per:.4f}\\,d:}}'
                        ' ' + pretty('; '.join(orb['activity'])) + '.\n')
+    out.append(_accel_tex(rep))
+    out.append(model_fig)
     for ip, orb in enumerate(orbits):
         out.append(_figure(rep['figures'].get(f'phase_{ip}'), folder,
                            f'The orbit at {orb["P"][0]:.4f}\\,d, the other '

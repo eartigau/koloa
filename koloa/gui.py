@@ -76,7 +76,7 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
     rvfile = str(opts.get('file') or '').strip()
     off = {key: not opts.get(key, True) for key in
            ('dace', 'carmenes', 'tess', 'vizier', 'archive', 'gpcheck',
-            'duck', 'latex')}
+            'duck', 'latex', 'trend')}
     # the GP of the FIP: banded, sho (at the rotation given) or none
     fipgp = opts.get('fip_gp', 'banded')
     fipgp = {True: 'banded', False: 'none'}.get(fipgp, fipgp) or 'banded'
@@ -128,6 +128,10 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
         args.append('--exposures')
     if opts.get('mcmc'):
         args.append('--mcmc')
+    if opts.get('curvature'):
+        args.append('--curvature')
+    elif off['trend']:
+        args.append('--no-trend')
     for key, flag in (('dace', '--no-dace'),
                       ('carmenes', '--no-carmenes'), ('tess', '--no-tess'),
                       ('vizier', '--no-vizier'), ('archive', '--no-archive'),

@@ -200,6 +200,109 @@ def sequence_means(data: RVData, value: np.ndarray, prob: Optional[np.ndarray]
 # =============================================================================
 # Time series
 # =============================================================================
+#: the instruments, in order: eight hues and a marker each
+INST_COLOURS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4',
+                '#008300', '#4a3aa7', '#e34948']
+INST_MARKERS = ['o', 's', 'D', '^', 'v', 'P', '*', 'h']
+
+
+def trend_curve(model: Any, theta: np.ndarray, time: np.ndarray
+                ) -> np.ndarray:
+    """the polynomial trend of a fit (and a perspective acceleration fitted
+    beside it) at any time"""
+    tnorm = (np.asarray(time) - model.tref) / max(model.data.baseline, 1e-9)
+    out = np.zeros(len(tnorm))
+    for deg in range(1, model.trend + 1):
+        out += theta[model.index[f'trend_{deg}']] * tnorm ** deg
+    if 'secacc' in model.index:
+        out += theta[model.index['secacc']] * (np.asarray(time)
+                                                - model.tref) / 365.25
+    return out
+
+
+def model_series(res: Any, accel: Optional[Dict[str, Any]] = None,
+                 title: Optional[str] = None):
+    """
+    The velocities with the best model of a fit, in three panels sharing
+    time: every instrument with its offset (and decorrelation) taken out,
+    with the Keplerians and the trend; the planets taken out, with the
+    trend (the acceleration of the star and its change, with their errors
+    when given); the residuals. An exposure more likely an outlier than not
+    is hollow.
+
+    :param res: FitResult, the fit (its maximum a posteriori is drawn)
+    :param accel: dict or None, from koloa.secular.acceleration
+    :param title: str or None, the title
+
+    :return: matplotlib figure
+    """
+    model, theta = res.model, res.theta
+    data = model.data
+    npl = len(model.planets)
+    # what is taken out of every panel: the offsets and decorrelation
+    trend_at = trend_curve(model, theta, data.time)
+    shift = model.systematics(theta) - trend_at
+    planets_at = sum((model.planet_rv(theta, ip) for ip in range(npl)),
+                     np.zeros(data.n))
+    shown = data.rv - shift
+    resid = data.rv - model.mean_model(theta)
+    # the curves, fine enough for the shortest period
+    pers = [model.orbit(theta, ip)[0] for ip in range(npl)]
+    nfine = int(np.clip(20 * data.baseline / min(pers + [data.baseline]),
+                        2000, 200000))
+    fine = np.linspace(data.time.min(), data.time.max(), nfine)
+    trend_fine = trend_curve(model, theta, fine)
+    total_fine = trend_fine + sum((model.planet_rv(theta, ip, fine)
+                                   for ip in range(npl)), np.zeros(nfine))
+    prob = res.outlier_prob if res.outlier_prob is not None else \
+        np.zeros(data.n)
+    fig, axes = plt.subplots(3, 1, figsize=(7.2, 6.6), sharex=True,
+                             gridspec_kw=dict(height_ratios=[1.4, 1.0, 0.8]))
+    ax1, ax2, ax3 = axes
+    for it, inst in enumerate(data.instruments):
+        sel = data.inst == inst
+        colour = INST_COLOURS[it % len(INST_COLOURS)]
+        marker = INST_MARKERS[it % len(INST_MARKERS)]
+        for ax, yval in ((ax1, shown), (ax2, shown - planets_at),
+                         (ax3, resid)):
+            for bad in (False, True):
+                part = sel & ((prob > 0.5) == bad)
+                if not np.any(part):
+                    continue
+                ax.errorbar(data.time[part], yval[part], data.err[part],
+                            fmt=marker, ms=3.2, lw=0.6, elinewidth=0.6,
+                            color=colour,
+                            mfc='none' if bad else colour,
+                            label=(f'{inst} ({int(np.sum(sel))})'
+                                   if ax is ax1 and not bad else None),
+                            zorder=2)
+    ax1.plot(fine, total_fine, color=C['model'], lw=0.6, alpha=0.8,
+             zorder=3, label='Keplerians + trend')
+    ax1.plot(fine, trend_fine, color=C['model'], lw=1.0, ls='--', zorder=4,
+             label='trend')
+    words = []
+    if accel:
+        for key, name, unit in (('accel', 'dv/dt', 'm/s/yr'),
+                                ('jerk', 'd$^2$v/dt$^2$', 'm/s/yr$^2$')):
+            if key in accel:
+                val, low, high = accel[key]
+                words.append(f'{name} = {val:+.3g} $\\pm$ '
+                             f'{0.5 * (low + high):.2g} {unit}')
+    ax2.plot(fine, trend_fine, color=C['model'], lw=1.2, ls='--', zorder=4,
+             label='trend: ' + ', '.join(words) if words else 'trend')
+    ax3.axhline(0, color=C['model'], lw=0.8, ls=':')
+    ax1.set_ylabel('RV [m s$^{-1}$]')
+    ax2.set_ylabel('planets out')
+    ax3.set_ylabel('residuals')
+    ax3.set_xlabel('BJD - 2400000')
+    ax1.legend(fontsize=6.5, ncol=4, loc='upper left', frameon=False)
+    ax2.legend(fontsize=7, loc='upper left', frameon=False)
+    if title:
+        ax1.set_title(title, fontsize=9)
+    fig.tight_layout(h_pad=0.4)
+    return fig
+
+
 def timeseries(data: RVData, prob: Optional[np.ndarray] = None,
                fit: Any = None, level: str = 'point', ax=None,
                title: Optional[str] = None, ylabel: str = 'RV [m s$^{-1}$]'):

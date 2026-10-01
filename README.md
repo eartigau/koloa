@@ -80,7 +80,10 @@ file's OBJECT column), its known planets in the NASA Exoplanet Archive
 (every other instrument, merged with the file; DACE answers from some
 networks only, and the analysis goes on without it; a key in DACE_API_KEY
 or ~/.dacerc adds what its account may see) and CARMENES DR1 (corrected
-for the nightly zero points; `--no-carmenes` not to). Then the FIP of every instrument together in
+for the nightly zero points; `--no-carmenes` not to). The orbits are fitted
+with a trend in time in the likelihood, the acceleration of the star,
+reported in m/s/yr with its errors and drawn with the model
+(`--no-trend` not to, `--curvature` for its change too). Then the FIP of every instrument together in
 two passes (the errors of each instrument inflated to its noise, first
 without planets, then with them), the signals fitted together and set
 against the known planets, the activity indicators, the duck test, and why

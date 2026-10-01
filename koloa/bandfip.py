@@ -72,8 +72,8 @@ def banded_fip(data: RVData, pmin: float = 1.1, pmax: Optional[float] = None,
                threshold: float = THRESHOLD, kmax: int = 2,
                nsweep: int = 1000, nburn: int = 300, nchains: int = 2,
                seed: int = 1, decided: Optional[List[Optional[float]]] = None,
-               quiet: bool = False, label: Optional[str] = None
-               ) -> Dict[str, Any]:
+               quiet: bool = False, label: Optional[str] = None,
+               trend: int = 1) -> Dict[str, Any]:
     """
     The FIP by period bands, the GP of each band only as flexible as needed
     (see the module)
@@ -98,6 +98,7 @@ def banded_fip(data: RVData, pmin: float = 1.1, pmax: Optional[float] = None,
                     longest band first (a previous descent's 'decided'): no
                     descent, one FIP per GP
     :param quiet: bool, no log lines
+    :param trend: int, the degree of the polynomial in time of each FIP
     :param label: str or None, what the progress of each FIP is shown as
                   (with which FIP of how many at most, and its GP)
 
@@ -122,7 +123,7 @@ def banded_fip(data: RVData, pmin: float = 1.1, pmax: Optional[float] = None,
             runs[key] = oafip(data, kmax=kmax, nsweep=nsweep, nburn=nburn,
                               nchains=nchains, progress=False, pmin=pmin,
                               pmax=pmax, gp=spec(lmin, data.baseline),
-                              seed=seed + 7 * len(runs),
+                              seed=seed + 7 * len(runs), trend=trend,
                               label=(f'{label}, FIP {len(runs) + 1} of up '
                                      f'to {nmax} ({what})' if label
                                      else None))

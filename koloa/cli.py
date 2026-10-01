@@ -110,6 +110,14 @@ def main(argv=None):
                         help='with --detailed: the quicker detection map of a '
                              'blind periodogram search (no GP; an alias '
                              'counts as missed)')
+    parser.add_argument('--no-trend', action='store_true',
+                        help='with --detailed: no trend in time fitted with '
+                             'the planets (by default the acceleration of the '
+                             'star, dv/dt, in the likelihood, reported in '
+                             'm/s/yr with its errors)')
+    parser.add_argument('--curvature', action='store_true',
+                        help='with --detailed: fit the change of the '
+                             'acceleration too, d2v/dt2 [m/s/yr^2]')
     parser.add_argument('--rotation', type=float, default=None,
                         metavar='P',
                         help='with --detailed: a rotation period that can be '
@@ -192,7 +200,8 @@ def main(argv=None):
                                   or args.fip_gp == 'none' else
                                   args.fip_gp or ('sho' if args.rotation
                                                   else 'banded')),
-                          rotation=args.rotation,
+                          rotation=args.rotation, trend=not args.no_trend,
+                          curvature=args.curvature,
                           nightly=False if args.exposures else None,
                           detection_map=('search' if args.search_map else
                                          'fip' if args.detection_map

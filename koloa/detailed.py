@@ -458,8 +458,49 @@ def _map_lines(dmap: Dict[str, Any]) -> List[str]:
     return lines
 
 
+def _acceleration(fit, trend: int, sampled: bool) -> Optional[Dict[str, Any]]:
+    """the acceleration of the star (dv/dt) a fit measured, and its change
+    when fitted, with their errors (koloa.secular.acceleration: the
+    percentiles of the chain, or the Laplace covariance of the maximum a
+    posteriori, every other parameter marginalised)"""
+    if trend < 1:
+        return None
+    from koloa.secular import acceleration
+    try:
+        acc = acceleration(fit)
+    except (ValueError, np.linalg.LinAlgError) as err:
+        log(f'the acceleration of the star: {err}', 'warn')
+        return None
+    acc.pop('draws', None)
+    acc['errors'] = ('the posterior (MCMC), 16th to 84th percentiles'
+                     if sampled else 'the Laplace covariance of the '
+                     'maximum a posteriori')
+    return acc
+
+
+def _accel_lines(acc: Optional[Dict[str, Any]]) -> List[str]:
+    """the acceleration in words, with its errors and significance"""
+    if not acc:
+        return []
+    out = []
+    for key, what, unit in (('accel', 'acceleration of the star, dv/dt',
+                             'm/s/yr'),
+                            ('jerk', 'its change, d2v/dt2', 'm/s/yr^2')):
+        if key not in acc:
+            continue
+        val, low, high = acc[key]
+        sig = abs(val) / max(0.5 * (low + high), 1e-30)
+        err = (f'+- {low:.3g}' if abs(low - high) < 0.05 * max(low, high)
+               else f'-{low:.3g} +{high:.3g}')
+        out.append(f'{what} = {val:+.3g} {err} {unit} ({sig:.1f} sigma)')
+    if out:
+        out[0] += (f', at rjd {acc["tref"]:.1f}; errors from '
+                   f'{acc["errors"]}')
+    return out
+
+
 def _fip(data, fit, kmax, nsweep, nburn, seed, label, gp=None,
-         decided=None):
+         decided=None, trend=1):
     """the FIP of a series, the errors of each instrument inflated to a fit
     (and a GP of the activity inside it; 'banded': the FIP by period bands
     of koloa.bandfip, decided from the top down or as `decided` says)"""
@@ -472,13 +513,13 @@ def _fip(data, fit, kmax, nsweep, nburn, seed, label, gp=None,
             from koloa.bandfip import as_result, banded_fip
             band = banded_fip(inflated, kmax=kmax, nsweep=nsweep, nburn=nburn,
                               nchains=2, seed=seed, decided=decided,
-                              label=label)
+                              label=label, trend=trend)
             res = as_result(band)
             info['banded'] = band['decided']
         else:
             res = oafip(inflated, kmax=kmax, outliers='both', nsweep=nsweep,
                         nburn=nburn, nchains=2, seed=seed, progress=False,
-                        gp=gp, label=label)
+                        gp=gp, label=label, trend=trend)
     res.settings['width'] = 1 / inflated.baseline
     if gp:
         log(f'{label}: {_fip_gp_text(res)}', 'value')
@@ -643,7 +684,8 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
                       detection_map: Any = False,
                       map_ninj: int = 10,
                       exclude: Optional[Sequence[str]] = None,
-                      rotation: Optional[float] = None
+                      rotation: Optional[float] = None,
+                      trend: bool = True, curvature: bool = False
                       ) -> Dict[str, Any]:
     """
     Everything koloa can say about a star (see the module's docstring)
@@ -728,6 +770,12 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
                      [days] (a published one): the star's rotation for
                      every check, and the GP of the FIP an SHO at it
                      (fip_gp='sho', instead of the bands)
+    :param trend: bool, fit a trend in time with the planets, in the
+                  likelihood (and in the FIP), one for every instrument:
+                  the acceleration of the star, dv/dt, reported in m/s/yr
+                  with its errors (the default)
+    :param curvature: bool, fit its change too, d2v/dt2 [m/s/yr^2] (a
+                      second-order trend; implies the trend)
     :param exclude: list of str or None, instruments left out of the
                     analysis once the series is assembled (the file, DACE,
                     CARMENES, VizieR), by name (any case): NIRPS, HARPS03...
@@ -749,6 +797,9 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
     os.makedirs(outdir, exist_ok=True)
     kplot.set_style(style)
     out: Dict[str, Any] = dict(figures=[])
+    # the polynomial in time fitted with the planets: the acceleration of the
+    #   star, and its change
+    degree = 2 if curvature else (1 if trend else 0)
     step('the series')
     # 1. the series: a file, or none (the archives only, from the name)
     if source is None:
@@ -942,11 +993,12 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
     step('the FIP, first pass')
     # 4. the noise without planets, and the FIP
     with blas_threads(1):
-        noise = RVModel(data, [], likelihood='mixture', unit='both', trend=1,
-                        seq_jitter=seq_jitter).fit(nstart=2, quiet=True)
+        noise = RVModel(data, [], likelihood='mixture', unit='both',
+                        trend=degree, seq_jitter=seq_jitter).fit(nstart=2,
+                                                                quiet=True)
     gpspec = _gp_spec(fip_gp, known)
     fip1, info1 = _fip(data, noise, kmax, nsweep, nburn, seed,
-                       'FIP, noise without planets', gp=gpspec)
+                       'FIP, noise without planets', gp=gpspec, trend=degree)
     # planet or no planet: the period or any of its aliases; one period
     #   per family of aliases
     found = sorted(_found(fip1))
@@ -972,12 +1024,13 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
         with blas_threads(1):
             if mcmc:
                 fit = mcmc_orbits(data, planets, likelihood='mixture',
-                                  unit='both', trend=1, seq_jitter=seq_jitter,
+                                  unit='both', trend=degree,
+                                  seq_jitter=seq_jitter,
                                   nsteps=nsteps, nburn=nsteps // 3, nstart=2,
                                   seed=seed, quiet=True)
             else:
                 fit = RVModel(data, planets, likelihood='mixture',
-                              unit='both', trend=1,
+                              unit='both', trend=degree,
                               seq_jitter=seq_jitter).fit(nstart=2,
                                                          quiet=True)
         for (per, origin), orb in zip(chosen, fit.orbits(mstar=mstar)):
@@ -997,7 +1050,7 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
         step('the FIP, second pass')
         fip2, info2 = _fip(data, fit, kmax, nsweep, nburn, seed + 1,
                            'FIP, noise with the planets', gp=gpspec,
-                           decided=info1.get('banded'))
+                           decided=info1.get('banded'), trend=degree)
     else:
         log('no interval with FIP < 1 %, no known planet and no period '
             'given: nothing to fit', 'warn')
@@ -1007,6 +1060,10 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
         orb['family_fip'] = fip2.family_containing(orb['P'][0],
                                                    1 / data.baseline)
     out.update(fit=fit, orbits=orbits, fip_first=fip1, fip_second=fip2)
+    # the acceleration of the star: the trend fitted with the planets
+    out['acceleration'] = accel = _acceleration(fit, degree, mcmc and orbits)
+    for line in _accel_lines(accel):
+        log(line, 'value')
     step('the activity indicators')
     # 7. the activity indicators, and the rotation of the star
     indic = _indicators(data, pmin, pmax)
@@ -1096,6 +1153,11 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
         data, fit.outlier_prob,
         title=f'{star}: every instrument, each exposure coloured by its '
               f'outlier probability'), 'rv')
+    if orbits or accel:
+        keep(kplot.model_series(
+            fit, accel, title=f'{star}: the velocities and the best model '
+                              f'(the Keplerians and the trend, fitted '
+                              f'together)'), 'model')
     if gpres is not None:
         # the whole series with the GP, the periodograms whitened by it,
         #   and every signal folded without it
@@ -1209,6 +1271,10 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
     gpsum = _gp_summary(gpres)
     text = _report(star, data, ident, known, fip1, fip2, orbits, indic,
                    ducks, why, time.time() - start, sources) + _gp_text(gpsum)
+    if accel:
+        text += ('\n\nThe trend fitted with the planets (one for every '
+                 'instrument)\n' + '\n'.join(f'  {line}' for line in
+                                             _accel_lines(accel)))
     if phot is not None:
         text += ('\n\nTESS photometry (TIC ' + str(phot.get('tic')) + ')\n  '
                  + phot['summary'] + '\n'
@@ -1240,8 +1306,9 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
             inflation_second=info2.get('inflation', {}), orbits=orbits,
             indicators=indic, duck=ducks, outliers=why, figures=named,
             gp=gpsum, threshold=THRESHOLD, runtime=time.time() - start,
-            tess=phot, detection_map=dmap,
+            tess=phot, detection_map=dmap, acceleration=accel,
             settings=dict(archive=archive, dace=dace, carmenes=carmenes,
+                          trend=degree,
                           rotation=(f'{float(rotation):g} d, given' if rotation
                                     else 'the archive\'s'),
                           exclude=', '.join(exclude or []) or 'none',
@@ -1269,7 +1336,7 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
     summary = _summary(star, data, ident, known, fip1, fip2, orbits, indic,
                        ducks, why, figs)
     summary.update(sources=sources, gp=gpsum, report_tex=paths.get('tex'),
-                   report_pdf=paths.get('pdf'))
+                   report_pdf=paths.get('pdf'), acceleration=accel)
     if phot is not None:
         summary['tess'] = ktess.light(phot)
     if dmap is not None and dmap.get('kind') == 'fip':
