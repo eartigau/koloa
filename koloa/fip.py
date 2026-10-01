@@ -49,8 +49,12 @@ Created on 2026-09-27
 
 @author: artigau
 """
+import multiprocessing as _mp
+import sys as _sys
+import threading as _threading
 import time as _time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor
+from concurrent.futures import wait as _wait
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -973,6 +977,65 @@ class _Chain:
                     slot_records=np.array(self.slot_records).reshape(-1, 3))
 
 
+#: the sweeps done by each chain of the FIP that runs, shared with the
+#: processes of the chains (set by _share_counter in each of them)
+_COUNTER = None
+
+
+def _share_counter(counter):
+    """in the process of a chain: where it counts its sweeps"""
+    global _COUNTER
+    _COUNTER = counter
+
+
+class _Progress:
+    """
+    The sweeps of the chains of a FIP as they go: a bar (tqdm) on a
+    terminal, a log line at every tenth otherwise (a pipe, koloa's GUI)
+    """
+
+    def __init__(self, label: str, total: int):
+        from koloa import log as klog
+        self.label, self.total = label, total
+        self.start, self.shown = _time.time(), 0
+        self.bar = None
+        if klog.VERBOSE and _sys.stderr.isatty():
+            try:
+                from tqdm import tqdm
+                self.bar = tqdm(total=total, desc=label, unit='sweep',
+                                dynamic_ncols=True, leave=True)
+            except ImportError:
+                self.bar = None
+
+    def update(self, done: int):
+        done = min(int(done), self.total)
+        if self.bar is not None:
+            self.bar.update(done - self.bar.n)
+            return
+        tenth = 10 * done // self.total
+        if tenth > self.shown and done < self.total:
+            self.shown = tenth
+            elapsed = _time.time() - self.start
+            left = elapsed * (self.total - done) / max(done, 1)
+            log(f'{self.label}: {10 * tenth} % of the sweeps, '
+                f'{_clock(elapsed)} so far, about {_clock(left)} left')
+
+    def close(self, done: int):
+        self.update(done)
+        if self.bar is not None:
+            self.bar.close()
+
+
+def _clock(sec: float) -> str:
+    """a duration in words: 45 s, 12 min, 2 h 05"""
+    sec = int(round(sec))
+    if sec < 90:
+        return f'{sec} s'
+    if sec < 5400:
+        return f'{round(sec / 60)} min'
+    return f'{sec // 3600} h {(sec % 3600) // 60:02d}'
+
+
 def _run_chain(args) -> Dict[str, Any]:
     """
     Run one chain (a separate process when there are several)
@@ -990,17 +1053,13 @@ def _run_chain_body(data, gridargs, cfg, seed, index) -> Dict[str, Any]:
     """The loop of _run_chain, with the threads already limited"""
     grid = PeriodGrid(**gridargs)
     chain = _Chain(data, grid, cfg, seed)
-    start = _time.time()
     total = cfg['nburn'] + cfg['nsweep']
     for it in range(total):
         chain.sweep(record=it >= cfg['nburn'])
         if it < cfg['nburn'] and (it + 1) % 50 == 0:
             chain.adapt()
-        if cfg['progress'] and index == 0 and (it + 1) % max(total // 5, 1) == 0:
-            elapsed = _time.time() - start
-            log(f'OAFIP chain 1: sweep {it + 1}/{total} '
-                f'({elapsed:.0f} s, {int(np.sum(chain.active))} signal(s) '
-                f'on, {chain.nbad} point(s) in outliers)')
+        if _COUNTER is not None and ((it + 1) % 5 == 0 or it + 1 == total):
+            _COUNTER[index] = it + 1
     return chain.output()
 
 
@@ -1096,7 +1155,8 @@ def oafip(data: RVData, kmax: int = 3, outliers: Optional[str] = 'both',
           width_range: Optional[Sequence[float]] = None,
           frac_prior: Sequence[float] = (1.0, 20.0),
           prior_k: Union[str, Sequence[float]] = 'uniform', seed: int = 1,
-          progress: bool = True, npeaks: int = 5,
+          progress: bool = True, label: Optional[str] = None,
+          npeaks: int = 5,
           freq: Optional[np.ndarray] = None,
           gp: Union[None, str, Dict[str, Any], Sequence[Any]] = None,
           nightly: Optional[bool] = None) -> FIPResult:
@@ -1126,6 +1186,9 @@ def oafip(data: RVData, kmax: int = 3, outliers: Optional[str] = 'both',
     :param prior_k: 'uniform' or kmax + 1 prior probabilities of k
     :param seed: int, the seed of the first chain
     :param progress: bool, log the progress
+    :param label: str or None, what the progress of the sweeps is shown as
+                  (a bar on a terminal, a line at every tenth otherwise);
+                  'OAFIP' when progress is True, none when neither
     :param npeaks: int, how many peaks to report
     :param freq: np.ndarray or None, a frequency grid to use as it is
     :param gp: None, 'local', 'rotation' (with its period), a dict or a list
@@ -1180,11 +1243,8 @@ def oafip(data: RVData, kmax: int = 3, outliers: Optional[str] = 'both',
             f'{nburn} + {nsweep} sweeps')
     jobs = [(data, gridargs, cfg, seed + 1000 * it, it)
             for it in range(nchains)]
-    if nchains > 1:
-        with ProcessPoolExecutor(max_workers=nchains) as pool:
-            outs = list(pool.map(_run_chain, jobs))
-    else:
-        outs = [_run_chain(jobs[0])]
+    label = label or ('OAFIP' if progress else None)
+    outs = _run_chains(jobs, label, nchains * (nburn + nsweep))
     result = _combine(outs, data, grid, cfg, method, npeaks)
     if night is not None:
         # the probability of each night, given back to its exposures
@@ -1200,6 +1260,51 @@ def oafip(data: RVData, kmax: int = 3, outliers: Optional[str] = 'both',
             log(f'  peak at {peak["period"]:.4f} d, FIP = {peak["fip"]:.2e}',
                 'value')
     return result
+
+
+def _run_chains(jobs: List[tuple], label: Optional[str], total: int
+                ) -> List[Dict[str, Any]]:
+    """
+    The chains of a FIP, in processes of their own when there are several,
+    their sweeps shown as they go when there is a label
+
+    :return: list of dict, the output of each chain
+    """
+    global _COUNTER
+    progress = _Progress(label, total) if label else None
+    if len(jobs) == 1:
+        _COUNTER = [0]
+        stop = _threading.Event()
+
+        def watch():
+            while not stop.wait(1.0):
+                progress.update(_COUNTER[0])
+        if progress is not None:
+            _threading.Thread(target=watch, daemon=True).start()
+        try:
+            outs = [_run_chain(jobs[0])]
+        finally:
+            stop.set()
+            done, _COUNTER = _COUNTER[0], None
+        if progress is not None:
+            progress.close(done)
+        return outs
+    ctx = _mp.get_context('spawn')
+    counter = ctx.Array('i', len(jobs), lock=False)
+    with ProcessPoolExecutor(max_workers=len(jobs), mp_context=ctx,
+                             initializer=_share_counter,
+                             initargs=(counter,)) as pool:
+        futures = [pool.submit(_run_chain, job) for job in jobs]
+        pending = set(futures)
+        while pending:
+            _, pending = _wait(pending, timeout=1.0,
+                               return_when=FIRST_COMPLETED)
+            if progress is not None:
+                progress.update(sum(counter))
+        outs = [fut.result() for fut in futures]
+    if progress is not None:
+        progress.close(sum(counter))
+    return outs
 
 
 def _combine(outs: List[Dict[str, Any]], data: RVData, grid: PeriodGrid,

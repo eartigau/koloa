@@ -72,7 +72,8 @@ def banded_fip(data: RVData, pmin: float = 1.1, pmax: Optional[float] = None,
                threshold: float = THRESHOLD, kmax: int = 2,
                nsweep: int = 1000, nburn: int = 300, nchains: int = 2,
                seed: int = 1, decided: Optional[List[Optional[float]]] = None,
-               quiet: bool = False) -> Dict[str, Any]:
+               quiet: bool = False, label: Optional[str] = None
+               ) -> Dict[str, Any]:
     """
     The FIP by period bands, the GP of each band only as flexible as needed
     (see the module)
@@ -97,6 +98,8 @@ def banded_fip(data: RVData, pmin: float = 1.1, pmax: Optional[float] = None,
                     longest band first (a previous descent's 'decided'): no
                     descent, one FIP per GP
     :param quiet: bool, no log lines
+    :param label: str or None, what the progress of each FIP is shown as
+                  (with which FIP of how many at most, and its GP)
 
     :return: dict, bands (per band, the longest first: low, high, gp (the
              shortest scale kept, None for no GP), gain, result (the FIP
@@ -107,15 +110,22 @@ def banded_fip(data: RVData, pmin: float = 1.1, pmax: Optional[float] = None,
     pmax = pmax or 2 * data.baseline
     edges = np.geomspace(pmin, pmax, nband + 1)
     runs: Dict[Any, Any] = {}
+    # the FIPs at most: one per band and the one without a GP, or one per
+    #   GP decided
+    nmax = nband + 1 if decided is None else len(set(decided))
 
     def run(lmin):
         """the FIP with the GP of shortest scale lmin (once)"""
         key = None if lmin is None else round(float(lmin), 6)
         if key not in runs:
+            what = 'no GP' if lmin is None else f'GP L >= {lmin:.0f} d'
             runs[key] = oafip(data, kmax=kmax, nsweep=nsweep, nburn=nburn,
                               nchains=nchains, progress=False, pmin=pmin,
                               pmax=pmax, gp=spec(lmin, data.baseline),
-                              seed=seed + 7 * len(runs))
+                              seed=seed + 7 * len(runs),
+                              label=(f'{label}, FIP {len(runs) + 1} of up '
+                                     f'to {nmax} ({what})' if label
+                                     else None))
         return runs[key]
     kept: Optional[float] = None
     bands: List[Dict[str, Any]] = []

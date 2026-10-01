@@ -464,13 +464,13 @@ def _fip(data, fit, kmax, nsweep, nburn, seed, label, gp=None,
             from koloa.bandfip import as_result, banded_fip
             band = banded_fip(inflated, kmax=kmax, nsweep=nsweep, nburn=nburn,
                               nchains=2, seed=seed, decided=decided,
-                              quiet=True)
+                              label=label)
             res = as_result(band)
             info['banded'] = band['decided']
         else:
             res = oafip(inflated, kmax=kmax, outliers='both', nsweep=nsweep,
                         nburn=nburn, nchains=2, seed=seed, progress=False,
-                        gp=gp)
+                        gp=gp, label=label)
     res.settings['width'] = 1 / inflated.baseline
     if gp:
         log(f'{label}: {_fip_gp_text(res)}', 'value')
@@ -757,6 +757,7 @@ def detailed_analysis(source: Union[str, RVData, None] = None,
         except (OSError, ValueError) as err:
             log(f'SIMBAD could not resolve {star}: {err}', 'warn')
     if archive and ident is not None:
+        log(f'asking the NASA Exoplanet Archive for the planets of {star}')
         try:
             known = known_planets(
                 name=star, path=os.path.join(outdir, 'archive.json'),

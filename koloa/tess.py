@@ -170,6 +170,7 @@ def light_curves(name: Union[str, int], folder: Optional[str] = None,
     """
     tic = tic_number(name)
     folder = folder or os.path.join(CACHE, str(tic))
+    log(f'TESS: asking MAST for the light curves of TIC {tic}')
     rows = _mast('Mast.Caom.Filtered', dict(
         columns='obsid,provenance_name,sequence_number,t_exptime',
         filters=[dict(paramName='target_name', values=[str(tic)]),
