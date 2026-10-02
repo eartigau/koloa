@@ -159,8 +159,9 @@ copied to BATCH/pdf/, then the summary of the batch
 (`koloa --batch-summary BATCH`: BATCH/batch_summary.pdf, .txt and .csv,
 each target's signals, FIPs, verdicts and acceleration, or why it failed).
 The script is written for this machine, or for a server: its files picked
-on it through ssh, its paths and its koloa, sent there and started from the
-page (it runs on after the page closes).
+on it through ssh, its paths and its koloa, and sent there. The page never
+runs it: it shows the command that starts it (with nohup) and the one that
+follows it.
 
 From Python:
 

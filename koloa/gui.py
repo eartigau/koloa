@@ -171,11 +171,10 @@ class Job:
     One run of koloa's command line, its log read as it comes
     """
 
-    def __init__(self, action: str, args: List[str], outputs: str,
-                 argv: Optional[List[str]] = None):
+    def __init__(self, action: str, args: List[str], outputs: str):
         self.id = uuid.uuid4().hex[:8]
         self.action, self.args = action, args
-        self.line = shlex.join(argv) if argv else line(args)
+        self.line = line(args)
         self.outputs = os.path.abspath(outputs)
         self.lines: List[str] = []
         self.steps: List[Dict[str, Any]] = []
@@ -186,7 +185,7 @@ class Job:
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         env['PYTHONPATH'] = root + os.pathsep + env.get('PYTHONPATH', '')
         self.proc = subprocess.Popen(
-            argv or [sys.executable, '-W', 'ignore', '-m', 'koloa.cli'] + args,
+            [sys.executable, '-W', 'ignore', '-m', 'koloa.cli'] + args,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             bufsize=1, env=env)
         threading.Thread(target=self._read, daemon=True).start()
@@ -245,8 +244,7 @@ class Job:
         """what the page shows of the run"""
         now = time.time()
         report = [name for name in self.files()
-                  if name.endswith('batch_summary.pdf' if self.action
-                                   == 'batch' else '_report.pdf')]
+                  if name.endswith('_report.pdf')]
         return dict(id=self.id, action=self.action, line=self.line,
                     status=self.status, returncode=self.returncode,
                     elapsed=(self.end or now) - self.start,
@@ -675,18 +673,8 @@ class Handler(BaseHTTPRequestHandler):
                     raise RuntimeError(proc.stderr.strip() or 'ssh failed')
                 return self._json(dict(path=os.path.join(
                     proc.stdout.strip(), name)))
-            if path == '/api/batch_start':
-                host, name = body['host'], os.path.basename(body['name'])
-                place = shlex.quote(body.get('workdir') or '.')
-                out = shlex.quote(os.path.splitext(name)[0] + '.out')
-                proc = _ssh(host, f'cd {place} && nohup bash '
-                                  f'{shlex.quote(name)} > {out} 2>&1 '
-                                  f'< /dev/null & echo started')
-                if proc.returncode != 0:
-                    raise RuntimeError(proc.stderr.strip() or 'ssh failed')
-                return self._json(dict(started=True))
-            if path == '/api/batch_run':
-                # here: the script saved where it runs, and followed
+            if path == '/api/batch_save':
+                # here: the script, written in the working folder (not run)
                 workdir = os.path.abspath(os.path.expanduser(
                     body.get('workdir') or os.getcwd()))
                 os.makedirs(workdir, exist_ok=True)
@@ -694,10 +682,7 @@ class Handler(BaseHTTPRequestHandler):
                 with open(spath, 'w') as handle:
                     handle.write(body['script'])
                 os.chmod(spath, 0o755)
-                job = Job('batch', [], os.path.join(workdir, body['batch']),
-                          argv=['bash', spath])
-                JOBS[job.id] = job
-                return self._json(job.state())
+                return self._json(dict(path=spath))
             if path == '/api/stop':
                 job = JOBS[body['id']]
                 if job.returncode is None:

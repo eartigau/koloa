@@ -109,10 +109,14 @@ async function makeScript() {
     $('script').textContent = made.script;
     $('make-note').textContent = `${made.targets.length} ${t('n_targets')}: ${made.batch}/${made.targets.join(', ')}`;
     const run = runSettings();
-    const where = run.workdir || '~';
-    $('follow').textContent = run.mode === 'ssh'
-      ? `ssh ${run.host} 'cd ${where} && ${made.start}'\nssh ${run.host} tail -f ${where}/${made.name.replace(/\.sh$/, '.out')}`
-      : '';
+    const out = made.name.replace(/\.sh$/, '.out');
+    if (run.mode === 'ssh') {
+      const where = run.workdir || '~';
+      $('follow').textContent = `ssh ${run.host} 'cd ${where} && ${made.start}'\nssh ${run.host} tail -f ${where}/${out}`;
+    } else {
+      const where = run.workdir || made.workdir || '.';
+      $('follow').textContent = `cd ${where} && ${made.start}\ntail -f ${where}/${out}`;
+    }
     $('script-note').textContent = '';
     return made;
   } catch (err) {
@@ -186,26 +190,21 @@ document.addEventListener('click', async (e) => {
   }
   if (el.id === 'make') await makeScript();
   if (el.id === 'download') { if (made || await makeScript()) download(); }
-  if (el.id === 'runhere') {
+  if (el.id === 'save') {
     if (!(await makeScript())) return;
     try {
-      keep(await api('/api/batch_run', { workdir: runSettings().workdir, name: made.name, script: made.script, batch: made.batch }));
-      renderJobs();
-      $('jobs').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } catch (err) { alert(err.message); }
+      const saved = await api('/api/batch_save', { workdir: runSettings().workdir, name: made.name, script: made.script });
+      $('script-note').innerHTML = `<span class="ok">${esc(t('saved'))} ${esc(saved.path)}</span>`;
+    } catch (err) {
+      $('script-note').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
+    }
   }
-  if (el.id === 'send' || el.id === 'start') {
+  if (el.id === 'send') {
     if (!(await makeScript())) return;
     const run = runSettings();
-    if (el.id === 'start' && !confirm(`${t('confirm_start')} ${run.host}?`)) return;
     try {
       const sent = await api('/api/batch_send', { host: run.host, workdir: run.workdir, name: made.name, script: made.script });
-      let note = `${t('sent')} ${run.host}:${sent.path}`;
-      if (el.id === 'start') {
-        await api('/api/batch_start', { host: run.host, workdir: run.workdir, name: made.name });
-        note += `; ${t('started')}`;
-      }
-      $('script-note').innerHTML = `<span class="ok">${esc(note)}</span>`;
+      $('script-note').innerHTML = `<span class="ok">${esc(t('sent'))} ${esc(run.host)}:${esc(sent.path)}</span>`;
     } catch (err) {
       $('script-note').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
     }
@@ -215,11 +214,8 @@ document.addEventListener('click', async (e) => {
 (async () => {
   $('batch-options').innerHTML = renderOptions('batch');
   restore();
-  langHooks.push(renderTargets, renderJobs);
+  langHooks.push(renderTargets);
   applyLang();
   showMode();
   renderTargets();
-  try { (await api('/api/jobs')).filter((job) => job.action === 'batch').forEach(keep); } catch (err) { /* nothing yet */ }
-  renderJobs();
-  setInterval(poll, 2000);
 })();

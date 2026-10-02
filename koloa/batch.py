@@ -397,7 +397,8 @@ def script(targets: List[Dict[str, Any]], options: Dict[str, Any],
             '"${KOLOA[@]}" --batch-summary "$BATCH"',
             'say "done: $BATCH/batch_summary.pdf"', '']
     return dict(script='\n'.join(out), name=name, batch=batch,
-                targets=folders, warnings=warnings, start=run_line)
+                targets=folders, warnings=warnings, start=run_line,
+                workdir=workdir)
 
 
 # =============================================================================

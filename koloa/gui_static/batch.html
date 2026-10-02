@@ -80,18 +80,12 @@
       <div class="cmd"><pre id="script" class="codeblock script"></pre><button class="copy" data-copy="script" type="button" data-i18n="copy">Copy</button></div>
       <div class="row">
         <button type="button" id="download" data-i18n="download">Download</button>
-        <button type="button" id="runhere" class="localonly" data-i18n="run_here">Run it here</button>
+        <button type="button" id="save" class="localonly" data-i18n="save_here">Save it in the working folder</button>
         <button type="button" id="send" class="sshonly" data-i18n="send">Send it to the server</button>
-        <button type="button" id="start" class="sshonly" data-i18n="start_there">Start it there</button>
       </div>
       <p class="hint" id="script-note"></p>
-      <div class="cmd sshonly"><pre id="follow" class="codeblock"></pre><button class="copy" data-copy="follow" type="button" data-i18n="copy">Copy</button></div>
-    </section>
-
-    <!-- the runs started from here -->
-    <section class="card span-3 localonly">
-      <h2 data-i18n="runs">Runs</h2>
-      <div id="jobs"><p class="hint" data-i18n="no_runs">No run yet.</p></div>
+      <p class="hint" data-i18n="to_start">To start it, and to follow it (koloa does not start it: you do):</p>
+      <div class="cmd"><pre id="follow" class="codeblock"></pre><button class="copy" data-copy="follow" type="button" data-i18n="copy">Copy</button></div>
     </section>
   </main>
 
