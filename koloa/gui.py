@@ -107,6 +107,12 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
         raise ValueError(f'no action {action}')
     if not target and not paths:
         raise ValueError('a file, a SIMBAD name, or (best) both')
+    # the velocities of the archives: only when asked
+    ask = {key: bool(opts.get(key, False)) for key in
+           ('dace', 'carmenes', 'vizier')}
+    if not paths and not any(ask.values()):
+        raise ValueError('no file: tick DACE, CARMENES DR1 or VizieR for '
+                         'the velocities of the archives')
     if fipgp == 'sho' and not rotation:
         raise ValueError('an SHO GP needs the rotation period')
     args = paths + ['--detailed']
@@ -148,9 +154,8 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
         args.append('--curvature')
     elif off['trend']:
         args.append('--no-trend')
-    for key, flag in (('dace', '--no-dace'),
-                      ('carmenes', '--no-carmenes'), ('tess', '--no-tess'),
-                      ('vizier', '--no-vizier'), ('archive', '--no-archive'),
+    args += [f'--{key}' for key, val in ask.items() if val]
+    for key, flag in (('tess', '--no-tess'), ('archive', '--no-archive'),
                       ('gpcheck', '--no-gp'), ('duck', '--no-duck'),
                       ('latex', '--no-latex')):
         if off[key]:
@@ -413,7 +418,8 @@ def gathering(target: str, root: str = '') -> bool:
                and job.outputs == folder for job in JOBS.values())
 
 
-def velocities(files: Any = '', target: str = '', root: str = ''
+def velocities(files: Any = '', target: str = '', root: str = '',
+               dace: bool = False, carmenes: bool = False
                ) -> Dict[str, Any]:
     """
     The velocities of a file and of a star's gathered archives, by
@@ -440,12 +446,15 @@ def velocities(files: Any = '', target: str = '', root: str = ''
         if os.path.exists(os.path.join(folder, 'rv', 'all_rv.csv')):
             gathered = load(folder)['rv']
             # each archive set apart from the file, as the report does
-            for arch, tag, sel in (
+            for arch, tag, sel, asked in (
                     ('DACE', 'DACE',
-                     ~np.char.startswith(gathered.inst.astype(str), 'CARM')),
+                     ~np.char.startswith(gathered.inst.astype(str), 'CARM'),
+                     dace),
                     ('CARMENES DR1', 'DR1',
-                     np.char.startswith(gathered.inst.astype(str), 'CARM'))):
-                if not np.any(sel):
+                     np.char.startswith(gathered.inst.astype(str), 'CARM'),
+                     carmenes)):
+                # only the archives the report will use
+                if not asked or not np.any(sel):
                     continue
                 part = gathered.select(sel)
                 if filedata is not None:
@@ -538,8 +547,10 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == '/api/rv':
                 files = (json.loads(query['files']) if query.get('files')
                          else query.get('file', ''))
-                return self._json(velocities(files, query.get('target', ''),
-                                             query.get('root', '')))
+                return self._json(velocities(
+                    files, query.get('target', ''), query.get('root', ''),
+                    dace=query.get('dace') == '1',
+                    carmenes=query.get('carmenes') == '1'))
             if url.path == '/api/jobs':
                 return self._json([job.state(0) for job in JOBS.values()])
             if url.path == '/api/job':

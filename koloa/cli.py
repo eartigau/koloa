@@ -84,8 +84,18 @@ def main(argv=None):
                              'DACE, CARMENES and TESS (a guess from the '
                              "file's OBJECT column otherwise); with "
                              '--detailed, give a file, a name, or both')
+    parser.add_argument('--dace', action='store_true',
+                        help='with --detailed: add the velocities DACE has '
+                             'of the star (the archives are used only when '
+                             'asked)')
+    parser.add_argument('--carmenes', action='store_true',
+                        help='with --detailed: add the velocities of '
+                             'CARMENES DR1')
+    parser.add_argument('--vizier', action='store_true',
+                        help='with --detailed: add the velocities published '
+                             'with the known planets (VizieR)')
     parser.add_argument('--no-dace', action='store_true',
-                        help='do not ask DACE for more velocities')
+                        help='with --gather: not DACE')
     parser.add_argument('--no-archive', action='store_true',
                         help='do not ask the NASA Exoplanet Archive')
     parser.add_argument('--mcmc', action='store_true',
@@ -96,8 +106,7 @@ def main(argv=None):
                              'analysis): VizieR .dat files (time velocity '
                              'error instrument) or csv/rdb files')
     parser.add_argument('--no-vizier', action='store_true',
-                        help='do not fetch the velocities published with the '
-                             'known planets from VizieR')
+                        help='with --detailed: no VizieR (the default)')
     parser.add_argument('--no-latex', action='store_true',
                         help='no LaTeX/PDF report (detailed analysis)')
     parser.add_argument('--site', default=None,
@@ -170,8 +179,7 @@ def main(argv=None):
                         help='with --gather or --detailed: ask the archives '
                              'again, whatever is already on disk')
     parser.add_argument('--no-carmenes', action='store_true',
-                        help='with --detailed or --gather: not CARMENES '
-                             'DR1')
+                        help='with --gather: not CARMENES DR1')
     parser.add_argument('--periods', nargs='+', type=float, default=None,
                         help='more periods to test (detailed analysis: '
                              'candidates the archive does not list) [d]')
@@ -198,11 +206,12 @@ def main(argv=None):
         detailed_analysis(args.filename or None, outdir=args.outdir,
                           name=args.name, instruments=args.instruments,
                           target=args.target, archive=not args.no_archive,
-                          dace=not args.no_dace,
-                          carmenes=not args.no_carmenes,
+                          dace=args.dace and not args.no_dace,
+                          carmenes=args.carmenes and not args.no_carmenes,
                           exclude=args.exclude, refresh=args.refresh,
                           literature=args.literature,
-                          vizier=not args.no_vizier, periods=args.periods,
+                          vizier=args.vizier and not args.no_vizier,
+                          periods=args.periods,
                           gp=not args.no_gp, kmax=args.kmax,
                           nsweep=args.nsweep, nburn=args.nburn,
                           pmin=args.pmin, pmax=args.pmax, mcmc=args.mcmc,

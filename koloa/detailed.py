@@ -780,11 +780,11 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
                                     None] = None,
                       outdir: str = 'koloa_detailed',
                       name: Optional[str] = None, target: Optional[str] = None,
-                      archive: bool = True, dace: bool = True,
+                      archive: bool = True, dace: bool = False,
                       dace_folder: Optional[str] = None,
-                      carmenes: bool = True,
+                      carmenes: bool = False,
                       literature: Optional[Sequence[Union[str, RVData]]]
-                      = None, vizier: bool = True,
+                      = None, vizier: bool = False,
                       periods: Optional[Sequence[float]] = None,
                       gp: bool = True, gp_workers: int = 4,
                       gp_nsim: int = 20000,
@@ -831,21 +831,21 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
                    archive, DACE, CARMENES and TESS (from the OBJECT column
                    of the file when None; needed without a file)
     :param archive: bool, ask the NASA Exoplanet Archive
-    :param dace: bool, ask DACE for more velocities (what it has of the
-                 star: with no public entry, nothing)
+    :param dace: bool, add the velocities DACE has of the star (off by
+                 default: the velocities of the files only)
     :param dace_folder: str or None, where the DACE and CARMENES files are
                         kept (outdir when None)
     :param carmenes: bool, add the velocities of CARMENES DR1 (Ribas et al.
                      2023, the GTO of 2016 to 2020, about 360 M dwarfs of
                      the north), corrected for the nightly zero points
-                     (koloa.gather)
+                     (koloa.gather; off by default)
     :param literature: list or None, published velocities to add: files (a
                        VizieR .dat, time velocity error instrument, without
                        a header; or a csv or .rdb with named columns) or
                        series (see koloa.literature.read)
     :param vizier: bool, add the velocities published with the known
                    planets, from VizieR (the tables of the papers of their
-                   solutions in the archive)
+                   solutions in the archive; off by default)
     :param periods: list of float or None, more periods to test [days] (a
                     candidate of a paper that the archive does not list);
                     the known planets are tested at their periods anyway
@@ -939,6 +939,11 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
             raise ValueError('detailed_analysis: give a file of velocities, '
                              'or the SIMBAD name of the star (target=), or '
                              'both')
+        if not (dace or carmenes or vizier or literature):
+            raise ValueError('detailed_analysis: no file, and no archive '
+                             'asked for: the velocities of an archive are '
+                             'used only when asked (dace=, carmenes=, '
+                             'vizier=; --dace, --carmenes, --vizier)')
         data, star = None, target
         log(f'koloa, detailed: {star}, no file: the velocities of the '
             f'archives')

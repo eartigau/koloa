@@ -58,7 +58,7 @@ async function updateCommandsNow() {
         box.classList.remove('error');
         $(`run-${action}`).disabled = false;
       } catch (err) {
-        box.textContent = action === 'detailed' ? t('need') : err.message;
+        box.textContent = action !== 'detailed' ? err.message : (err.message.includes('tick') ? t('need_archive') : t('need'));
         box.classList.add('error');
         $(`run-${action}`).disabled = true;
       }
@@ -166,7 +166,10 @@ async function resolveStar(refresh) {
 async function plotVelocities() {
   const note = $('rvnote');
   note.innerHTML = `<span class="spin"></span> ${esc(t('loading'))}`;
-  const q = new URLSearchParams({ files: JSON.stringify(filesNow()), target: $('target').value.trim(), root: $('root').value.trim() });
+  // the archives the report will use, and only those
+  const asked = readOptions('detailed');
+  const q = new URLSearchParams({ files: JSON.stringify(filesNow()), target: $('target').value.trim(), root: $('root').value.trim(),
+    dace: asked.dace ? '1' : '', carmenes: asked.carmenes ? '1' : '' });
   try {
     const res = await api(`/api/rv?${q}`);
     note.textContent = (res.notes || []).join(' · ');
@@ -406,6 +409,9 @@ document.addEventListener('input', (e) => {
 });
 document.addEventListener('change', (e) => {
   if (e.target.dataset && e.target.dataset.inst) setExcluded(e.target.dataset.inst, !e.target.checked);
+  // an archive ticked or not: the plot shows what the report will use
+  if (e.target.dataset && e.target.dataset.for === 'detailed' && ['dace', 'carmenes'].includes(e.target.dataset.opt)
+      && $('plotcard').classList.contains('on')) plotVelocities();
   // a period of the literature ticked: the SHO at it; none: back to the bands
   if (e.target.name === 'prot') {
     $('rotation').value = e.target.value;

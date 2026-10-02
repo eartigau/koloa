@@ -35,21 +35,28 @@ def test_the_command_lines():
     assert gui.line(args).startswith("koloa star.rdb --detailed --target "
                                      "'GJ 436'")
     # a rotation that can be trusted: an SHO at it, unless asked otherwise
-    args = gui.command('detailed', dict(target='GL 406', rotation='2.704',
+    args = gui.command('detailed', dict(target='GL 406', file='a.rdb', rotation='2.704',
                                         fip_gp='sho'))
     assert args[-2:] == ['--rotation', '2.704']
-    assert gui.command('detailed', dict(target='GL 406', rotation='2.704',
+    assert gui.command('detailed', dict(target='GL 406', file='a.rdb', rotation='2.704',
                                         fip_gp='banded'))[-2:] == [
         '--fip-gp', 'banded']
     with pytest.raises(ValueError):
-        gui.command('detailed', dict(target='GL 406', fip_gp='sho'))
-    assert gui.command('detailed', dict(target='x', fip_gp='none'))[-1] == (
+        gui.command('detailed', dict(target='GL 406', file='a.rdb', fip_gp='sho'))
+    assert gui.command('detailed', dict(target='x', file='a.rdb', fip_gp='none'))[-1] == (
         '--no-fip-gp')
     assert gui.command('gather', dict(target='x', refresh=True))[-1] == (
         '--refresh')
-    # the name alone, or the file alone, will do; neither will not
-    assert gui.command('detailed', dict(target='GJ 436'))[0] == '--detailed'
-    assert gui.command('detailed', dict(file='a.rdb'))[0] == 'a.rdb'
+    # the archives only when asked: a file alone fetches nothing, a name
+    #   alone needs an archive ticked
+    assert gui.command('detailed', dict(file='a.rdb')) == [
+        'a.rdb', '--detailed', '--outdir', 'koloa_output']
+    args = gui.command('detailed', dict(target='GJ 436', dace=True,
+                                        carmenes=True))
+    assert args[0] == '--detailed' and '--dace' in args and \
+        '--carmenes' in args and '--vizier' not in args
+    with pytest.raises(ValueError):
+        gui.command('detailed', dict(target='GJ 436'))
     with pytest.raises(ValueError):
         gui.command('detailed', dict())
     with pytest.raises(ValueError):
@@ -117,8 +124,12 @@ def test_the_file_and_the_archives_are_told_apart(tmp_path):
     write_rv(RVData(times, rng.normal(0, 3, len(times)),
                     np.full(len(times), 1.0), inst=insts),
              str(tmp_path / 'arch' / 'GJ_436' / 'rv' / 'all_rv.csv'))
+    # the archives not asked for: the file alone
     res = gui.velocities(str(tmp_path / 'lbl.csv'), 'GJ 436',
                          str(tmp_path / 'arch'))
+    assert [inst['name'] for inst in res['instruments']] == ['NIRPS']
+    res = gui.velocities(str(tmp_path / 'lbl.csv'), 'GJ 436',
+                         str(tmp_path / 'arch'), dace=True, carmenes=True)
     got = {inst['name']: (inst['source'], inst['n'])
            for inst in res['instruments']}
     assert got == {'NIRPS': ('file: lbl.csv', 30), 'NIRPS_DACE': ('DACE', 10),

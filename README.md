@@ -72,7 +72,7 @@ name of the star, or (best) from both:
 ```
 koloa star.rdb --detailed --target "GJ 436" --outdir star
 koloa spirou.rdb nirps.rdb harps.rdb --detailed --target "GJ 436" --outdir star
-koloa --detailed --target "GJ 436" --outdir star     # the archives only
+koloa --detailed --target "GJ 436" --dace --carmenes --outdir star  # the archives only
 ```
 
 Each file is one or more instruments, named from its own columns (the
@@ -84,11 +84,13 @@ its own offset, the same spectra never counted twice.
 
 It finds who the star is (SIMBAD: the name given, or a guess from the
 file's OBJECT column), its known planets in the NASA Exoplanet Archive
-(every published solution), and more velocities: what DACE has of the star
-(every other instrument, merged with the file; DACE answers from some
-networks only, and the analysis goes on without it; a key in DACE_API_KEY
-or ~/.dacerc adds what its account may see) and CARMENES DR1 (corrected
-for the nightly zero points; `--no-carmenes` not to). The orbits are fitted
+(every published solution), and, only when asked, more velocities: what DACE has of the star
+(`--dace`: every other instrument, merged with the file; DACE answers from
+some networks only, and the analysis goes on without it; a key in
+DACE_API_KEY or ~/.dacerc adds what its account may see), CARMENES DR1
+(`--carmenes`, corrected for the nightly zero points) and the velocities
+published with the known planets (`--vizier`). Without them, the report
+uses the files alone. The orbits are fitted
 with a trend in time in the likelihood, the acceleration of the star,
 reported in m/s/yr with its errors and drawn with the model
 (`--no-trend` not to, `--curvature` for its change too). `--toi` fits
@@ -111,8 +113,8 @@ quicker blind periodogram search. From Python:
 Beyond the FIP's signals, the known planets are tested at their periods,
 and so are the periods given (`--periods 113.46`, a candidate the archive
 does not list). The velocities published with the known planets are
-fetched from VizieR (from the bibcodes of their solutions in the archive;
-`--no-vizier` not to), and published velocities can be given
+fetched from VizieR with `--vizier` (from the bibcodes of their solutions
+in the archive), and published velocities can be given
 (`--literature paper_rvs.dat`: a VizieR .dat, or a csv or .rdb with named
 columns); a published velocity within a minute of an exposure of the file
 is the same spectrum and is left out. The signals are fitted again with a
