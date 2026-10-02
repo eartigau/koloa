@@ -152,6 +152,13 @@ each took, its log, and the report when it is done. The page is served on
 127.0.0.1 only and runs nothing but koloa. Every field has an (i) that
 explains it in full: what it does, what to enter, its default.
 
+Its plot is a quick look before the report: the velocities shown, with
+sliders on both axes, and under them a quick FIP of exactly what is shown
+(outlier-aware, the period alone and the period or any of its aliases
+overplotted, no GP, in the two passes of the report, about a minute), the
+window (a day, a synodic month, a year) dotted and the known planets
+dashed; its PDF button writes both, as they are shown.
+
 From Python:
 
 ```python

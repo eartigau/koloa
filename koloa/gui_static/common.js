@@ -10,6 +10,11 @@ const TEXT = {
     velocities_hint: 'Your files of velocities (LBL .rdb, csv, DACE csv), and the archives gathered for the star when DACE or CARMENES DR1 is ticked in the report: what the report will use. Untick an instrument (or click it in the legend) to leave it out of the report.',
     use: 'Used', exclude: 'Instruments left out', source: 'Source', src_file: 'input file',
     file: 'File (optional)', root: 'Archives folder', plot: 'Plot', browse: 'Browse...', picking: 'choosing...',
+    quick_title: 'Quick FIP (no GP): a look before the report', quick_noise: 'fitting the noise of each instrument',
+    quick_fip1: 'the FIP, first pass', quick_planets: 'fitting the signals found and the known planets', quick_fip2: 'the FIP, second pass',
+    refip: 'Recompute the FIP', stale: 'made before the last change of what is shown: recompute it', alone: 'the period alone',
+    family: 'the period or any of its aliases', strongest: 'strongest', no_gp: 'no GP', signals_word: 'signals', sweeps_word: 'sweeps',
+    period_axis: 'period [d]', fip_axis: '-log10 FIP (1 % dotted)', nights: 'nights', passes: 'pass(es)', waiting: 'waiting for the previous one',
     need_archive: 'No file: tick DACE, CARMENES DR1 or VizieR (in the options below) for the velocities of the archives.',
     clip: 'twice the 3 to 97 percentile range', full_range: 'Full range', sliders: 'the sliders',
     use_sho: 'use for the SHO', no_sho: 'none (no SHO)',
@@ -54,6 +59,11 @@ const TEXT = {
     velocities_hint: 'Vos fichiers de vitesses (LBL .rdb, csv, csv de DACE), et les archives récupérées pour l’étoile quand DACE ou CARMENES DR1 est cochée dans le rapport : ce que le rapport utilisera. Décochez un instrument (ou cliquez-le dans la légende) pour l’écarter du rapport.',
     use: 'Utilisé', exclude: 'Instruments écartés', source: 'Source', src_file: 'fichier d’entrée',
     file: 'Fichier (facultatif)', root: 'Dossier des archives', plot: 'Tracer', browse: 'Parcourir...', picking: 'choix en cours...',
+    quick_title: 'FIP rapide (sans GP) : un coup d’œil avant le rapport', quick_noise: 'ajustement du bruit de chaque instrument',
+    quick_fip1: 'le FIP, premier passage', quick_planets: 'ajustement des signaux trouvés et des planètes connues', quick_fip2: 'le FIP, second passage',
+    refip: 'Refaire le FIP', stale: 'fait avant le dernier changement de ce qui est montré : refaites-le', alone: 'la période seule',
+    family: 'la période ou un de ses alias', strongest: 'le plus fort', no_gp: 'sans GP', signals_word: 'signaux', sweeps_word: 'itérations',
+    period_axis: 'période [j]', fip_axis: '-log10 FIP (1 % en pointillé)', nights: 'nuits', passes: 'passage(s)', waiting: 'en attente du précédent',
     need_archive: 'Pas de fichier : cochez DACE, CARMENES DR1 ou VizieR (dans les options ci-dessous) pour les vitesses des archives.',
     clip: 'deux fois l’écart des centiles 3 à 97', full_range: 'Tout voir', sliders: 'les curseurs',
     use_sho: 'utiliser pour le SHO', no_sho: 'aucune (pas de SHO)',
@@ -349,6 +359,14 @@ const HELP = {
   sliders: {
     en: 'The sliders along the axes cut the ranges shown: the one under the plot for the time, the one beside its left edge for the velocities (drag either end). The velocity slider is log-smart (asinh about the scatter of the points): it moves finely around the bulk and in big steps toward the outliers, so the 3 m/s scatter and a point at 1000 m/s both stay within reach. Zooming with the mouse moves them too; a double-click on the plot, or Full range, shows everything again.',
     fr: 'Les curseurs le long des axes coupent les intervalles montrés : celui sous le graphique pour le temps, celui le long de son bord gauche pour les vitesses (tirez l’un ou l’autre bout). Le curseur des vitesses est logarithmique (asinh autour de la dispersion des points) : il bouge finement autour du gros des points et à grands pas vers les valeurs aberrantes, si bien que la dispersion de 3 m/s et un point à 1000 m/s restent tous deux à portée. Un zoom à la souris les déplace aussi ; un double-clic sur le graphique, ou Tout voir, montre tout à nouveau.',
+  },
+  quickfip: {
+    en: 'A first look before the detailed report: the FIP of exactly what the plot shows (your files, the archives ticked, the instruments not left out), outlier-aware, in nightly means, with no GP. As in the report, it runs twice: the errors of each instrument inflated to the noise of a fit without planets, a first FIP; then to the noise of a fit with the signals it found (FIP < 1 %) and the known planets, so that their variance is not taken for noise, and the FIP again. Two signals, 500 sweeps: a minute or so. Blue, the FIP of the period or any of its aliases (what decides on a planet); grey, of the period alone; dotted, FIP = 1 % and the window (a day, a synodic month, a year); dashed, the known planets. The slider under it zooms on the periods. Without the GP of the activity, a peak at the rotation or its harmonics is expected: the report sorts that out.',
+    fr: 'Un premier coup d’œil avant le rapport détaillé : le FIP de ce que montre exactement le graphique (vos fichiers, les archives cochées, les instruments non écartés), robuste aux valeurs aberrantes, en moyennes par nuit, sans GP. Comme dans le rapport, il passe deux fois : les erreurs de chaque instrument gonflées au bruit d’un ajustement sans planète, un premier FIP ; puis au bruit d’un ajustement avec les signaux trouvés (FIP < 1 %) et les planètes connues, pour que leur variance ne soit pas prise pour du bruit, et le FIP à nouveau. Deux signaux, 500 itérations : une minute environ. En bleu, le FIP de la période ou d’un de ses alias (ce qui décide d’une planète) ; en gris, celui de la période seule ; en pointillés, FIP = 1 % et la fenêtre (un jour, un mois synodique, un an) ; en tirets, les planètes connues. Le curseur dessous zoome sur les périodes. Sans le GP de l’activité, un pic à la rotation ou à ses harmoniques est attendu : le rapport fait le tri.',
+  },
+  pdf: {
+    en: 'A PDF of what the page shows: the velocities with the ranges of the plot (time and velocity), over the quick FIP with its period range, the window and the known planets. Vector, made by koloa (matplotlib), downloaded as koloa_quicklook_<star>.pdf.',
+    fr: 'Un PDF de ce que montre la page : les vitesses avec les intervalles du graphique (temps et vitesse), au-dessus du FIP rapide avec son intervalle de périodes, la fenêtre et les planètes connues. Vectoriel, fait par koloa (matplotlib), téléchargé sous le nom koloa_quicklook_<étoile>.pdf.',
   },
   latex: {
     en: 'Write the report in LaTeX and compile it to PDF (pdflatex). Unticked: the text report, the summary (JSON) and every figure are written all the same.',

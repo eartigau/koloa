@@ -418,12 +418,13 @@ def gathering(target: str, root: str = '') -> bool:
                and job.outputs == folder for job in JOBS.values())
 
 
-def velocities(files: Any = '', target: str = '', root: str = '',
-               dace: bool = False, carmenes: bool = False
-               ) -> Dict[str, Any]:
+def series_of(files: Any = '', target: str = '', root: str = '',
+              dace: bool = False, carmenes: bool = False):
     """
-    The velocities of a file and of a star's gathered archives, by
-    instrument (each with its median taken out), for the plot of the page
+    The series of the page: its files, and the archives gathered for the
+    star that are asked for (set apart from the files as the report does)
+
+    :return: tuple, RVData or None, the source of each instrument, notes
     """
     from koloa.data import merge
     from koloa.detailed import distinct, read_files
@@ -468,8 +469,20 @@ def velocities(files: Any = '', target: str = '', root: str = '',
         else:
             notes.append(f'nothing gathered in {folder} yet')
     if not series:
+        return None, source, notes
+    return (series[0] if len(series) == 1 else merge(series)), source, notes
+
+
+def velocities(files: Any = '', target: str = '', root: str = '',
+               dace: bool = False, carmenes: bool = False
+               ) -> Dict[str, Any]:
+    """
+    The velocities of a file and of a star's gathered archives, by
+    instrument (each with its median taken out), for the plot of the page
+    """
+    data, source, notes = series_of(files, target, root, dace, carmenes)
+    if data is None:
         return dict(instruments=[], notes=notes)
-    data = series[0] if len(series) == 1 else merge(series)
     out = []
     for name in data.instruments:
         sel = data.inst == name
@@ -483,6 +496,242 @@ def velocities(files: Any = '', target: str = '', root: str = '',
                         rms=float(np.std(data.rv[sel]))))
     return dict(instruments=out, notes=notes, n=int(data.n),
                 baseline=float(data.baseline))
+
+
+# =============================================================================
+# The quick look: a FIP of what the page shows, before the report
+# =============================================================================
+#: a FIP without a GP, short: a look at the series before the report
+QUICK = dict(kmax=2, nsweep=500, nburn=200)
+#: the periods of the window of a series from the ground [days]
+WINDOW = dict(day=0.99727, month=29.5306, year=365.25)
+#: the quick looks of this session
+QUICKS: Dict[str, Dict[str, Any]] = {}
+#: one quick FIP at a time (they share the progress hook of koloa.fip)
+_QUICK_LOCK = threading.Lock()
+
+
+def selection(opts: Dict[str, Any]):
+    """the series the page shows, its instruments left out taken out"""
+    data, source, notes = series_of(
+        opts.get('files') or opts.get('file') or '', opts.get('target', ''),
+        opts.get('root', ''), bool(opts.get('dace')),
+        bool(opts.get('carmenes')))
+    left = {name.upper() for name in str(opts.get('exclude') or '')
+            .replace(',', ' ').split()}
+    if data is not None and left:
+        keep = ~np.isin(np.char.upper(data.inst.astype(str)), list(left))
+        data = data.select(keep) if keep.any() else None
+    return data, source, notes
+
+
+def known_periods(target: str) -> List[Dict[str, Any]]:
+    """the known planets of a star (the archive's copy kept here)"""
+    if not target.strip():
+        return []
+    from koloa.archive import host_name, known_planets, resolve
+    try:
+        host = host_name(resolve(target))
+        return [dict(name=pl['name'], P=float(pl['P']))
+                for pl in (known_planets(host=host)['planets'] if host
+                           else []) if pl.get('P')]
+    except Exception:  # a help, not a need
+        return []
+
+
+def _fip_curves(res, nbin: int = 3000) -> Dict[str, Any]:
+    """the FIP of the period alone and of the period or any of its aliases,
+    -log10, kept at their peaks in nbin bins of log period"""
+    per = 1.0 / np.asarray(res.freq)
+    alone = np.asarray(res.fip)
+    fam = np.asarray(res.family if res.family is not None else res.fip)
+    logp = np.log10(per)
+    edges = np.linspace(logp.min(), logp.max() + 1e-9, nbin + 1)
+    idx = np.clip(np.digitize(logp, edges) - 1, 0, nbin - 1)
+    out = {}
+    for key, val in (('alone', alone), ('family', fam)):
+        best = np.ones(nbin)
+        np.minimum.at(best, idx, np.clip(val, 1e-15, 1.0))
+        out[key] = np.round(-np.log10(best), 4).tolist()
+    out['period'] = np.round(10 ** (0.5 * (edges[1:] + edges[:-1])),
+                             6).tolist()
+    return out
+
+
+def _run_quick(qid: str, data, target: str):
+    """the quick FIP, in a thread, in the two passes of the report without
+    its GP: the errors of each instrument inflated to the noise of a fit
+    without planets, a first FIP; then to the noise of a fit with the
+    signals it found and the known planets (their variance is not noise),
+    the FIP again"""
+    from koloa import fip as kfip
+    from koloa.detailed import _fip
+    from koloa.fit import RVModel
+    job = QUICKS[qid]
+    with _QUICK_LOCK:
+        try:
+            nights = data.nightly()
+            seq_jitter = ('instrument' if len(nights.instruments) > 1
+                          and nights.nseq < nights.n else None)
+            job['step'] = 'noise'
+            noise = RVModel(nights, [], likelihood='mixture', unit='both',
+                            trend=1, seq_jitter=seq_jitter).fit(
+                nstart=2, quiet=True)
+            job['step'] = 'fip'
+
+            def hook(label, done, total, seconds):
+                job['progress'] = dict(done=done, total=total,
+                                       seconds=seconds)
+            kfip.PROGRESS_HOOK = hook
+            job['step'] = 'fip1'
+            res, info = _fip(nights, noise, QUICK['kmax'], QUICK['nsweep'],
+                             QUICK['nburn'], 1, 'quick FIP, first pass',
+                             gp=None, trend=1)
+            width = 1.0 / nights.baseline
+            known = known_periods(target)
+            # the second pass: the noise of a fit with the signals found and
+            #   the known planets
+            pers = []
+            for per in sorted([float(pk['period']) for pk in res.peaks
+                               if res.family_containing(pk['period'], width)
+                               < 0.01]
+                              + [pl['P'] for pl in known
+                                 if 1.0 < pl['P'] < nights.baseline]):
+                if all(abs(per / old - 1) > 0.02 for old in pers):
+                    pers.append(per)
+            passes = 1
+            if pers:
+                job['step'] = 'planets'
+                fit = RVModel(nights, [dict(period=per, period_range=(
+                    0.98 * per, 1.02 * per)) for per in pers],
+                    likelihood='mixture', unit='both', trend=1,
+                    seq_jitter=seq_jitter).fit(nstart=2, quiet=True)
+                job['step'] = 'fip2'
+                job['progress'] = None
+                res, info = _fip(nights, fit, QUICK['kmax'], QUICK['nsweep'],
+                                 QUICK['nburn'], 2, 'quick FIP, second pass',
+                                 gp=None, trend=1)
+                passes = 2
+            job['result'] = dict(
+                _fip_curves(res), known=known, window=WINDOW, passes=passes,
+                planets=pers,
+                peaks=[dict(period=float(pk['period']), fip=float(pk['fip']),
+                            family=float(res.family_containing(
+                                pk['period'], width)))
+                       for pk in res.peaks[:5]],
+                n=int(nights.n), nexp=int(data.n),
+                instruments={str(inst): int(np.sum(nights.inst == inst))
+                             for inst in nights.instruments},
+                inflation={str(key): float(val) for key, val in
+                           info.get('inflation', {}).items()},
+                settings=dict(QUICK, gp='none', trend=1))
+            job['status'] = 'done'
+        except Exception as err:
+            job['status'] = 'failed'
+            job['error'] = f'{type(err).__name__}: {err}'
+        finally:
+            kfip.PROGRESS_HOOK = None
+            job['end'] = time.time()
+
+
+def quick_fip(opts: Dict[str, Any]) -> Dict[str, Any]:
+    """a quick FIP of what the page shows, started in a thread"""
+    data, _, _ = selection(opts)
+    if data is None:
+        raise ValueError('no velocities to look at')
+    qid = uuid.uuid4().hex[:8]
+    QUICKS[qid] = dict(id=qid, status='running', step='waiting',
+                       progress=None, result=None, error=None,
+                       start=time.time(), end=None,
+                       instruments=list(data.instruments))
+    threading.Thread(target=_run_quick, args=(qid, data,
+                                              opts.get('target', '')),
+                     daemon=True).start()
+    return quick_state(qid)
+
+
+def quick_state(qid: str) -> Dict[str, Any]:
+    """what the page shows of a quick FIP"""
+    job = QUICKS[qid]
+    return dict(job, elapsed=(job['end'] or time.time()) - job['start'])
+
+
+def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
+                  qid: str = '') -> bytes:
+    """
+    The quick look as a PDF: the velocities shown (each instrument about
+    its median, the ranges of the page) over the quick FIP
+
+    :return: bytes, the PDF
+    """
+    import io
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from koloa import plotting as kplot
+    data, source, _ = selection(opts)
+    if data is None:
+        raise ValueError('no velocities to draw')
+    kplot.set_style('paper')
+    quick = (QUICKS.get(qid) or {}).get('result')
+    fig, axes = plt.subplots(2 if quick else 1, 1,
+                             figsize=(10, 7.5 if quick else 4.2),
+                             squeeze=False)
+    ax = axes[0, 0]
+    for it, inst in enumerate(data.instruments):
+        sel = data.inst == inst
+        ax.errorbar(data.time[sel], data.rv[sel] - np.median(data.rv[sel]),
+                    data.err[sel], fmt=kplot.INST_MARKERS[it % 8], ms=3.5,
+                    lw=0.6, color=kplot.INST_COLOURS[it % 8],
+                    label=f'{inst} ({source.get(inst, "")}, {int(sel.sum())})')
+    ax.axhline(0, color='0.6', lw=0.6, ls=':')
+    if xr:
+        ax.set_xlim(*xr)
+    if yr:
+        ax.set_ylim(*yr)
+    ax.set_xlabel('BJD - 2400000')
+    ax.set_ylabel('RV - median [m s$^{-1}$]')
+    ax.legend(fontsize=7, ncol=3, frameon=False, loc='upper left')
+    title = (opts.get('target') or '').strip() or 'the series'
+    ax.set_title(f'{title}: the velocities shown', fontsize=10)
+    if quick:
+        ax = axes[1, 0]
+        per = np.asarray(quick['period'])
+        ax.plot(per, quick['alone'], color='0.6', lw=0.8,
+                label='the period alone')
+        ax.plot(per, quick['family'], color=kplot.C['koloa'], lw=1.0,
+                label='the period or any of its aliases')
+        ax.axhline(2, color='0.3', lw=0.8, ls=':', label='FIP = 1 %')
+        lo, hi = pr if pr else (per.min(), per.max())
+        # the window and the known planets, those within the periods shown
+        for name, val in quick['window'].items():
+            if lo <= val <= hi:
+                ax.axvline(val, color='0.5', lw=0.8, ls=':')
+                ax.text(val, 0.02, f' {name}', fontsize=7, color='0.4',
+                        transform=ax.get_xaxis_transform(), va='bottom')
+        for pl in quick['known']:
+            if lo <= pl['P'] <= hi:
+                ax.axvline(pl['P'], color=kplot.C['outlier'], lw=0.9,
+                           ls='--')
+                ax.text(pl['P'], 0.80, f' {pl["name"]}', fontsize=7,
+                        transform=ax.get_xaxis_transform(), va='top',
+                        color=kplot.C['outlier'])
+        ax.set_xscale('log')
+        kplot.plain_log_ticks(ax, 'x')
+        ax.set_xlim(lo, hi)
+        ax.set_xlabel('period [d]')
+        ax.set_ylabel('-log$_{10}$ FIP')
+        ax.legend(fontsize=7, frameon=False, loc='upper right')
+        sett = quick['settings']
+        ax.set_title(f'quick FIP: {quick["n"]} nights, '
+                     f'{", ".join(quick["instruments"])}; no GP, '
+                     f'{sett["kmax"]} signals, {sett["nsweep"]} sweeps, '
+                     f'{quick["passes"]} pass(es)', fontsize=9)
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format='pdf')
+    plt.close(fig)
+    return buf.getvalue()
 
 
 # =============================================================================
@@ -538,6 +787,8 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == '/api/pick':
                 return self._json(pick(query.get('kind', 'file'),
                                        query.get('start', '')))
+            if url.path == '/api/quickfip':
+                return self._json(quick_state(query['id']))
             if url.path == '/api/archives':
                 state = archives(query.get('target', ''),
                                  query.get('root', ''))
@@ -599,6 +850,20 @@ class Handler(BaseHTTPRequestHandler):
                 job = Job(body['action'], args, outputs)
                 JOBS[job.id] = job
                 return self._json(job.state())
+            if path == '/api/quickfip':
+                return self._json(quick_fip(body.get('options', {})))
+            if path == '/api/quicklook_pdf':
+                pdf = quicklook_pdf(body.get('options', {}), body.get('x'),
+                                    body.get('y'), body.get('p'),
+                                    body.get('quick', ''))
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/pdf')
+                self.send_header('Content-Length', str(len(pdf)))
+                self.send_header('Content-Disposition',
+                                 'attachment; filename="koloa_quicklook.pdf"')
+                self.end_headers()
+                self.wfile.write(pdf)
+                return None
             if path == '/api/stop':
                 job = JOBS[body['id']]
                 if job.returncode is None:

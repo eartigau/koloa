@@ -990,6 +990,9 @@ class _Chain:
                     slot_records=np.array(self.slot_records).reshape(-1, 3))
 
 
+#: a function told the progress of every FIP (label, done, total, seconds),
+#: when a program runs FIPs in its own process (koloa's GUI)
+PROGRESS_HOOK = None
 #: the sweeps done by each chain of the FIP that runs, shared with the
 #: processes of the chains (set by _share_counter in each of them)
 _COUNTER = None
@@ -1028,6 +1031,8 @@ class _Progress:
     def update(self, done: int):
         done = min(int(done), self.total)
         now = _time.time()
+        if PROGRESS_HOOK is not None:
+            PROGRESS_HOOK(self.label, done, self.total, now - self.start)
         if self.gui and (now - self.last >= 2.0 or done >= self.total):
             self.last = now
             log(f'progress: {self.label} | {done} | {self.total} | '

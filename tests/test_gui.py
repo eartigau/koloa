@@ -164,3 +164,29 @@ def test_a_star_asked_again_is_read_from_the_disk(tmp_path, monkeypatch):
         'GJ 436 (gathered)')
     gui.resolve_star('GJ 436', str(tmp_path / 'arch'), refresh=True)
     assert calls == ['GJ 436', 'GJ 436']
+
+
+def test_the_quick_look(tmp_path, monkeypatch):
+    """the quick FIP of what the page shows (a planet in a file), its two
+    passes when a signal is found, its curves; the PDF of the page"""
+    import time
+    from koloa.simulate import simulate
+    from koloa.gather import write_rv
+    sim = simulate(planets=[dict(P=5.3, K=8.0, e=0.0)], err=1.5, seed=3,
+                   nvisits=50, per_visit=1, baseline=300)['data']
+    write_rv(sim, str(tmp_path / 'star.csv'))
+    monkeypatch.setattr(gui, 'QUICK', dict(kmax=1, nsweep=150, nburn=80))
+    opts = dict(files=[dict(path=str(tmp_path / 'star.csv'))])
+    state = gui.quick_fip(opts)
+    for _ in range(300):
+        state = gui.quick_state(state['id'])
+        if state['status'] != 'running':
+            break
+        time.sleep(0.5)
+    assert state['status'] == 'done', state['error']
+    res = state['result']
+    assert len(res['period']) == len(res['family']) == len(res['alone'])
+    assert abs(res['peaks'][0]['period'] / 5.3 - 1) < 0.01
+    assert res['passes'] == 2 and res['window']['year'] == 365.25
+    pdf = gui.quicklook_pdf(opts, qid=state['id'])
+    assert pdf[:4] == b'%PDF'

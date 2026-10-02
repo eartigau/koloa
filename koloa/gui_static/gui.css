@@ -154,3 +154,11 @@ h2 .hint { font-weight: 400; font-size: 0.85rem; }
   background: var(--accent); border: 2px solid #08111f; cursor: grab; }
 .rangebar { gap: 14px; }
 #rangetext { font-family: "IBM Plex Mono", monospace; }
+
+/* the quick FIP */
+#fipplot.plot.on { height: min(52vh, 480px); }
+#fipcard .steps-bar { display: grid; grid-template-columns: 1fr; gap: 4px; max-width: 760px; }
+#fipcard .pbar { height: 6px; background: rgba(200, 220, 255, 0.12); border-radius: 999px; overflow: hidden; }
+#fipcard .pbar span { display: block; height: 100%; background: var(--accent); transition: width 1s linear; }
+#fipcard .ptext { font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; }
+#pdual { margin-top: 2px; }

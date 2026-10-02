@@ -215,6 +215,7 @@ async function plotVelocities() {
       });
     }
     styleExcluded();
+    startQuick();
   } catch (err) {
     note.innerHTML = `<span class="bad">${esc(err.message)}</span>`;
   }
@@ -351,6 +352,7 @@ function setExcluded(name, off) {
   $('exclude').value = kept.join(' ');
   updateCommands();
   styleExcluded();
+  checkStale();
 }
 
 function styleExcluded() {
@@ -365,6 +367,139 @@ function styleExcluded() {
     row.querySelector('input').checked = !off[i];
   });
   refitY();
+}
+
+// -----------------------------------------------------------------------------
+// the quick look: a FIP of what is shown, made when it is plotted
+// -----------------------------------------------------------------------------
+let quick = null;   // the quick FIP: its id, state, result, and what it was of
+let pview = null;   // the periods shown, and their domain
+
+function shownOptions() {
+  const asked = readOptions('detailed');
+  return { files: filesNow(), target: $('target').value.trim(), root: $('root').value.trim(),
+    dace: !!asked.dace, carmenes: !!asked.carmenes, exclude: $('exclude').value };
+}
+
+async function startQuick() {
+  $('fipcard').classList.add('on');
+  $('fipstale').textContent = '';
+  $('fipstatus').innerHTML = `<p class="hint"><span class="spin"></span> ${esc(t('quick_noise'))}</p>`;
+  try {
+    const opts = shownOptions();
+    quick = { ...(await api('/api/quickfip', { options: opts })), of: JSON.stringify(opts) };
+    pollQuick(quick.id);
+  } catch (err) {
+    $('fipstatus').innerHTML = `<p class="hint bad">${esc(err.message)}</p>`;
+  }
+}
+
+async function pollQuick(id) {
+  if (!quick || quick.id !== id) return;   // a newer one took its place
+  let state;
+  try { state = await api(`/api/quickfip?id=${id}`); } catch (err) { return; }
+  if (!quick || quick.id !== id) return;
+  Object.assign(quick, state);
+  if (state.status === 'running') {
+    const step = { waiting: 'waiting', noise: 'quick_noise', fip1: 'quick_fip1', planets: 'quick_planets', fip2: 'quick_fip2' }[state.step] || 'quick_noise';
+    let bar = '';
+    if (state.progress && ['fip1', 'fip2'].includes(state.step)) {
+      const p = state.progress;
+      const frac = Math.min(1, p.done / Math.max(p.total, 1));
+      const left = frac > 0.02 ? ` \u00b7 ~${clock(p.seconds * (1 - frac) / frac)} ${t('left_fip')}` : '';
+      bar = `<span class="pbar"><span style="width:${Math.round(100 * frac)}%"></span></span><span class="ptext">${Math.round(100 * frac)} %${left}</span>`;
+    }
+    $('fipstatus').innerHTML = `<p class="hint"><span class="hourglass">\u23f3</span> ${esc(t(step))} \u00b7 ${clock(state.elapsed)}</p><div class="steps-bar">${bar}</div>`;
+    setTimeout(() => pollQuick(id), 1000);
+  } else if (state.status === 'done') {
+    drawFip(state.result, state.elapsed);
+  } else {
+    $('fipstatus').innerHTML = `<p class="hint bad">${esc(state.error || 'failed')}</p>`;
+  }
+}
+
+function drawFip(r, elapsed) {
+  const insts = Object.entries(r.instruments).map(([k, v]) => `${k} ${v}`).join(', ');
+  const best = r.peaks[0];
+  $('fipstatus').innerHTML = `<p class="hint">${r.n} ${esc(t('nights'))} (${esc(insts)}); ${esc(t('no_gp'))}, ${r.settings.kmax} ${esc(t('signals_word'))}, `
+    + `${r.settings.nsweep} ${esc(t('sweeps_word'))}, ${r.passes} ${esc(t('passes'))} \u00b7 ${clock(elapsed)}`
+    + (best ? ` \u00b7 ${esc(t('strongest'))}: <b>${best.period.toFixed(4)} d</b>, FIP ${best.family.toExponential(1)}` : '') + '</p>';
+  const div = $('fipplot');
+  div.classList.add('on');
+  const axis = { gridcolor: 'rgba(200,220,255,0.10)', zerolinecolor: 'rgba(200,220,255,0.25)', color: '#7a8597' };
+  const lines = [], notes = [];
+  for (const [name, per] of Object.entries(r.window)) {
+    lines.push({ type: 'line', xref: 'x', yref: 'paper', x0: per, x1: per, y0: 0, y1: 1, line: { color: '#7a8597', width: 1, dash: 'dot' } });
+    notes.push({ x: Math.log10(per), y: 1, xref: 'x', yref: 'paper', text: name, showarrow: false, yanchor: 'bottom', font: { size: 10, color: '#7a8597' } });
+  }
+  for (const pl of r.known) {
+    lines.push({ type: 'line', xref: 'x', yref: 'paper', x0: pl.P, x1: pl.P, y0: 0, y1: 1, line: { color: '#e66767', width: 1.2, dash: 'dash' } });
+    notes.push({ x: Math.log10(pl.P), y: 0.92, xref: 'x', yref: 'paper', text: pl.name, showarrow: false, xanchor: 'left', font: { size: 10, color: '#e66767' } });
+  }
+  lines.push({ type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: 2, y1: 2, line: { color: '#a8b4ca', width: 1, dash: 'dot' } });
+  Plotly.newPlot(div, [
+    { x: r.period, y: r.alone, name: t('alone'), type: 'scatter', mode: 'lines', line: { color: '#8a93a3', width: 1 },
+      hovertemplate: '%{x:.4f} d<br>-log10 FIP %{y:.2f}<extra></extra>' },
+    { x: r.period, y: r.family, name: t('family'), type: 'scatter', mode: 'lines', line: { color: '#3987e5', width: 1.4 },
+      hovertemplate: '%{x:.4f} d<br>-log10 FIP %{y:.2f}<extra></extra>' },
+  ], {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(4,8,16,0.35)', font: { family: 'Space Grotesk, sans-serif', color: '#e8eef8' },
+    margin: { ...PLOT_MARGIN, t: 40 }, legend: { orientation: 'h', x: 0, y: 1.08, yanchor: 'bottom' }, shapes: lines, annotations: notes,
+    xaxis: { ...axis, type: 'log', title: t('period_axis') }, yaxis: { ...axis, title: t('fip_axis'), rangemode: 'tozero' },
+  }, { responsive: true, displaylogo: false }).then(() => {
+    div.removeAllListeners && div.removeAllListeners('plotly_relayout');
+    div.on('plotly_relayout', (ev) => {
+      if (!pview) return;
+      if (ev['xaxis.range[0]'] !== undefined) pview.p = [10 ** ev['xaxis.range[0]'], 10 ** ev['xaxis.range[1]']];
+      if (ev['xaxis.autorange']) pview.p = pview.dom.slice();
+      syncPeriods();
+    });
+  });
+  const per = r.period;
+  pview = { dom: [per[0], per[per.length - 1]], p: [per[0], per[per.length - 1]] };
+  syncPeriods();
+}
+
+// the period slider, on a log scale
+const pSlider = (p) => Math.round(STEPS * Math.min(1, Math.max(0, Math.log(p / pview.dom[0]) / Math.log(pview.dom[1] / pview.dom[0]))));
+const pFromSlider = (k) => pview.dom[0] * (pview.dom[1] / pview.dom[0]) ** (k / STEPS);
+function syncPeriods() {
+  if (!pview) return;
+  $('plo').value = pSlider(pview.p[0]); $('phi').value = pSlider(pview.p[1]);
+  const lo = +$('plo').value / STEPS, hi = +$('phi').value / STEPS;
+  $('psel').style.left = `${100 * lo}%`; $('psel').style.width = `${100 * (hi - lo)}%`;
+  $('pdual').style.marginLeft = `${PLOT_MARGIN.l}px`; $('pdual').style.marginRight = `${PLOT_MARGIN.r}px`;
+}
+function periodsFromSliders() {
+  if (!pview) return;
+  let lo = +$('plo').value, hi = +$('phi').value;
+  if (hi - lo < 5) { if (document.activeElement && document.activeElement.id === 'plo') lo = hi - 5; else hi = lo + 5; }
+  pview.p = [pFromSlider(lo), pFromSlider(hi)];
+  Plotly.relayout('fipplot', { 'xaxis.range': [Math.log10(pview.p[0]), Math.log10(pview.p[1])] });
+  syncPeriods();
+}
+
+// what is shown changed since the FIP was made
+function checkStale() {
+  if (quick && quick.status === 'done' && quick.of !== JSON.stringify(shownOptions())) $('fipstale').textContent = t('stale');
+  else $('fipstale').textContent = '';
+}
+
+async function quicklookPdf() {
+  const opts = shownOptions();
+  try {
+    const resp = await fetch('/api/quicklook_pdf', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ options: opts, x: view ? view.x : null, y: view ? view.y : null, p: pview ? pview.p : null,
+        quick: quick && quick.status === 'done' ? quick.id : '' }) });
+    if (!resp.ok) throw new Error((await resp.json()).error || resp.statusText);
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(await resp.blob());
+    link.download = `koloa_quicklook_${folderName(opts.target || 'star') || 'star'}.pdf`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 // a new target: every field back to the page's own default, no file, no
@@ -385,7 +520,11 @@ function newTarget() {
   if (window.Plotly) Plotly.purge($('rvplot'));
   $('rvplot').classList.remove('on');
   $('plotcard').classList.remove('on');
+  $('fipcard').classList.remove('on');
+  if (window.Plotly) Plotly.purge($('fipplot'));
   view = null;
+  quick = null;
+  pview = null;
   lastRV = null;
   onDisk = null;
   history.replaceState(null, '', location.pathname);
@@ -427,6 +566,10 @@ for (const ax of ['x', 'y']) {
   for (const end of ['lo', 'hi']) $(`${ax}${end}`).addEventListener('input', () => fromSliders(ax));
 }
 $('clip').addEventListener('change', refitY);
+$('plo').addEventListener('input', periodsFromSliders);
+$('phi').addEventListener('input', periodsFromSliders);
+$('refip').addEventListener('click', startQuick);
+$('pdf').addEventListener('click', quicklookPdf);
 $('fullrange').addEventListener('click', () => { $('clip').checked = false; view = null; refitY(); });
 window.addEventListener('resize', () => { if (view) setTimeout(syncSliders, 100); });
 $('run-gather').addEventListener('click', () => run('gather', options('gather')));

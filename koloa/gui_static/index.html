@@ -71,9 +71,20 @@
         <span class="check"><label><input type="checkbox" id="clip"> <span data-i18n="clip">twice the 3 to 97 percentile range</span></label><button type="button" class="info" data-help="clip" aria-label="?">i</button></span>
         <button type="button" id="fullrange" class="small" data-i18n="full_range">Full range</button>
         <span class="check"><span class="hint" data-i18n="sliders">the sliders</span><button type="button" class="info" data-help="sliders" aria-label="?">i</button></span>
+        <span class="check"><button type="button" id="pdf" class="small">PDF</button><button type="button" class="info" data-help="pdf" aria-label="?">i</button></span>
         <span class="hint" id="rangetext"></span>
       </div>
       <div id="rvtable"></div>
+    </section>
+
+    <!-- the quick look: a FIP of what is shown, before the report -->
+    <section class="card bleed" id="fipcard">
+      <h2><span data-i18n="quick_title">Quick FIP</span> <button type="button" class="info" data-help="quickfip" aria-label="?">i</button></h2>
+      <div id="fipstatus"></div>
+      <div id="fipplot" class="plot"></div>
+      <div class="dual" id="pdual"><div class="track"></div><div class="sel" id="psel"></div>
+        <input type="range" id="plo" min="0" max="1000" value="0" aria-label="period min"><input type="range" id="phi" min="0" max="1000" value="1000" aria-label="period max"></div>
+      <div class="row"><button type="button" id="refip" class="small" data-i18n="refip">Recompute the FIP</button><span class="hint" id="fipstale"></span></div>
     </section>
 
     <!-- gather -->
