@@ -464,10 +464,12 @@ def velocities(files: Any = '', target: str = '', root: str = ''
     out = []
     for name in data.instruments:
         sel = data.inst == name
+        # each instrument about its own median, whatever came before
+        rv = data.rv[sel] - np.median(data.rv[sel])
         out.append(dict(name=name, n=int(sel.sum()),
                         source=source.get(name, ''),
                         time=np.round(data.time[sel], 6).tolist(),
-                        rv=np.round(data.rv[sel], 3).tolist(),
+                        rv=np.round(rv, 3).tolist(),
                         err=np.round(data.err[sel], 3).tolist(),
                         rms=float(np.std(data.rv[sel]))))
     return dict(instruments=out, notes=notes, n=int(data.n),

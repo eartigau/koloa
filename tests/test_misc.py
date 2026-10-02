@@ -272,3 +272,25 @@ def test_duck_test_leaves_a_failed_visit_out_of_the_coherence():
     coh = report.details['coherence']['halves']
     assert all(abs(chunk['K'] - 6.0) < 3.0 for chunk in coh['chunks'])
     assert report.details['jackknife_data'].n == data.n - int(np.sum(bad))
+
+
+def test_a_merge_keeps_each_instrument_on_its_own_zero_point():
+    """a part cut out of a larger series still holds the zero points of
+    instruments it no longer has; merged with a series that has one of
+    them, it must not shift it (NIRPS of a file against DACE's NIRPS)"""
+    import numpy as np
+    from koloa.data import RVData, merge
+    rng = np.random.default_rng(1)
+    archive = RVData(np.arange(20.0), np.r_[np.full(10, -28468.0),
+                                            np.full(10, -2.0)]
+                     + rng.normal(0, 1, 20), np.ones(20),
+                     inst=np.array(['NIRPS'] * 10 + ['CARMENES'] * 10))
+    carm = archive.select(archive.inst == 'CARMENES')
+    assert set(carm.zero_point) == {'CARMENES'}
+    # an older cut that still holds the other's zero point
+    carm.zero_point['NIRPS'] = -28468.0
+    lbl = RVData(np.arange(30.0, 40.0), -28203.0 + rng.normal(0, 1, 10),
+                 np.ones(10), inst=np.full(10, 'NIRPS'))
+    both = merge([lbl, carm])
+    for inst in both.instruments:
+        assert abs(np.median(both.rv[both.inst == inst])) < 2.0

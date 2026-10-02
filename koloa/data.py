@@ -300,9 +300,13 @@ def merge(series: Sequence['RVData'], name: Optional[str] = None
     _, first = np.unique(seq[order], return_index=True)
     rank = np.empty(offset, dtype=int)
     rank[np.unique(seq[order])[np.argsort(first)]] = np.arange(len(first))
+    # each part's zero points, of its own instruments only: a part cut out
+    #   of a larger series (select) may still hold another's under the
+    #   same name, which would shift that instrument here
     zero = {}
     for part in parts:
-        zero.update(part.zero_point)
+        zero.update({str(inst): part.zero_point[str(inst)]
+                     for inst in part.instruments})
     return RVData(time[order], rv[order], err[order],
                   inst=inst[order].astype(str), seq=rank[seq[order]],
                   indicators={key: (val[0][order], val[1][order])
@@ -430,8 +434,11 @@ class RVData:
             mask = np.where(mask)[0]
         indicators = {key: (val[0][mask], val[1][mask])
                       for key, val in self.indicators.items()}
-        # the zero point is already out of the velocities: keep it as is
-        zero = dict(self.zero_point)
+        # the zero point is already out of the velocities: keep it as is,
+        #   for the instruments kept only
+        kept = set(np.asarray(self.inst)[mask].astype(str))
+        zero = {key: val for key, val in self.zero_point.items()
+                if key in kept}
         out = RVData.__new__(RVData)
         out.time, out.rv = self.time[mask].copy(), self.rv[mask].copy()
         out.err, out.inst = self.err[mask].copy(), self.inst[mask].copy()
