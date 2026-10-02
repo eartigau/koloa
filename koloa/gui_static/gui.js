@@ -123,7 +123,10 @@ async function resolveStar(refresh) {
     const id = await api(`/api/resolve?${new URLSearchParams({ name, root: $('root').value.trim(), refresh: refresh === true ? '1' : '' })}`);
     const pos = id.ra != null ? `${id.ra.toFixed(5)}, ${id.dec.toFixed(5)}` : '-';
     const others = [id.gj, id.hd, id.hip].filter(Boolean).map(esc).join(', ') || '-';
-    const chip = (per, text) => `<button type="button" class="chip" data-prot="${esc(per)}">${text}</button>`;
+    // each period of the literature: a tick that makes it the SHO's
+    const now = $('rotation').value.trim();
+    const chip = (per, text) => `<label class="prot"><input type="radio" name="prot" value="${esc(per)}"${now && +now === +per ? ' checked' : ''}> `
+      + `${text} <span class="hint">${esc(t('use_sho'))}</span></label>`;
     const rot = (id.variability || []).map((v) => chip(v.period, `${esc(v.type)} ${v.period} d <span class="hint">(${esc(v.bibcode || '')})</span>`));
     if (id.carmenes && id.carmenes.p_rot) rot.push(chip(id.carmenes.p_rot, `ROT ${esc(id.carmenes.p_rot)} d <span class="hint">(CARMENES, ${esc(id.carmenes.p_rot_source || '')})</span>`));
     if (id.archive_rotation) rot.push(chip(id.archive_rotation, `ROT ${esc(id.archive_rotation)} d <span class="hint">(NASA Exoplanet Archive)</span>`));
@@ -142,7 +145,7 @@ async function resolveStar(refresh) {
     const toiTile = tois ? tois + `<span class="hint">${esc(t('toi_pick'))}</span>`
       : `<span class="hint">${esc(id.tois_error || t('toi_none'))}</span>`;
     const where = id.disk ? `${t('from_disk')} (${id.disk}, ${id.disk_date})` : t('asked_now');
-    if (rot.length) rot.push(`<span class="hint">${esc(t('pick'))}</span>`);
+    if (rot.length) rot.push(`<label class="prot"><input type="radio" name="prot" value=""${now ? '' : ' checked'}> ${esc(t('no_sho'))}</label>`);
     const carm = id.carmenes ? `${esc(id.carmenes.carmenes_id)}, ${esc(id.carmenes.nobs)} ${esc(t('points'))}` : esc(t('not_in'));
     box.innerHTML = '<div class="stats-grid">'
       + tile(t('main'), esc(id.main)) + tile(t('tic'), esc((id.tic || '-').replace('TIC ', '')))
@@ -179,17 +182,22 @@ async function plotVelocities() {
       marker: { color: COLOURS[i % 8], symbol: SYMBOLS[i % 8], size: 7, line: { color: '#08111f', width: 1 } },
       hovertemplate: `${inst.name}<br>rjd %{x:.4f}<br>%{y:.2f} m/s<extra></extra>`,
     }));
+    $('plotcard').classList.add('on');
     div.classList.add('on');
     const axis = { gridcolor: 'rgba(200,220,255,0.10)', zerolinecolor: 'rgba(200,220,255,0.25)', color: '#7a8597' };
+    lastRV = res.instruments;
     if (window.Plotly) {
-      Plotly.newPlot(div, traces, {
+      await Plotly.newPlot(div, traces, {
         paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(4,8,16,0.35)',
         font: { family: 'Space Grotesk, sans-serif', color: '#e8eef8' },
-        margin: { l: 60, r: 10, t: 10, b: 50 }, legend: { orientation: 'h', y: -0.2 }, showlegend: traces.length > 1,
+        margin: PLOT_MARGIN, showlegend: traces.length > 1,
+        legend: { orientation: 'h', x: 0, y: 1.0, yanchor: 'bottom' },
         xaxis: { ...axis, title: 'BJD - 2400000', tickformat: '.0f', exponentformat: 'none' }, yaxis: { ...axis, title: 'RV - median [m/s]' },
       }, { responsive: true, displaylogo: false });
+      div.removeAllListeners && div.removeAllListeners('plotly_relayout');
+      div.on('plotly_relayout', fromZoom);
     }
-    lastRV = res.instruments;
+    view = null;
     $('rvtable').innerHTML = `<table class="mini"><tr><th>${esc(t('use'))}</th><th>${esc(t('inst'))}</th><th>${esc(t('source'))}</th><th>${esc(t('n'))}</th><th>${esc(t('rms'))}</th></tr>`
       + res.instruments.map((inst, i) => `<tr data-row="${esc(inst.name)}"><td><input type="checkbox" data-inst="${esc(inst.name)}" checked></td>`
         + `<td><span class="swatch" style="background:${COLOURS[i % 8]}"></span>${esc(inst.name)}</td>`
@@ -207,6 +215,124 @@ async function plotVelocities() {
   } catch (err) {
     note.innerHTML = `<span class="bad">${esc(err.message)}</span>`;
   }
+}
+
+// -----------------------------------------------------------------------------
+// the ranges of the plot: the sliders along its axes (the y one in asinh,
+//   fine around the bulk of the points, coarse toward the outliers), twice
+//   the 3 to 97 percentile range, and the instruments kept
+// -----------------------------------------------------------------------------
+const PLOT_MARGIN = { l: 62, r: 12, t: 34, b: 48 };
+const STEPS = 1000;
+let view = null;   // x and y shown, their domains, the scale of the y slider
+
+function kept() {
+  const ex = excludedSet();
+  return (lastRV || []).filter((inst) => !ex.has(inst.name.toUpperCase()));
+}
+
+function percentile(sorted, q) {
+  const pos = (sorted.length - 1) * q / 100;
+  const lo = Math.floor(pos), hi = Math.ceil(pos);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+
+// the domains of the sliders: every time, and the velocities kept
+function domains() {
+  const all = lastRV || [];
+  const times = all.flatMap((inst) => inst.time);
+  const vals = kept().flatMap((inst) => inst.rv).sort((a, b) => a - b);
+  if (!times.length || !vals.length) return null;
+  const tpad = 0.02 * ((Math.max(...times) - Math.min(...times)) || 1);
+  const ypad = 0.05 * ((vals[vals.length - 1] - vals[0]) || 1);
+  const med = percentile(vals, 50);
+  const mad = percentile(vals.map((v) => Math.abs(v - med)).sort((a, b) => a - b), 50);
+  // twice the 3-97 percentile range, about its middle
+  const p3 = percentile(vals, 3), p97 = percentile(vals, 97);
+  const mid = (p3 + p97) / 2, half = Math.max(p97 - p3, 1e-3);
+  return {
+    xdom: [Math.min(...times) - tpad, Math.max(...times) + tpad],
+    ydom: [vals[0] - ypad, vals[vals.length - 1] + ypad],
+    clip: [mid - half, mid + half],
+    scale: Math.max(1.4826 * mad, 0.1),
+  };
+}
+
+// a velocity to and from the y slider (asinh around the median scale)
+const yToU = (y) => Math.asinh(y / view.scale);
+const uToY = (u) => view.scale * Math.sinh(u);
+function ySlider(y) {
+  const [a, b] = view.ydom.map(yToU);
+  return Math.round(STEPS * Math.min(1, Math.max(0, (yToU(y) - a) / (b - a))));
+}
+function yFromSlider(k) {
+  const [a, b] = view.ydom.map(yToU);
+  return uToY(a + (b - a) * k / STEPS);
+}
+const xSlider = (x) => Math.round(STEPS * Math.min(1, Math.max(0, (x - view.xdom[0]) / (view.xdom[1] - view.xdom[0]))));
+const xFromSlider = (k) => view.xdom[0] + (view.xdom[1] - view.xdom[0]) * k / STEPS;
+
+// the y range of the velocities kept: twice the 3-97 percentile range, or all
+function refitY() {
+  const dom = domains();
+  if (!dom) return;
+  view = { ...(view || {}), ...dom, x: view && view.x ? view.x : dom.xdom.slice() };
+  view.y = $('clip').checked ? dom.clip.slice() : dom.ydom.slice();
+  applyView();
+}
+
+function applyView() {
+  if (!view || !window.Plotly || !$('rvplot').data) return;
+  Plotly.relayout('rvplot', { 'xaxis.range': view.x.slice(), 'yaxis.range': view.y.slice() });
+  syncSliders();
+}
+
+function syncSliders() {
+  if (!view) return;
+  const set = (id, val) => { $(id).value = val; };
+  set('xlo', xSlider(view.x[0])); set('xhi', xSlider(view.x[1]));
+  set('ylo', ySlider(view.y[0])); set('yhi', ySlider(view.y[1]));
+  for (const ax of ['x', 'y']) {
+    const lo = +$(`${ax}lo`).value / STEPS, hi = +$(`${ax}hi`).value / STEPS;
+    $(`${ax}sel`).style.left = `${100 * lo}%`;
+    $(`${ax}sel`).style.width = `${100 * (hi - lo)}%`;
+  }
+  $('rangetext').textContent = `x ${view.x[0].toFixed(0)} – ${view.x[1].toFixed(0)} · y ${view.y[0].toFixed(1)} – ${view.y[1].toFixed(1)} m/s`;
+  sizeYSlider();
+}
+
+// the y slider as tall as the plotting area
+function sizeYSlider() {
+  const div = $('rvplot');
+  const h = Math.max(60, div.clientHeight - PLOT_MARGIN.t - PLOT_MARGIN.b);
+  const box = $('yslider');
+  box.style.paddingTop = `${PLOT_MARGIN.t}px`;
+  box.style.height = `${h}px`;
+  $('ydual').style.width = `${h}px`;
+  $('ydual').style.transform = `translateY(${h}px) rotate(-90deg)`;
+  $('xdual').style.marginLeft = `${PLOT_MARGIN.l}px`;
+  $('xdual').style.marginRight = `${PLOT_MARGIN.r}px`;
+}
+
+function fromSliders(ax) {
+  if (!view) return;
+  let lo = +$(`${ax}lo`).value, hi = +$(`${ax}hi`).value;
+  if (hi - lo < 5) {
+    if (document.activeElement && document.activeElement.id === `${ax}lo`) lo = hi - 5; else hi = lo + 5;
+  }
+  view[ax] = ax === 'x' ? [xFromSlider(lo), xFromSlider(hi)] : [yFromSlider(lo), yFromSlider(hi)];
+  if (ax === 'y') $('clip').checked = false;
+  applyView();
+}
+
+// a zoom with the mouse moves the sliders too
+function fromZoom(ev) {
+  if (!view || !ev) return;
+  if (ev['xaxis.range[0]'] !== undefined) view.x = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
+  if (ev['yaxis.range[0]'] !== undefined) view.y = [ev['yaxis.range[0]'], ev['yaxis.range[1]']];
+  if (ev['xaxis.autorange']) view.x = view.xdom.slice();
+  if (ev['yaxis.autorange']) view.y = view.ydom.slice();
+  syncSliders();
 }
 
 // the instruments left out: the field of the report is what counts; the
@@ -235,6 +361,7 @@ function styleExcluded() {
     row.classList.toggle('off', off[i]);
     row.querySelector('input').checked = !off[i];
   });
+  refitY();
 }
 
 // a new target: every field back to the page's own default, no file, no
@@ -254,6 +381,8 @@ function newTarget() {
   $('rvtable').innerHTML = '';
   if (window.Plotly) Plotly.purge($('rvplot'));
   $('rvplot').classList.remove('on');
+  $('plotcard').classList.remove('on');
+  view = null;
   lastRV = null;
   onDisk = null;
   history.replaceState(null, '', location.pathname);
@@ -277,11 +406,23 @@ document.addEventListener('input', (e) => {
 });
 document.addEventListener('change', (e) => {
   if (e.target.dataset && e.target.dataset.inst) setExcluded(e.target.dataset.inst, !e.target.checked);
+  // a period of the literature ticked: the SHO at it; none: back to the bands
+  if (e.target.name === 'prot') {
+    $('rotation').value = e.target.value;
+    $('fipgp').value = e.target.value ? 'sho' : 'banded';
+    updateCommands();
+  }
 });
 document.addEventListener('change', updateCommands);
 $('resolve').addEventListener('click', resolveStar);
 $('target').addEventListener('keydown', (e) => { if (e.key === 'Enter') resolveStar(); });
 $('plot').addEventListener('click', plotVelocities);
+for (const ax of ['x', 'y']) {
+  for (const end of ['lo', 'hi']) $(`${ax}${end}`).addEventListener('input', () => fromSliders(ax));
+}
+$('clip').addEventListener('change', refitY);
+$('fullrange').addEventListener('click', () => { $('clip').checked = false; view = null; refitY(); });
+window.addEventListener('resize', () => { if (view) setTimeout(syncSliders, 100); });
 $('run-gather').addEventListener('click', () => run('gather', options('gather')));
 $('run-detailed').addEventListener('click', () => run('detailed', options('detailed')));
 $('run-archive').addEventListener('click', () => run('archive', options('archive')));
@@ -327,12 +468,6 @@ document.addEventListener('click', async (e) => {
     updateCommands();
   }
   if (e.target.id === 'refresh-star') resolveStar(true);
-  const prot = e.target.closest('[data-prot]');
-  if (prot) {
-    $('rotation').value = prot.dataset.prot;
-    $('fipgp').value = 'sho';
-    updateCommands();
-  }
 });
 
 (async () => {

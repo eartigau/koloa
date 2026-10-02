@@ -20,7 +20,6 @@
         <h2>koloa</h2>
         <p data-i18n="tagline">Outlier-aware radial velocities &middot; on this machine</p>
       </div>
-      <nav class="tabs"><a href="/" class="tab on" data-i18n="tab_single">Single target</a><a href="/batch" class="tab" data-i18n="tab_batch">Batch</a></nav>
       <button id="newtarget" class="home-link" type="button" data-i18n="new_target">New target</button>
       <button id="lang" class="home-link" type="button">FR</button>
       <a href="https://eartigau.github.io/koloa/" class="home-link" target="_blank" data-i18n="docs">Docs</a>
@@ -56,7 +55,24 @@
         <button id="plot" type="button" data-i18n="plot">Plot</button>
         <span id="rvnote" class="hint"></span>
       </div>
-      <div id="rvplot" class="plot"></div>
+    </section>
+
+    <!-- the plot of the velocities, as wide as the window -->
+    <section class="card bleed" id="plotcard">
+      <div class="plotgrid">
+        <div class="yslider" id="yslider"><div class="dual vert" id="ydual"><div class="track"></div><div class="sel" id="ysel"></div>
+          <input type="range" id="ylo" min="0" max="1000" value="0" aria-label="y min"><input type="range" id="yhi" min="0" max="1000" value="1000" aria-label="y max"></div></div>
+        <div id="rvplot" class="plot"></div>
+        <span></span>
+        <div class="dual" id="xdual"><div class="track"></div><div class="sel" id="xsel"></div>
+          <input type="range" id="xlo" min="0" max="1000" value="0" aria-label="x min"><input type="range" id="xhi" min="0" max="1000" value="1000" aria-label="x max"></div>
+      </div>
+      <div class="row rangebar">
+        <span class="check"><label><input type="checkbox" id="clip"> <span data-i18n="clip">twice the 3 to 97 percentile range</span></label><button type="button" class="info" data-help="clip" aria-label="?">i</button></span>
+        <button type="button" id="fullrange" class="small" data-i18n="full_range">Full range</button>
+        <span class="check"><span class="hint" data-i18n="sliders">the sliders</span><button type="button" class="info" data-help="sliders" aria-label="?">i</button></span>
+        <span class="hint" id="rangetext"></span>
+      </div>
       <div id="rvtable"></div>
     </section>
 

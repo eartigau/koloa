@@ -32,7 +32,6 @@ exactly. That is what makes the outlier-aware FIP affordable.
 | `koloa.outliers` | why an outlier is an outlier: `explain_outliers(fit)` compares every outlier (a whole visit, or a single exposure) with the good data on everything recorded with it, the header keywords of LBL files (smart lists for SPIRou and NIRPS: S/N, airmass, telluric absorption, the shape of the image, the Fabry-Perot, the age of the wavelength solution...), DACE's columns for HARPS and ESPRESSO, the activity indicators and the error bars; which keys are significantly off for each outlier, and which the outliers share |
 | `koloa.dace` | the public velocities of a star on DACE, every instrument, one instrument per era, with every column kept |
 | `koloa.gui` | koloa in the browser (`koloa --gui`): a SIMBAD resolver, the velocities by instrument, the gathering and the detailed report, each run shown as the command line it is |
-| `koloa.batch` | the bash script of a batch of detailed reports, and the summary of a batch (`koloa --batch-summary`) |
 | `koloa.gather` | everything public about a star from its SIMBAD name, kept in one folder: the velocities of DACE and of CARMENES DR1, the TESS light curves, the identifiers and periods of variability of SIMBAD, and a manifest of what each archive gave |
 | `koloa.archive` | the names of a star (CDS Sesame) and its planets in the NASA Exoplanet Archive, with every published solution; a fitted K against them, the most recent first |
 | `koloa.radvel_bridge` | `OutlierRVLikelihood`, a drop-in replacement for radvel's `RVLikelihood` |
@@ -150,18 +149,6 @@ batch), in a process of its own; its steps show as they go, with the time
 each took, its log, and the report when it is done. The page is served on
 127.0.0.1 only and runs nothing but koloa. Every field has an (i) that
 explains it in full: what it does, what to enter, its default.
-
-Its Batch tab makes many reports at once: a list of targets (a SIMBAD name
-and 0, 1 or more files each, typed, browsed or pasted as `NAME | file1
-file2`), the options for all of them, and a bash script that runs them, N
-at a time, each report in BATCH/<target>/, its log in BATCH/logs/, its PDF
-copied to BATCH/pdf/, then the summary of the batch
-(`koloa --batch-summary BATCH`: BATCH/batch_summary.pdf, .txt and .csv,
-each target's signals, FIPs, verdicts and acceleration, or why it failed).
-The script is written for this machine, or for a server: its files picked
-on it through ssh, its paths and its koloa, and sent there. The page never
-runs it: it shows the command that starts it (with nohup) and the one that
-follows it.
 
 From Python:
 

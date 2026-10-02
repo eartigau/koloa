@@ -10,16 +10,8 @@ const TEXT = {
     velocities_hint: 'A file of velocities (LBL .rdb, csv, DACE csv), the archives gathered for the star, or both. Untick an instrument (or click it in the legend) to leave it out of the report.',
     use: 'Used', exclude: 'Instruments left out', source: 'Source', src_file: 'input file',
     file: 'File (optional)', root: 'Archives folder', plot: 'Plot', browse: 'Browse...', picking: 'choosing...',
-    tab_single: 'Single target', tab_batch: 'Batch', batch_tagline: 'Many targets at once: a script for this machine or a server',
-    where: 'Where it runs', this_machine: 'this machine', a_server: 'a server (ssh)', host: 'Server', test: 'Test',
-    workdir: 'Working folder', koloa_cmd: 'How koloa is called there', batchdir: 'Batch folder', jobs: 'Targets at a time',
-    bashrc: 'load ~/.bashrc first', every_target: 'Options for every target',
-    every_target_hint: 'The options of the detailed report, the same for every target of the batch; each report goes to its own folder in the batch.',
-    targets: 'Targets', add_target: '+ Add a target', clear_targets: 'Clear the list', paste_title: 'Paste a list', add_lines: 'Add these lines',
-    the_script: 'The script', make_script: 'Make the script', download: 'Download', save_here: 'Save it in the working folder', send: 'Send it to the server',
-    to_start: 'To start it, and to follow it (koloa does not start it: you do):', saved: 'saved:', inst_head: 'instrument', choose_folder: 'Choose this folder', batch_run: 'Batch',
-    n_targets: 'targets', name_col: 'SIMBAD name', files_col: 'files (0, 1 or more)', add_file_short: '+ file',
-    sent: 'sent to', confirm_clear: 'Clear the whole list of targets?', testing: 'connecting...', need_host: 'Give the server first.',
+    clip: 'twice the 3 to 97 percentile range', full_range: 'Full range', sliders: 'the sliders',
+    use_sho: 'use for the SHO', no_sho: 'none (no SHO)',
     new_target: 'New target', known: 'Known planets (NASA Exoplanet Archive)', none_known: 'none in the archive',
     toi_title: 'TESS Objects of Interest', toi_pick: 'click a TOI to fit it with the ephemeris of TESS', toi_none: 'none',
     toi_on: 'TESS ephemerides (TOIs)', tois: 'TOIs (empty: all)', transit: 'transit',
@@ -61,16 +53,8 @@ const TEXT = {
     velocities_hint: 'Un fichier de vitesses (LBL .rdb, csv, csv de DACE), les archives récupérées pour l’étoile, ou les deux. Décochez un instrument (ou cliquez-le dans la légende) pour l’écarter du rapport.',
     use: 'Utilisé', exclude: 'Instruments écartés', source: 'Source', src_file: 'fichier d’entrée',
     file: 'Fichier (facultatif)', root: 'Dossier des archives', plot: 'Tracer', browse: 'Parcourir...', picking: 'choix en cours...',
-    tab_single: 'Une cible', tab_batch: 'Lot', batch_tagline: 'Plusieurs cibles d’un coup : un script pour cette machine ou un serveur',
-    where: 'Où ça tourne', this_machine: 'cette machine', a_server: 'un serveur (ssh)', host: 'Serveur', test: 'Tester',
-    workdir: 'Dossier de travail', koloa_cmd: 'Comment koloa y est appelé', batchdir: 'Dossier du lot', jobs: 'Cibles à la fois',
-    bashrc: 'charger ~/.bashrc d’abord', every_target: 'Options pour chaque cible',
-    every_target_hint: 'Les options du rapport détaillé, les mêmes pour chaque cible du lot ; chaque rapport va dans son propre dossier du lot.',
-    targets: 'Cibles', add_target: '+ Ajouter une cible', clear_targets: 'Vider la liste', paste_title: 'Coller une liste', add_lines: 'Ajouter ces lignes',
-    the_script: 'Le script', make_script: 'Faire le script', download: 'Télécharger', save_here: 'L’enregistrer dans le dossier de travail', send: 'L’envoyer au serveur',
-    to_start: 'Pour le lancer, et le suivre (koloa ne le lance pas : c’est vous) :', saved: 'enregistré :', inst_head: 'instrument', choose_folder: 'Choisir ce dossier', batch_run: 'Lot',
-    n_targets: 'cibles', name_col: 'nom SIMBAD', files_col: 'fichiers (0, 1 ou plus)', add_file_short: '+ fichier',
-    sent: 'envoyé à', confirm_clear: 'Vider toute la liste des cibles ?', testing: 'connexion...', need_host: 'Donnez d’abord le serveur.',
+    clip: 'deux fois l’écart des centiles 3 à 97', full_range: 'Tout voir', sliders: 'les curseurs',
+    use_sho: 'utiliser pour le SHO', no_sho: 'aucune (pas de SHO)',
     new_target: 'Nouvelle cible', known: 'Planètes connues (NASA Exoplanet Archive)', none_known: 'aucune dans l’archive',
     toi_title: 'TESS Objects of Interest', toi_pick: 'cliquez un TOI pour l’ajuster avec l’éphéméride de TESS', toi_none: 'aucun',
     toi_on: 'éphémérides TESS (TOI)', tois: 'TOI (vide : tous)', transit: 'transit',
@@ -184,7 +168,7 @@ function renderJobs() {
     const base = `/api/output?id=${job.id}&name=`;
     const files = (job.files || []).map((f) => `<a href="${base}${encodeURIComponent(f)}" target="_blank">${esc(f)}</a>`).join('');
     const report = job.report ? `<a href="${base}${encodeURIComponent(job.report)}" target="_blank"><button type="button">${esc(t('report'))}</button></a>` : '';
-    const what = { gather: t('gather'), archive: t('refresh_archive'), batch: t('batch_run') }[job.action] || t('detailed');
+    const what = { gather: t('gather'), archive: t('refresh_archive') }[job.action] || t('detailed');
     return `<div class="job" id="job-${job.id}">
       <div class="job-head"><span class="what">${esc(what)}</span>
         <span class="status ${job.status}">${esc(t(job.status))}</span>
@@ -293,8 +277,8 @@ const HELP = {
     fr: 'Le modèle de l’activité stellaire dans le FIP, ajusté avec les signaux (ses hyperparamètres échantillonnés avec les jitters, un GP par instrument). Par bande de période (par défaut) : des périodes les plus longues vers les plus courtes, un GP local qui ne peut pas atteindre la bande qu’il décide, rendu plus souple seulement si les données le demandent. SHO à la rotation : un SHO à une période de rotation fiable et un à sa moitié (le RotationTerm de celerite), sur toutes les périodes à la fois, sans bandes ; il demande la période de rotation ci-dessous. Aucun : pas de GP, l’activité laissée aux jitters et au duck test.',
   },
   rotation: {
-    en: 'A rotation period you trust [days], a published one: 2.704 for Wolf 359 for instance. It becomes the star’s rotation for every check (a signal at P_rot, P_rot/2 or 2 P_rot is flagged) and the prior of the GP check, and with SHO in the GP menu, the period of the GP inside the FIP (held). Click a period in the resolver to fill it in. Empty: the archive’s rotation, when it has one.',
-    fr: 'Une période de rotation fiable [jours], publiée : 2,704 pour Wolf 359 par exemple. Elle devient la rotation de l’étoile pour chaque vérification (un signal à P_rot, P_rot/2 ou 2 P_rot est signalé) et l’a priori du test GP, et avec SHO dans le menu GP, la période du GP dans le FIP (fixée). Cliquez une période dans le résolveur pour la remplir. Vide : la rotation de l’archive, si elle en a une.',
+    en: 'A rotation period you trust [days], a published one: 2.704 for Wolf 359 for instance. It becomes the star’s rotation for every check (a signal at P_rot, P_rot/2 or 2 P_rot is flagged) and the prior of the GP check, and with SHO in the GP menu, the period of the GP inside the FIP (held). Tick a period of the literature in the resolver (use for the SHO) to fill it in and choose the SHO. Empty: the archive’s rotation, when it has one.',
+    fr: 'Une période de rotation fiable [jours], publiée : 2,704 pour Wolf 359 par exemple. Elle devient la rotation de l’étoile pour chaque vérification (un signal à P_rot, P_rot/2 ou 2 P_rot est signalé) et l’a priori du test GP, et avec SHO dans le menu GP, la période du GP dans le FIP (fixée). Cochez une période de la littérature dans le résolveur (utiliser pour le SHO) pour la remplir et choisir le SHO. Vide : la rotation de l’archive, si elle en a une.',
   },
   toi_on: {
     en: 'Fit the TESS Objects of Interest of the star with the ephemerides of TESS: the period and the time of a transit, with their errors from the TOI list, as gaussian priors; K free and positive, the phase held by the transit. Each TOI is fitted whether the FIP finds it or not, before any period found near it, and its fold has phase 0 at the transit.',
@@ -356,45 +340,17 @@ const HELP = {
     en: 'Sample the orbits by MCMC (emcee) instead of the maximum a posteriori with Laplace errors: the errors of P, K, e and of the acceleration then come from the posterior itself, honest when it is not gaussian (a weak signal, a K near zero). Several minutes more per report.',
     fr: 'Échantillonner les orbites par MCMC (emcee) au lieu du maximum a posteriori avec les erreurs de Laplace : les erreurs de P, K, e et de l’accélération viennent alors de la loi a posteriori elle-même, justes quand elle n’est pas gaussienne (un signal faible, un K proche de zéro). Plusieurs minutes de plus par rapport.',
   },
+  clip: {
+    en: 'Show the velocity axis over twice the spread between the 3rd and the 97th percentiles of the velocities kept, about its middle: the bulk of the points fills the plot, and a few huge outliers no longer squash it. Points beyond are off the plot, not out of the analysis. Unticked: every point kept in view. Unticking an instrument recomputes it.',
+    fr: 'Montrer l’axe des vitesses sur deux fois l’écart entre les centiles 3 et 97 des vitesses gardées, autour de leur milieu : le gros des points remplit le graphique, et quelques énormes valeurs aberrantes ne l’écrasent plus. Les points au-delà sont hors du graphique, pas hors de l’analyse. Décochée : tous les points gardés sont visibles. Décocher un instrument la recalcule.',
+  },
+  sliders: {
+    en: 'The sliders along the axes cut the ranges shown: the one under the plot for the time, the one beside its left edge for the velocities (drag either end). The velocity slider is log-smart (asinh about the scatter of the points): it moves finely around the bulk and in big steps toward the outliers, so the 3 m/s scatter and a point at 1000 m/s both stay within reach. Zooming with the mouse moves them too; a double-click on the plot, or Full range, shows everything again.',
+    fr: 'Les curseurs le long des axes coupent les intervalles montrés : celui sous le graphique pour le temps, celui le long de son bord gauche pour les vitesses (tirez l’un ou l’autre bout). Le curseur des vitesses est logarithmique (asinh autour de la dispersion des points) : il bouge finement autour du gros des points et à grands pas vers les valeurs aberrantes, si bien que la dispersion de 3 m/s et un point à 1000 m/s restent tous deux à portée. Un zoom à la souris les déplace aussi ; un double-clic sur le graphique, ou Tout voir, montre tout à nouveau.',
+  },
   latex: {
     en: 'Write the report in LaTeX and compile it to PDF (pdflatex). Unticked: the text report, the summary (JSON) and every figure are written all the same.',
     fr: 'Écrire le rapport en LaTeX et le compiler en PDF (pdflatex). Décochée : le rapport texte, le résumé (JSON) et toutes les figures sont écrits quand même.',
-  },
-  mode: {
-    en: 'Where the script will run. The page writes the script and never runs it: you start it yourself, with the command it shows. This machine: the paths are local, and the script is downloaded or saved in the working folder. A server (ssh): the files are picked on the server through ssh, and the script is written for it, its paths and its koloa, then downloaded or sent there.',
-    fr: 'Où le script tournera. La page écrit le script et ne le lance jamais : vous le lancez vous-même, avec la commande qu’elle montre. Cette machine : les chemins sont locaux, et le script est téléchargé ou enregistré dans le dossier de travail. Un serveur (ssh) : les fichiers sont choisis sur le serveur par ssh, et le script est écrit pour lui, ses chemins et son koloa, puis téléchargé ou envoyé là-bas.',
-  },
-  host: {
-    en: 'The server, as ssh knows it: a name of your ~/.ssh/config (rali, for instance) or user@host. koloa uses your ssh keys and never asks for a password (ssh -o BatchMode=yes): if ssh asks you for one, set up a key first. Test checks the connection and koloa there.',
-    fr: 'Le serveur, tel que ssh le connaît : un nom de votre ~/.ssh/config (rali, par exemple) ou utilisateur@hôte. koloa utilise vos clés ssh et ne demande jamais de mot de passe (ssh -o BatchMode=yes) : si ssh vous en demande un, installez d’abord une clé. Tester vérifie la connexion et koloa là-bas.',
-  },
-  workdir: {
-    en: 'The folder of that machine where the script is saved and where it works when you start it: the batch folder is made inside it. An absolute path, /spirou2/batches for instance. Empty: the home folder of the server, or on this machine the folder koloa runs from.',
-    fr: 'Le dossier de cette machine où le script est enregistré et où il travaille quand vous le lancez : le dossier du lot y est créé. Un chemin absolu, /spirou2/batches par exemple. Vide : le dossier personnel du serveur, ou sur cette machine le dossier d’où koloa est lancé.',
-  },
-  koloa_cmd: {
-    en: 'How koloa is called on that machine: koloa when it is installed (pip install), or a Python and its module, /path/to/python -m koloa.cli, with PYTHONPATH=/path/to/koloa before it for a copy that is not installed. Empty: koloa. Test shows what answers there.',
-    fr: 'Comment koloa est appelé sur cette machine : koloa s’il est installé (pip install), ou un Python et son module, /chemin/python -m koloa.cli, précédé de PYTHONPATH=/chemin/koloa pour une copie non installée. Vide : koloa. Tester montre ce qui répond là-bas.',
-  },
-  batchdir: {
-    en: 'The name of the batch folder, made in the working folder: the report of each target (BATCH/<target>/), the logs (BATCH/logs/), a copy of every report PDF (BATCH/pdf/) and the summary of the batch (batch_summary.pdf, .txt, .csv). Empty: batch_ and today’s date.',
-    fr: 'Le nom du dossier du lot, créé dans le dossier de travail : le rapport de chaque cible (LOT/<cible>/), les journaux (LOT/logs/), une copie de chaque PDF de rapport (LOT/pdf/) et le résumé du lot (batch_summary.pdf, .txt, .csv). Vide : batch_ et la date du jour.',
-  },
-  jobs: {
-    en: 'How many targets run at a time. Each report runs the two chains of the FIP and, for the GP check, several processes: on a laptop keep 1; on a server with many cores, about a quarter of them is a fair start (10 on 40 cores). Default 1.',
-    fr: 'Combien de cibles tournent à la fois. Chaque rapport fait tourner les deux chaînes du FIP et, pour le test GP, plusieurs processus : sur un portable, gardez 1 ; sur un serveur à nombreux cœurs, environ le quart est un bon début (10 sur 40 cœurs). Par défaut 1.',
-  },
-  bashrc: {
-    en: 'Load the shell’s environment at the start of the script (source ~/.bashrc): a script run by bash does not read it otherwise, and your DACE key (DACE_API_KEY) and your conda paths may live there. Untick it if your .bashrc does something a script should not.',
-    fr: 'Charger l’environnement du shell au début du script (source ~/.bashrc) : un script lancé par bash ne le lit pas autrement, et votre clé DACE (DACE_API_KEY) et vos chemins conda peuvent s’y trouver. Décochez-la si votre .bashrc fait quelque chose qu’un script ne devrait pas faire.',
-  },
-  paste: {
-    en: 'Add many targets at once, one per line: the SIMBAD name, then a | and the files of that target separated by spaces, e.g. GJ 436 | /data/lbl_GJ436.rdb /data/lbl2_GJ436.rdb. A line without | is a name alone, its report from the archives only. A file may end with =NAME to give its instrument: /data/x.rdb=NIRPS_LBL2.',
-    fr: 'Ajouter plusieurs cibles d’un coup, une par ligne : le nom SIMBAD, puis un | et les fichiers de cette cible séparés par des espaces, p. ex. GJ 436 | /data/lbl_GJ436.rdb /data/lbl2_GJ436.rdb. Une ligne sans | est un nom seul, son rapport tiré des archives seules. Un fichier peut finir par =NOM pour donner son instrument : /data/x.rdb=NIRPS_LBL2.',
-  },
-  targets: {
-    en: 'Each line is a target: its SIMBAD name and 0, 1 or more files, each with its instrument (empty: read from the file). With no file, its report comes from the archives alone; with no name, the name is guessed from the first file. Every target takes the options above. The list is kept in this browser until you clear it.',
-    fr: 'Chaque ligne est une cible : son nom SIMBAD et 0, 1 ou plusieurs fichiers, chacun avec son instrument (vide : lu dans le fichier). Sans fichier, son rapport vient des archives seules ; sans nom, le nom est deviné à partir du premier fichier. Chaque cible prend les options ci-dessus. La liste est gardée dans ce navigateur jusqu’à ce que vous la vidiez.',
   },
 };
 
@@ -466,7 +422,7 @@ const OPTIONS = {
   ],
 };
 
-// the fields and the boxes, for the options of `forName` (detailed, batch)
+// the fields and the boxes, for the options of `forName` (detailed)
 function renderOptions(forName) {
   const field = (o) => {
     const id = o.id ? ` id="${o.id}"` : '';
@@ -494,47 +450,6 @@ function readOptions(forName) {
     opts[el.dataset.opt] = el.type === 'checkbox' ? el.checked : el.value;
   });
   return opts;
-}
-
-// -----------------------------------------------------------------------------
-// a file browser in the page: this machine or a server, through ssh
-// -----------------------------------------------------------------------------
-function browse({ host = '', start = '', kind = 'file' } = {}) {
-  return new Promise((resolve) => {
-    const shade = document.createElement('div');
-    shade.className = 'browser-shade';
-    shade.innerHTML = `<div class="browser" role="dialog">
-      <div class="browser-head"><b>${esc(host ? `${host}:` : t('this_machine'))}</b> <span class="bpath"></span>
-        <span class="spacer"></span>${kind === 'folder' ? `<button type="button" class="small bchoose">${esc(t('choose_folder'))}</button>` : ''}
-        <button type="button" class="small bclose">&times;</button></div>
-      <div class="blist"><p class="hint"><span class="spin"></span></p></div></div>`;
-    document.body.appendChild(shade);
-    let here = start;
-    const close = (val) => { shade.remove(); resolve(val); };
-    const open = async (path) => {
-      const list = shade.querySelector('.blist');
-      list.innerHTML = '<p class="hint"><span class="spin"></span></p>';
-      try {
-        const res = await api(`/api/ls?${new URLSearchParams({ host, path })}`);
-        here = res.path;
-        shade.querySelector('.bpath').textContent = res.path;
-        const rows = [`<div class="bentry bdir" data-path="${esc(res.parent)}">..</div>`]
-          .concat(res.entries.map((ent) => `<div class="bentry ${ent.dir ? 'bdir' : 'bfile'}${/\.(rdb|csv|dat|txt)$/i.test(ent.name) ? ' bdata' : ''}" data-path="${esc(res.path.replace(/\/$/, '') + '/' + ent.name)}">${esc(ent.name)}${ent.dir ? '/' : ''}</div>`));
-        list.innerHTML = rows.join('');
-      } catch (err) {
-        list.innerHTML = `<p class="hint bad">${esc(err.message)}</p>`;
-      }
-    };
-    shade.addEventListener('click', (e) => {
-      if (e.target === shade || e.target.closest('.bclose')) close(null);
-      if (e.target.closest('.bchoose')) close(here);
-      const ent = e.target.closest('.bentry');
-      if (!ent) return;
-      if (ent.classList.contains('bdir')) open(ent.dataset.path);
-      else if (kind === 'file') close(ent.dataset.path);
-    });
-    open(start);
-  });
 }
 
 // -----------------------------------------------------------------------------
