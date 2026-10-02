@@ -290,6 +290,11 @@ def resolve_star(name: str, root: str = '', refresh: bool = False
         os.makedirs(os.path.dirname(kept), exist_ok=True)
         with open(kept, 'w') as handle:
             json.dump(out, handle, default=str)
+    # SIMBAD's periods of variability: asked in the background (its TAP
+    #   service is at times very slow), kept with the star when they come
+    if out.get('variability') is None:
+        _start_variability(out.get('main') or name, kept)
+        out['variability'], out['variability_pending'] = [], True
     out.update(folder=folder, planets=[], tois=[])
     try:
         host = host_name(out)
@@ -314,17 +319,44 @@ def resolve_star(name: str, root: str = '', refresh: bool = False
     return out
 
 
-def _ask_star(name: str, refresh: bool = False) -> Dict[str, Any]:
-    """what the network says of a star: SIMBAD (its names, its periods of
-    variability) and CARMENES DR1"""
-    from koloa.archive import resolve
-    from koloa.gather import carmenes_star, variability
-    out = dict(resolve(name, refresh=refresh), variability=[],
-               carmenes=None)
+#: the questions to SIMBAD's TAP service under way, by star
+_VARIABILITY: Dict[str, threading.Thread] = {}
+
+
+def _variability_later(main: str, kept: str):
+    """SIMBAD's periods of variability of a star, asked in the background,
+    written into the copy kept of the star when they come"""
+    from koloa.gather import variability
     try:
-        out['variability'] = variability(out['main'])
-    except Exception as err:  # a help, not a need
-        out['variability_error'] = str(err)
+        found = variability(main, timeout=180.0)
+        with open(kept) as handle:
+            star = json.load(handle)
+        star['variability'] = found
+        with open(kept, 'w') as handle:
+            json.dump(star, handle, default=str)
+    except Exception:  # no answer: asked again the next time
+        return
+
+
+def _start_variability(main: str, kept: str):
+    """the periods of variability of a star asked, once at a time"""
+    thread = _VARIABILITY.get(kept)
+    if thread is not None and thread.is_alive():
+        return
+    thread = threading.Thread(target=_variability_later, args=(main, kept),
+                              daemon=True)
+    thread.start()
+    _VARIABILITY[kept] = thread
+
+
+def _ask_star(name: str, refresh: bool = False) -> Dict[str, Any]:
+    """what the network says of a star at once: SIMBAD's names (Sesame)
+    and CARMENES DR1 (its list kept here); the periods of variability come
+    later (variability None until then)"""
+    from koloa.archive import resolve
+    from koloa.gather import carmenes_star
+    out = dict(resolve(name, refresh=refresh), variability=None,
+               carmenes=None)
     if out.get('ra') is not None:
         try:
             out['carmenes'] = carmenes_star(out['ra'], out['dec'])

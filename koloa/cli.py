@@ -190,7 +190,9 @@ def main(argv=None):
         return
     if args.refresh_archive:
         from koloa.archive import tables
+        from koloa.gather import carmenes_objects
         tables(refresh=True)
+        carmenes_objects(refresh=True)
         if not args.filename:
             return
     if not args.filename and not (args.detailed and args.target):

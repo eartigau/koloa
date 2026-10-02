@@ -114,6 +114,7 @@ function tile(label, value, wide) {
   return `<div class="stat${wide ? ' wide' : ''}"><div class="label">${esc(label)}</div><div class="value">${value}</div></div>`;
 }
 
+let varTarget = '', varTries = 0;
 async function resolveStar(refresh) {
   const name = $('target').value.trim();
   if (!name) return;
@@ -146,6 +147,14 @@ async function resolveStar(refresh) {
       : `<span class="hint">${esc(id.tois_error || t('toi_none'))}</span>`;
     const where = id.disk ? `${t('from_disk')} (${id.disk}, ${id.disk_date})` : t('asked_now');
     if (rot.length) rot.push(`<label class="prot"><input type="radio" name="prot" value=""${now ? '' : ' checked'}> ${esc(t('no_sho'))}</label>`);
+    if (id.variability_pending) {
+      rot.push(`<span class="hint"><span class="spin"></span> ${esc(t('var_pending'))}</span>`);
+      // read the star again from the disk until SIMBAD's periods are there
+      const asked = name;
+      varTries = (varTarget === asked ? varTries : 0) + 1;
+      varTarget = asked;
+      if (varTries <= 40) setTimeout(() => { if ($('target').value.trim() === asked) resolveStar(); }, 5000);
+    }
     const carm = id.carmenes ? `${esc(id.carmenes.carmenes_id)}, ${esc(id.carmenes.nobs)} ${esc(t('points'))}` : esc(t('not_in'));
     box.innerHTML = '<div class="stats-grid">'
       + tile(t('main'), esc(id.main)) + tile(t('tic'), esc((id.tic || '-').replace('TIC ', '')))

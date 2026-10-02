@@ -71,6 +71,9 @@ from koloa.log import log, step
 GAVO_TAP = 'https://dc.g-vo.org/tap/sync'
 #: SIMBAD's TAP service
 SIMBAD_TAP = 'https://simbad.cds.unistra.fr/simbad/sim-tap/sync'
+#: where the list of the stars of CARMENES DR1 is kept, once fetched
+CARMENES_CACHE = os.path.join(os.path.expanduser('~'), '.cache', 'koloa',
+                              'carmenes_objects.json')
 #: how far from SIMBAD's position a CARMENES star may be [degrees]
 CARMENES_RADIUS = 0.005
 #: the scalar columns of carmenes.rvs (its per-order columns are left out)
@@ -161,17 +164,23 @@ def _summary(data: RVData, files: List[str], root: str) -> Dict[str, Any]:
 # -----------------------------------------------------------------------------
 # SIMBAD
 # -----------------------------------------------------------------------------
-def variability(main: str) -> List[Dict[str, Any]]:
+def variability(main: str, timeout: float = 10.0) -> List[Dict[str, Any]]:
     """
     The periods of variability SIMBAD lists for a star (its mesVar table):
     type (ROT for a rotation), period [days] and reference
 
+    SIMBAD's TAP service is at times very slow (a minute and more for the
+    simplest question): beyond the timeout, an error, which a caller takes
+    as no answer for now.
+
     :param main: str, SIMBAD's main name of the star
+    :param timeout: float, the longest wait for an answer [s]
     """
     name = main.replace("'", "''")
     rows = _tap(SIMBAD_TAP, (
-        'SELECT v.vartyp, v.period, v.bibcode FROM mesVar AS v JOIN ident '
-        f"AS i ON v.oidref = i.oidref WHERE i.id = '{name}'"))
+        'SELECT v.vartyp, v.period, v.bibcode FROM mesVar AS v JOIN basic '
+        f"AS b ON v.oidref = b.oid WHERE b.main_id = '{name}'"),
+                timeout=timeout)
     return [dict(type=row['vartyp'], period=_float(row['period']),
                  bibcode=row['bibcode'])
             for row in rows if np.isfinite(_float(row['period']))]
@@ -215,20 +224,47 @@ def dace_rv(ident: Dict[str, Any], target: str, folder: str,
     return None
 
 
+def carmenes_objects(refresh: bool = False) -> List[Dict[str, Any]]:
+    """
+    The stars of CARMENES DR1 (361, GAVO's carmenes.objects), fetched once
+    and kept in CARMENES_CACHE: a star is then found without the network
+
+    :param refresh: bool, fetch the list again
+
+    :return: list of dict, carmenes_id, name, nobs, nspect, mass, radius,
+             teff, p_rot, p_rot_source, survey, remarks, ra, dec
+    """
+    if os.path.exists(CARMENES_CACHE) and not refresh:
+        with open(CARMENES_CACHE) as handle:
+            return json.load(handle)
+    log('fetching the list of the stars of CARMENES DR1 (once; kept in '
+        f'{CARMENES_CACHE})')
+    rows = _tap(GAVO_TAP, (
+        'SELECT carmenes_id, name, nobs, nspect, mass, radius, teff, p_rot, '
+        'p_rot_source, survey, remarks, ra, dec FROM carmenes.objects'))
+    os.makedirs(os.path.dirname(CARMENES_CACHE), exist_ok=True)
+    with open(CARMENES_CACHE, 'w') as handle:
+        json.dump(rows, handle)
+    return rows
+
+
 def carmenes_star(ra: float, dec: float) -> Optional[Dict[str, Any]]:
     """
     The CARMENES DR1 star at a position (its Karmn name, number of
-    velocities, rotation period...), None if DR1 has none there
+    velocities, rotation period...), None if DR1 has none there (the list
+    of its stars kept here, carmenes_objects)
 
     :param ra: float, J2000 [degrees]
     :param dec: float, J2000 [degrees]
     """
-    rows = _tap(GAVO_TAP, (
-        'SELECT carmenes_id, name, nobs, nspect, mass, radius, teff, p_rot, '
-        'p_rot_source, survey, remarks, ra, dec FROM carmenes.objects WHERE '
-        f"1=CONTAINS(POINT('ICRS', ra, dec), CIRCLE('ICRS', {ra:.6f}, "
-        f'{dec:.6f}, {CARMENES_RADIUS}))'))
-    return dict(rows[0]) if rows else None
+    best, near = None, CARMENES_RADIUS
+    cosd = np.cos(np.radians(dec))
+    for row in carmenes_objects():
+        dra = (_float(row['ra']) - ra + 180.0) % 360.0 - 180.0
+        dist = float(np.hypot(dra * cosd, _float(row['dec']) - dec))
+        if dist <= near:
+            best, near = dict(row), dist
+    return best
 
 
 def carmenes_rv(star: Dict[str, Any], target: str, folder: str,

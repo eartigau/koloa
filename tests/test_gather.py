@@ -99,3 +99,18 @@ def test_the_dace_key_is_looked_for(tmp_path, monkeypatch):
     assert dace.find_key() == (None, None)
     assert dace.find_key(False) == (None, None)
     assert dace.find_key('given') == ('given', 'given')
+
+
+def test_a_carmenes_star_found_in_the_list_kept(tmp_path, monkeypatch):
+    """the stars of CARMENES DR1 kept on disk: a star found by its position,
+    without the network"""
+    kept = tmp_path / 'carmenes_objects.json'
+    kept.write_text(json.dumps([
+        dict(carmenes_id='J11421+267', name='Ross 905', ra='175.54622',
+             dec='26.70657', p_rot='44.6'),
+        dict(carmenes_id='J00067-075', name='GJ 1002', ra='1.67',
+             dec='-7.54', p_rot='')]))
+    monkeypatch.setattr(kg, 'CARMENES_CACHE', str(kept))
+    monkeypatch.setattr(kg, '_tap', lambda *a, **k: 1 / 0)
+    assert kg.carmenes_star(175.5463, 26.7065)['carmenes_id'] == 'J11421+267'
+    assert kg.carmenes_star(10.0, 10.0) is None
