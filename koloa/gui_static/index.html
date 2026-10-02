@@ -20,6 +20,7 @@
         <h2>koloa</h2>
         <p data-i18n="tagline">Outlier-aware radial velocities &middot; on this machine</p>
       </div>
+      <nav class="tabs"><a href="/" class="tab on" data-i18n="tab_single">Single target</a><a href="/batch" class="tab" data-i18n="tab_batch">Batch</a></nav>
       <button id="newtarget" class="home-link" type="button" data-i18n="new_target">New target</button>
       <button id="lang" class="home-link" type="button">FR</button>
       <a href="https://eartigau.github.io/koloa/" class="home-link" target="_blank" data-i18n="docs">Docs</a>
@@ -29,10 +30,10 @@
   <main class="layout">
     <!-- the star -->
     <section class="card">
-      <h2 data-i18n="star">Star</h2>
+      <h2><span data-i18n="star">Star</span> <button type="button" class="info" data-help="target" aria-label="?">i</button></h2>
       <p class="hint" data-i18n="star_hint">Its SIMBAD name: the archives, DACE, CARMENES and TESS find it by that name.</p>
       <div class="row">
-        <input id="target" type="text" placeholder="GJ 436" autocomplete="off">
+        <input id="target" type="text" autocomplete="off">
         <button id="resolve" type="button" data-i18n="resolve">Resolve</button>
       </div>
       <div id="ident"></div>
@@ -44,10 +45,11 @@
       <h2 data-i18n="velocities">Velocities</h2>
       <p class="hint" data-i18n="velocities_hint">A file of velocities (LBL .rdb, csv, DACE csv), the archives gathered for the star, or both. Untick an instrument (or click it in the legend) to leave it out of the report.</p>
       <div class="fields">
-        <div class="wide filesblock"><span class="flabel-head" data-i18n="files_in">Files (optional): one per instrument or reduction</span>
+        <div class="wide filesblock"><span class="flabel-head"><span data-i18n="files_in">Files (optional): one per instrument or reduction</span> <button type="button" class="info" data-help="files" aria-label="?">i</button>
+            <span class="spacer"></span><span data-i18n="inst_head">instrument</span> <button type="button" class="info" data-help="file_label" aria-label="?">i</button></span>
           <div id="filelist"></div>
           <button type="button" id="addfile" class="small" data-i18n="add_file">+ Add a file</button></div>
-        <label><span data-i18n="root">Archives folder</span>
+        <label><span><span data-i18n="root">Archives folder</span> <button type="button" class="info" data-help="root" aria-label="?">i</button></span>
           <span class="picker"><input id="root" type="text" value="archives" autocomplete="off"><button type="button" data-pick="folder" data-into="root" title="..." >...</button></span></label>
       </div>
       <div class="row">
@@ -66,6 +68,7 @@
         <label><input type="checkbox" data-opt="dace" data-for="gather" checked> DACE</label>
         <label><input type="checkbox" data-opt="carmenes" data-for="gather" checked> CARMENES DR1</label>
         <label><input type="checkbox" data-opt="tess" data-for="gather" checked> TESS</label>
+        <button type="button" class="info" data-help="gather_sources" aria-label="?">i</button>
       </div>
       <div class="cmd"><pre id="cmd-gather" class="codeblock"></pre><button class="copy" data-copy="cmd-gather" type="button" data-i18n="copy">Copy</button></div>
       <div class="row"><button id="run-gather" class="go" type="button" data-i18n="run_gather">Gather</button><span id="ondisk" class="hint"></span></div>
@@ -76,45 +79,10 @@
       <h2 data-i18n="detailed">Detailed report</h2>
       <p class="hint" data-i18n="detailed_hint">Everything koloa can say about the star, as a PDF report: from the file, from the SIMBAD name (the archives only), or (best) from both.</p>
       <div class="fields">
-        <label><span data-i18n="outdir">Report folder</span>
-          <span class="picker"><input id="outdir" type="text" placeholder="reports/GJ_436" autocomplete="off"><button type="button" data-pick="folder" data-into="outdir">...</button></span></label>
-        <label><span data-i18n="kmax">Signals (kmax)</span><input data-opt="kmax" data-for="detailed" type="number" min="1" max="8" value="3"></label>
-        <label><span data-i18n="nsweep">Sweeps</span><input data-opt="nsweep" data-for="detailed" type="number" min="100" step="100" value="2000"></label>
-        <label><span data-i18n="nburn">Burn-in</span><input data-opt="nburn" data-for="detailed" type="number" min="50" step="50" value="400"></label>
-        <label><span data-i18n="pmin">Shortest period [d]</span><input data-opt="pmin" data-for="detailed" type="number" step="0.1" value="1.1"></label>
-        <label><span data-i18n="pmax">Longest period [d]</span><input data-opt="pmax" data-for="detailed" type="number" step="1" placeholder="2 x baseline"></label>
-        <label><span data-i18n="periods">More periods to test [d]</span><input data-opt="periods" data-for="detailed" type="text" placeholder="113.46 27.1"></label>
-        <label><span data-i18n="fip_gp_sel">GP in the FIP</span>
-          <select id="fipgp" data-opt="fip_gp" data-for="detailed">
-            <option value="banded" data-i18n="gp_banded">by period band</option>
-            <option value="sho" data-i18n="gp_sho">SHO at the rotation</option>
-            <option value="none" data-i18n="gp_none">none</option>
-          </select></label>
-        <label><span data-i18n="rotation_p">Rotation period [d]</span><input id="rotation" data-opt="rotation" data-for="detailed" type="number" step="any" min="0" placeholder="2.704"></label>
-        <label><span data-i18n="tois">TOIs (empty: all)</span><input id="tois" data-opt="tois" data-for="detailed" type="text" placeholder="175.01 175.02" autocomplete="off"></label>
-        <label><span data-i18n="exclude">Instruments left out</span><input id="exclude" data-opt="exclude" data-for="detailed" type="text" placeholder="NIRPS HARPS03" autocomplete="off"></label>
-        <label><span data-i18n="dmap">Detection map</span>
-          <select data-opt="detection_map" data-for="detailed">
-            <option value="none" data-i18n="dmap_none">none</option>
-            <option value="fip" data-i18n="dmap_fip">by the FIP (hours)</option>
-            <option value="search" data-i18n="dmap_search">blind search (minutes)</option>
-          </select></label>
+        <label class="wide"><span><span data-i18n="outdir">Report folder</span> <button type="button" class="info" data-help="outdir" aria-label="?">i</button></span>
+          <span class="picker"><input id="outdir" type="text" autocomplete="off"><button type="button" data-pick="folder" data-into="outdir">...</button></span></label>
       </div>
-      <div class="checks">
-        <label><input type="checkbox" data-opt="exposures" data-for="detailed"> <span data-i18n="exposures">every exposure (not nightly means)</span></label>
-        <label><input type="checkbox" data-opt="dace" data-for="detailed" checked> DACE</label>
-        <label><input type="checkbox" data-opt="carmenes" data-for="detailed" checked> CARMENES DR1</label>
-        <label><input type="checkbox" data-opt="tess" data-for="detailed" checked> TESS</label>
-        <label><input type="checkbox" data-opt="vizier" data-for="detailed" checked> VizieR</label>
-        <label><input type="checkbox" data-opt="archive" data-for="detailed" checked> <span data-i18n="archive">Exoplanet Archive</span></label>
-        <label><input type="checkbox" data-opt="gpcheck" data-for="detailed" checked> <span data-i18n="gpcheck">signals against a GP</span></label>
-        <label><input type="checkbox" data-opt="duck" data-for="detailed" checked> <span data-i18n="duck">duck test</span></label>
-        <label><input type="checkbox" id="toi_on" data-opt="toi_on" data-for="detailed"> <span data-i18n="toi_on">TESS ephemerides (TOIs)</span></label>
-        <label><input type="checkbox" data-opt="trend" data-for="detailed" checked> <span data-i18n="trend">acceleration (trend)</span></label>
-        <label><input type="checkbox" data-opt="curvature" data-for="detailed"> <span data-i18n="curvature">its change (curvature)</span></label>
-        <label><input type="checkbox" data-opt="mcmc" data-for="detailed"> MCMC</label>
-        <label><input type="checkbox" data-opt="latex" data-for="detailed" checked> <span data-i18n="latex">PDF report</span></label>
-      </div>
+      <div id="detailed-options"></div>
       <div class="cmd"><pre id="cmd-detailed" class="codeblock"></pre><button class="copy" data-copy="cmd-detailed" type="button" data-i18n="copy">Copy</button></div>
       <p class="hint" id="cwd"></p>
       <div class="row"><button id="run-detailed" class="go" type="button" data-i18n="run_detailed">Make the report</button></div>
@@ -135,6 +103,7 @@
       <a href="https://eartigau.github.io/" target="_blank">More tools</a>
     </p>
   </footer>
+  <script src="/static/common.js"></script>
   <script src="/static/gui.js"></script>
 </body>
 </html>

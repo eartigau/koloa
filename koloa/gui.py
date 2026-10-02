@@ -171,10 +171,11 @@ class Job:
     One run of koloa's command line, its log read as it comes
     """
 
-    def __init__(self, action: str, args: List[str], outputs: str):
+    def __init__(self, action: str, args: List[str], outputs: str,
+                 argv: Optional[List[str]] = None):
         self.id = uuid.uuid4().hex[:8]
         self.action, self.args = action, args
-        self.line = line(args)
+        self.line = shlex.join(argv) if argv else line(args)
         self.outputs = os.path.abspath(outputs)
         self.lines: List[str] = []
         self.steps: List[Dict[str, Any]] = []
@@ -185,7 +186,7 @@ class Job:
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         env['PYTHONPATH'] = root + os.pathsep + env.get('PYTHONPATH', '')
         self.proc = subprocess.Popen(
-            [sys.executable, '-W', 'ignore', '-m', 'koloa.cli'] + args,
+            argv or [sys.executable, '-W', 'ignore', '-m', 'koloa.cli'] + args,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             bufsize=1, env=env)
         threading.Thread(target=self._read, daemon=True).start()
@@ -244,7 +245,8 @@ class Job:
         """what the page shows of the run"""
         now = time.time()
         report = [name for name in self.files()
-                  if name.endswith('_report.pdf')]
+                  if name.endswith('batch_summary.pdf' if self.action
+                                   == 'batch' else '_report.pdf')]
         return dict(id=self.id, action=self.action, line=self.line,
                     status=self.status, returncode=self.returncode,
                     elapsed=(self.end or now) - self.start,
@@ -404,6 +406,61 @@ def pick(kind: str = 'file', start: str = '') -> Dict[str, Any]:
     return dict(path=path)
 
 
+#: how ssh is called: never a password, a short wait
+SSH = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10']
+
+
+def _ssh(host: str, remote: str, stdin: Optional[str] = None,
+         timeout: float = 60.0) -> subprocess.CompletedProcess:
+    """a command on a server (its words already quoted for its shell)"""
+    if not host.strip() or host.strip().startswith('-'):
+        raise ValueError('no server: give its name (rali) or user@host')
+    return subprocess.run(SSH + [host.strip(), remote], input=stdin,
+                          capture_output=True, text=True, timeout=timeout)
+
+
+def listing(host: str = '', path: str = '') -> Dict[str, Any]:
+    """
+    A folder, on this machine or on a server through ssh, for the file
+    browser of the page
+
+    :return: dict, path (absolute), parent, entries (name, dir)
+    """
+    if host.strip():
+        where = f'cd -- {shlex.quote(path)}' if path.strip() else 'cd'
+        proc = _ssh(host, f'{where} && pwd && ls -1Ap')
+        if proc.returncode != 0:
+            said = [row for row in proc.stderr.splitlines()
+                    if row.strip() and not row.startswith('**')]
+            raise RuntimeError(said[-1] if said else 'ssh failed')
+        rows = proc.stdout.splitlines()
+        here, names = rows[0], rows[1:]
+        entries = [dict(name=name.rstrip('/'), dir=name.endswith('/'))
+                   for name in names if name.strip()]
+    else:
+        here = os.path.abspath(os.path.expanduser(path or os.getcwd()))
+        entries = [dict(name=name, dir=os.path.isdir(os.path.join(here,
+                                                                  name)))
+                   for name in os.listdir(here)]
+    entries = [ent for ent in entries if not ent['name'].startswith('.')]
+    entries.sort(key=lambda ent: (not ent['dir'], ent['name'].lower()))
+    return dict(path=here, parent=os.path.dirname(here.rstrip('/')) or '/',
+                entries=entries)
+
+
+def ssh_test(host: str, koloa: str = '') -> Dict[str, Any]:
+    """whether a server answers, and what koloa is there"""
+    cmd = (koloa or 'koloa').strip()
+    proc = _ssh(host, f'echo connected to $(hostname); '
+                      f'{cmd} --help > /dev/null 2>&1 && echo koloa answers '
+                      f'|| echo "koloa does not answer: {cmd}"', timeout=30)
+    # ssh's own warnings (** WARNING: ...) are not the server's answer
+    text = '\n'.join(row for row in (proc.stdout + proc.stderr).splitlines()
+                     if row.strip() and not row.startswith('**'))
+    return dict(ok=proc.returncode == 0 and 'koloa answers' in text,
+                text=text)
+
+
 def gathering(target: str, root: str = '') -> bool:
     """whether the archives of a star are being gathered by a run"""
     from koloa.gather import folder_name
@@ -514,6 +571,14 @@ class Handler(BaseHTTPRequestHandler):
             if url.path.startswith('/static/'):
                 name = os.path.basename(url.path)
                 return self._file(os.path.join(STATIC, name))
+            if url.path == '/batch':
+                return self._file(os.path.join(STATIC, 'batch.html'))
+            if url.path == '/api/ls':
+                return self._json(listing(query.get('host', ''),
+                                          query.get('path', '')))
+            if url.path == '/api/ssh_test':
+                return self._json(ssh_test(query.get('host', ''),
+                                           query.get('koloa', '')))
             if url.path == '/api/info':
                 from koloa.archive import fetched
                 return self._json(dict(cwd=os.getcwd(),
@@ -584,6 +649,53 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     outputs = opts.get('outdir') or 'koloa_output'
                 job = Job(body['action'], args, outputs)
+                JOBS[job.id] = job
+                return self._json(job.state())
+            if path == '/api/batch_script':
+                from koloa.batch import script
+                run = body.get('run', {})
+                ssh = run.get('mode') == 'ssh'
+                return self._json(script(
+                    body.get('targets', []), body.get('options', {}),
+                    koloa=run.get('koloa', ''), batch=run.get('batch', ''),
+                    workdir=run.get('workdir', '') or ('' if ssh
+                                                       else os.getcwd()),
+                    jobs=int(run.get('jobs') or 1),
+                    bashrc=bool(run.get('bashrc', True)),
+                    where=run.get('host') if ssh else 'this machine'))
+            if path == '/api/batch_send':
+                # the script, written on the server, made executable
+                host, name = body['host'], os.path.basename(body['name'])
+                place = shlex.quote(body.get('workdir') or '.')
+                proc = _ssh(host, f'mkdir -p {place} && cd {place} && cat > '
+                                  f'{shlex.quote(name)} && chmod +x '
+                                  f'{shlex.quote(name)} && pwd',
+                            stdin=body['script'])
+                if proc.returncode != 0:
+                    raise RuntimeError(proc.stderr.strip() or 'ssh failed')
+                return self._json(dict(path=os.path.join(
+                    proc.stdout.strip(), name)))
+            if path == '/api/batch_start':
+                host, name = body['host'], os.path.basename(body['name'])
+                place = shlex.quote(body.get('workdir') or '.')
+                out = shlex.quote(os.path.splitext(name)[0] + '.out')
+                proc = _ssh(host, f'cd {place} && nohup bash '
+                                  f'{shlex.quote(name)} > {out} 2>&1 '
+                                  f'< /dev/null & echo started')
+                if proc.returncode != 0:
+                    raise RuntimeError(proc.stderr.strip() or 'ssh failed')
+                return self._json(dict(started=True))
+            if path == '/api/batch_run':
+                # here: the script saved where it runs, and followed
+                workdir = os.path.abspath(os.path.expanduser(
+                    body.get('workdir') or os.getcwd()))
+                os.makedirs(workdir, exist_ok=True)
+                spath = os.path.join(workdir, os.path.basename(body['name']))
+                with open(spath, 'w') as handle:
+                    handle.write(body['script'])
+                os.chmod(spath, 0o755)
+                job = Job('batch', [], os.path.join(workdir, body['batch']),
+                          argv=['bash', spath])
                 JOBS[job.id] = job
                 return self._json(job.state())
             if path == '/api/stop':

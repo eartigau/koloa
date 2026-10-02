@@ -116,3 +116,47 @@ ol.steps .ptext { grid-column: 2 / 4; font-family: "IBM Plex Mono", monospace; f
 @media (prefers-reduced-motion: reduce) {
   .hourglass, .spin { animation: none; }
 }
+
+/* the (i) of a field, and the explanation it shows */
+button.info { display: inline-flex; align-items: center; justify-content: center; width: 1.25em; height: 1.25em; padding: 0;
+  margin-left: 2px; border-radius: 50%; font: italic 700 0.72rem/1 Georgia, serif; color: var(--accent);
+  background: rgba(98, 194, 255, 0.10); border: 1px solid rgba(98, 194, 255, 0.45); cursor: help; vertical-align: 1px; }
+button.info:hover, button.info:focus-visible { background: rgba(98, 194, 255, 0.28); color: #fff; outline: none; }
+#tip { position: absolute; z-index: 50; display: none; padding: 10px 12px; border-radius: 10px; font-size: 0.84rem; line-height: 1.45;
+  color: var(--text); background: #0b1526; border: 1px solid rgba(98, 194, 255, 0.45); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5); }
+.check { display: inline-flex; align-items: center; gap: 2px; }
+h2 .hint { font-weight: 400; font-size: 0.85rem; }
+
+/* the tabs of the banner */
+.tabs { display: flex; gap: 4px; margin-right: 6px; }
+.tabs .tab { padding: 6px 14px; border-radius: 999px; color: var(--muted); border: 1px solid transparent; font-size: 0.9rem; }
+.tabs .tab:hover { color: #fff; text-decoration: none; border-color: var(--line); }
+.tabs .tab.on { color: #fff; border-color: rgba(98, 194, 255, 0.55); background: rgba(98, 194, 255, 0.14); }
+.flabel-head { display: flex; align-items: center; gap: 4px; }
+.flabel-head .spacer { flex: 1; }
+.flabel-head .pad { width: 2.2em; }
+
+/* the file browser of the page */
+.browser-shade { position: fixed; inset: 0; z-index: 60; background: rgba(4, 8, 16, 0.75); display: flex; align-items: center; justify-content: center; }
+.browser { width: min(720px, 94vw); max-height: 80vh; display: flex; flex-direction: column; background: #0d1727; border: 1px solid var(--line); border-radius: 14px; }
+.browser-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+.browser-head .bpath { font-family: "IBM Plex Mono", monospace; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-head .spacer { flex: 1; }
+.blist { overflow: auto; padding: 6px 0; }
+.bentry { padding: 5px 16px; font-family: "IBM Plex Mono", monospace; font-size: 0.85rem; cursor: pointer; color: var(--muted); }
+.bentry:hover { background: rgba(98, 194, 255, 0.12); color: #fff; }
+.bentry.bdir { color: var(--accent); }
+.bentry.bdata { color: var(--text); font-weight: 500; }
+
+/* the batch: its targets and its script */
+.trow { display: grid; grid-template-columns: 2em minmax(0, 1.2fr) minmax(0, 4fr) auto; gap: 8px; align-items: start; padding: 6px 0; border-bottom: 1px solid rgba(200, 220, 255, 0.07); }
+.trow.thead { font-size: 0.82rem; color: var(--muted); border-bottom-color: var(--line); }
+.trow .tnum { color: var(--muted); font-family: "IBM Plex Mono", monospace; padding-top: 7px; }
+.trow input.tname { width: 100%; }
+.tfiles { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; }
+.tfile { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 1fr) auto; gap: 6px; width: 100%; }
+.tfile .picker input { flex: 1; }
+textarea { width: 100%; box-sizing: border-box; margin-top: 6px; font-family: "IBM Plex Mono", monospace; font-size: 0.85rem; color: var(--text);
+  background: rgba(4, 8, 16, 0.75); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.codeblock.script { max-height: 420px; overflow: auto; white-space: pre; word-break: normal; }
+details summary { cursor: pointer; color: var(--muted); margin-top: 8px; }

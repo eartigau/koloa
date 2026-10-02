@@ -163,6 +163,10 @@ def main(argv=None):
                         help='with --detailed: instruments left out of the '
                              'analysis (NIRPS, HARPS03...), once the file, '
                              'DACE, CARMENES and VizieR are put together')
+    parser.add_argument('--batch-summary', default=None, metavar='BATCH',
+                        help='the summary of a batch of detailed reports '
+                             '(BATCH/<target>/, BATCH/logs/), in '
+                             'BATCH/batch_summary.pdf, .txt and .csv')
     parser.add_argument('--refresh-archive', action='store_true',
                         help='fetch the NASA Exoplanet Archive again (koloa '
                              'keeps it in ~/.cache/koloa/archive)')
@@ -179,6 +183,10 @@ def main(argv=None):
     if args.gui:
         from koloa.gui import serve
         serve(args.port)
+        return
+    if args.batch_summary:
+        from koloa.batch import summary
+        summary(args.batch_summary)
         return
     if args.refresh_archive:
         from koloa.archive import tables
