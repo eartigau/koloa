@@ -167,3 +167,9 @@ h2 .hint { font-weight: 400; font-size: 0.85rem; }
 #foldplot.plot.on { height: min(46vh, 420px); }
 .foldhead { margin-top: 18px; }
 [data-fold].on { background: rgba(98, 194, 255, 0.35); border-color: var(--accent); color: #fff; }
+
+/* the archives gathered, by the velocities; each instrument's own FIP */
+#archchecks { align-items: center; margin: 4px 0 2px; }
+#archchecks .hint { font-size: 0.82rem; }
+#fipeach table.mini { margin-top: 10px; }
+#fipeach td.peaks { font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; }

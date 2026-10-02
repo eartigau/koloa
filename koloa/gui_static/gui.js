@@ -83,14 +83,48 @@ function checkArchives() {
       $('ondisk').textContent = '';
     } else if (onDisk && onDisk.exists) {
       btn.textContent = t('refresh');
+      showDiskPoints();
       const what = Object.entries(onDisk.archives || {}).map(([k, v]) => `${k} ${v}`).join(', ');
       $('ondisk').textContent = `${t('on_disk')} (${onDisk.created || ''}): ${what}`;
     } else {
       btn.textContent = t('run_gather');
       $('ondisk').textContent = '';
     }
+    showDiskPoints();
     updateCommandsNow();
   }, 250);
+}
+
+// the archives gathered, by the velocities: the same choice as the report's
+//   DACE and CARMENES DR1 boxes (what is plotted is what the report uses)
+const ARCHIVES = ['dace', 'carmenes'];
+function reportBox(key) { return document.querySelector(`input[data-for="detailed"][data-opt="${key}"]`); }
+function syncMirrors() {
+  document.querySelectorAll('[data-mirror]').forEach((box) => { const twin = reportBox(box.dataset.mirror); if (twin) box.checked = twin.checked; });
+}
+function showDiskPoints() {
+  const pts = (onDisk && onDisk.exists && onDisk.points) || {};
+  for (const key of ARCHIVES) {
+    $(`pts-${key}`).textContent = pts[key] ? `(${pts[key]} ${t('points_word')})` : onDisk && onDisk.exists ? '(0)' : '';
+  }
+  if (!(onDisk && onDisk.exists)) $('pts-dace').textContent = $('target').value.trim() ? `(${t('nothing_gathered')})` : '';
+}
+async function diskState() {
+  const target = $('target').value.trim();
+  if (!target) return null;
+  try { return await api(`/api/archives?${new URLSearchParams({ target, root: $('root').value.trim() })}`); } catch (err) { return null; }
+}
+// no file and no archive ticked: the archives gathered are all there is
+function archivesByDefault(disk) {
+  if (filesNow().length || !disk || !disk.exists) return false;
+  if (ARCHIVES.some((key) => reportBox(key) && reportBox(key).checked)) return false;
+  let ticked = false;
+  for (const key of ARCHIVES) {
+    if ((disk.points || {})[key] && reportBox(key)) { reportBox(key).checked = true; ticked = true; }
+  }
+  syncMirrors();
+  updateCommands();
+  return ticked;
 }
 
 let cwd = '';
@@ -175,13 +209,14 @@ async function resolveStar(refresh) {
 async function plotVelocities() {
   const note = $('rvnote');
   note.innerHTML = `<span class="spin"></span> ${esc(t('loading'))}`;
+  const auto = !filesNow().length && archivesByDefault(await diskState());
   // the archives the report will use, and only those
   const asked = readOptions('detailed');
   const q = new URLSearchParams({ files: JSON.stringify(filesNow()), target: $('target').value.trim(), root: $('root').value.trim(),
     dace: asked.dace ? '1' : '', carmenes: asked.carmenes ? '1' : '' });
   try {
     const res = await api(`/api/rv?${q}`);
-    note.textContent = (res.notes || []).join(' · ');
+    note.textContent = (auto ? [t('arch_auto')] : []).concat(res.notes || []).join(' · ');
     const div = $('rvplot');
     if (!res.instruments.length) {
       div.classList.remove('on'); if (window.Plotly) Plotly.purge(div);
@@ -409,30 +444,49 @@ async function pollQuick(id) {
   try { state = await api(`/api/quickfip?id=${id}`); } catch (err) { return; }
   if (!quick || quick.id !== id) return;
   Object.assign(quick, state);
-  if (state.status === 'running') {
-    const step = { waiting: 'waiting', noise: 'quick_noise', fip1: 'quick_fip1', planets: 'quick_planets', fip2: 'quick_fip2' }[state.step] || 'quick_noise';
-    let bar = '';
-    if (state.progress && ['fip1', 'fip2'].includes(state.step)) {
-      const p = state.progress;
-      const frac = Math.min(1, p.done / Math.max(p.total, 1));
-      const left = frac > 0.02 ? ` \u00b7 ~${clock(p.seconds * (1 - frac) / frac)} ${t('left_fip')}` : '';
-      bar = `<span class="pbar"><span style="width:${Math.round(100 * frac)}%"></span></span><span class="ptext">${Math.round(100 * frac)} %${left}</span>`;
-    }
-    $('fipstatus').innerHTML = `<p class="hint"><span class="hourglass">\u23f3</span> ${esc(t(step))} \u00b7 ${clock(state.elapsed)}</p><div class="steps-bar">${bar}</div>`;
-    setTimeout(() => pollQuick(id), 1000);
-  } else if (state.status === 'done') {
-    drawFip(state.result, state.elapsed);
-  } else {
+  if (state.status === 'failed') {
     $('fipstatus').innerHTML = `<p class="hint bad">${esc(state.error || 'failed')}</p>`;
+    return;
   }
+  // the joint FIP as soon as it is there, each instrument's as it comes
+  const each = state.each || [];
+  const drawn = `${state.result ? 1 : 0}/${each.length}`;
+  if (state.result && quick.drawn !== drawn) { drawFip(state.result, each); quick.drawn = drawn; }
+  $('fipstatus').innerHTML = (state.result ? fipSummary(state.result, state.elapsed) : '') + quickRunning(state);
+  if (state.status === 'running') setTimeout(() => pollQuick(id), 1000);
 }
 
-function drawFip(r, elapsed) {
+// what runs, with the bar of its sweeps
+function quickRunning(state) {
+  if (state.status !== 'running') return '';
+  const step = { waiting: 'waiting', noise: 'quick_noise', fip1: 'quick_fip1', planets: 'quick_planets', fip2: 'quick_fip2', inst: 'quick_inst' }[state.step] || 'quick_noise';
+  let bar = '';
+  if (state.progress && ['fip1', 'fip2', 'inst'].includes(state.step)) {
+    const p = state.progress;
+    const frac = Math.min(1, p.done / Math.max(p.total, 1));
+    const left = frac > 0.02 ? ` \u00b7 ~${clock(p.seconds * (1 - frac) / frac)} ${t('left_fip')}` : '';
+    bar = `<span class="pbar"><span style="width:${Math.round(100 * frac)}%"></span></span><span class="ptext">${Math.round(100 * frac)} %${left}</span>`;
+  }
+  const detail = state.step === 'inst' && state.step_detail ? ` (${esc(state.step_detail)})` : '';
+  return `<p class="hint"><span class="hourglass">\u23f3</span> ${esc(t(step))}${detail} \u00b7 ${clock(state.elapsed)}</p><div class="steps-bar">${bar}</div>`;
+}
+
+function fipSummary(r, elapsed) {
   const insts = Object.entries(r.instruments).map(([k, v]) => `${k} ${v}`).join(', ');
   const best = r.peaks[0];
-  $('fipstatus').innerHTML = `<p class="hint">${r.n} ${esc(t('nights'))} (${esc(insts)}); ${esc(t('no_gp'))}, ${r.settings.kmax} ${esc(t('signals_word'))}, `
+  return `<p class="hint">${r.n} ${esc(t('nights'))} (${esc(insts)}); ${esc(t('no_gp'))}, ${r.settings.kmax} ${esc(t('signals_word'))}, `
     + `${r.settings.nsweep} ${esc(t('sweeps_word'))}, ${r.passes} ${esc(t('passes'))} \u00b7 ${clock(elapsed)}`
     + (best ? ` \u00b7 ${esc(t('strongest'))}: <b>${best.period.toFixed(4)} d</b>, FIP ${best.family.toExponential(1)}` : '') + '</p>';
+}
+
+// the colour of an instrument: its colour in the plot of the velocities
+function instColour(name) {
+  const i = (lastRV || []).findIndex((inst) => inst.name === name);
+  return COLOURS[Math.max(0, i) % 8];
+}
+
+function drawFip(r, each) {
+  each = each || [];
   const div = $('fipplot');
   div.classList.add('on');
   const axis = { gridcolor: 'rgba(200,220,255,0.10)', zerolinecolor: 'rgba(200,220,255,0.25)', color: '#7a8597' };
@@ -452,15 +506,27 @@ function drawFip(r, elapsed) {
       text: `<b>#${pk.id}</b>`, showarrow: true, arrowhead: 0, ax: 0, ay: -22, font: { size: 12, color: '#ffffff' },
       arrowcolor: '#a8b4ca', hovertext: `#${pk.id}: ${pk.period.toFixed(4)} d, FIP ${pk.family.toExponential(1)}` });
   }
-  Plotly.newPlot(div, [
+  const traces = [
     { x: r.period, y: r.alone, name: t('alone'), type: 'scatter', mode: 'lines', line: { color: '#8a93a3', width: 1 },
-      hovertemplate: '%{x:.4f} d<br>-log10 FIP %{y:.2f}<extra></extra>' },
-    { x: r.period, y: r.family, name: t('family'), type: 'scatter', mode: 'lines', line: { color: '#3987e5', width: 1.4 },
-      hovertemplate: '%{x:.4f} d<br>-log10 FIP %{y:.2f}<extra></extra>' },
-  ], {
+      legendrank: 1, hovertemplate: '%{x:.4f} d<br>-log10 FIP %{y:.2f}<extra></extra>' },
+  ];
+  // each instrument on its own: its FIP of the period or any of its aliases
+  for (const one of each.filter((x) => !x.skipped)) {
+    traces.push({ x: one.period, y: one.family, name: `${one.name} ${t('inst_alone')}`, type: 'scatter', mode: 'lines',
+      line: { color: instColour(one.name), width: 1 }, opacity: 0.85, legendrank: 10 + traces.length,
+      hovertemplate: `${esc(one.name)}<br>%{x:.4f} d<br>-log10 FIP %{y:.2f}<extra></extra>` });
+  }
+  // the joint FIP on top, in white (blue is the first instrument's colour)
+  traces.push({ x: r.period, y: r.family, name: t('family'), type: 'scatter', mode: 'lines', line: { color: '#e8eef8', width: 1.6 },
+    legendrank: 2, hovertemplate: '%{x:.4f} d<br>-log10 FIP %{y:.2f}<extra></extra>' });
+  // the periods shown kept when the curves of the instruments come in
+  const keepView = pview && pview.of === quick.id ? pview.p.slice() : null;
+  const xaxis = { ...axis, type: 'log', title: t('period_axis') };
+  if (keepView) xaxis.range = [Math.log10(keepView[0]), Math.log10(keepView[1])];
+  Plotly.newPlot(div, traces, {
     paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(4,8,16,0.35)', font: { family: 'Space Grotesk, sans-serif', color: '#e8eef8' },
     margin: { ...PLOT_MARGIN, t: 40 }, legend: { orientation: 'h', x: 0, y: 1.08, yanchor: 'bottom' }, shapes: lines, annotations: notes,
-    xaxis: { ...axis, type: 'log', title: t('period_axis') }, yaxis: { ...axis, title: t('fip_axis'), rangemode: 'tozero' },
+    xaxis, yaxis: { ...axis, title: t('fip_axis'), rangemode: 'tozero' },
   }, { responsive: true, displaylogo: false }).then(() => {
     div.removeAllListeners && div.removeAllListeners('plotly_relayout');
     div.on('plotly_relayout', (ev) => {
@@ -471,11 +537,23 @@ function drawFip(r, elapsed) {
     });
   });
   const per = r.period;
-  pview = { dom: [per[0], per[per.length - 1]], p: [per[0], per[per.length - 1]] };
+  pview = { of: quick.id, dom: [per[0], per[per.length - 1]], p: keepView || [per[0], per[per.length - 1]] };
   syncPeriods();
+  drawEach(each);
+  if (keepView) return;
   // the folds at the numbered peaks
   $('foldbuttons').innerHTML = (r.folds || []).map((f) => `<button type="button" class="small" data-fold="${f.id}">#${f.id} \u00b7 ${f.period.toFixed(4)} d</button>`).join('');
   if (r.folds && r.folds.length) showFold(r.folds[0].id);
+}
+
+// each instrument's nights and best peaks, under the FIP
+function drawEach(each) {
+  if (!each.length) { $('fipeach').innerHTML = ''; return; }
+  $('fipeach').innerHTML = `<table class="mini"><tr><th>${esc(t('each_title'))}</th><th>${esc(t('nights'))}</th><th>${esc(t('best_peaks'))}</th></tr>`
+    + each.map((one) => `<tr><td><span class="swatch" style="background:${instColour(one.name)}"></span>${esc(one.name)}</td>`
+      + `<td class="num">${one.n}</td><td class="peaks">${one.skipped ? `<span class="hint">${esc(t('few_nights'))}</span>`
+        : (one.peaks || []).map((pk) => `${pk.period.toFixed(4)} (${pk.family.toExponential(1)})`).join(' \u00b7 ') || esc(t('none_found'))}</td></tr>`).join('')
+    + '</table>';
 }
 
 function showFold(id) {
@@ -533,7 +611,7 @@ async function quicklookPdf() {
   try {
     const resp = await fetch('/api/quicklook_pdf', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ options: opts, x: view ? view.x : null, y: view ? view.y : null, p: pview ? pview.p : null,
-        quick: quick && quick.status === 'done' ? quick.id : '', command: $('cmd-detailed').textContent }) });
+        quick: quick && quick.result ? quick.id : '', command: $('cmd-detailed').textContent }) });
     if (!resp.ok) throw new Error((await resp.json()).error || resp.statusText);
     const link = document.createElement('a');
     link.href = URL.createObjectURL(await resp.blob());
@@ -546,7 +624,8 @@ async function quicklookPdf() {
 }
 
 // a new target: every field back to the page's own default, no file, no
-//   star, no plot (the runs stay: closing a page does not stop them)
+//   star, no plot, no run that ended, as fresh as a new session (a run that
+//   still runs stays: closing a page does not stop it either)
 function newTarget() {
   document.querySelectorAll('main input, main select').forEach((el) => {
     if (el.type === 'checkbox') el.checked = el.defaultChecked;
@@ -566,11 +645,19 @@ function newTarget() {
   $('fipcard').classList.remove('on');
   if (window.Plotly) { Plotly.purge($('fipplot')); Plotly.purge($('foldplot')); }
   $('foldbuttons').innerHTML = ''; $('foldnote').textContent = '';
+  $('fipeach').innerHTML = ''; $('fipstatus').innerHTML = '';
+  syncMirrors();
   view = null;
   quick = null;
   pview = null;
   lastRV = null;
   onDisk = null;
+  showDiskPoints();
+  // the runs that ended, the quick looks, the archive in memory: forgotten
+  //   here and by the server (a run still running is kept: Stop stops it)
+  for (const [id, job] of [...jobs]) if (job.status !== 'running') { jobs.delete(id); openLogs.delete(id); }
+  renderJobs();
+  api('/api/forget', {}).catch(() => {});
   history.replaceState(null, '', location.pathname);
   updateCommands();
   checkArchives();
@@ -592,6 +679,12 @@ document.addEventListener('input', (e) => {
 });
 document.addEventListener('change', (e) => {
   if (e.target.dataset && e.target.dataset.inst) setExcluded(e.target.dataset.inst, !e.target.checked);
+  if (e.target.dataset && e.target.dataset.mirror) {
+    const twin = reportBox(e.target.dataset.mirror);
+    if (twin) { twin.checked = e.target.checked; twin.dispatchEvent(new Event('change', { bubbles: true })); }
+    return;
+  }
+  if (e.target.dataset && e.target.dataset.for === 'detailed' && ARCHIVES.includes(e.target.dataset.opt)) syncMirrors();
   // an archive ticked or not: the plot shows what the report will use
   if (e.target.dataset && e.target.dataset.for === 'detailed' && ['dace', 'carmenes'].includes(e.target.dataset.opt)
       && $('plotcard').classList.contains('on')) plotVelocities();
@@ -666,8 +759,13 @@ document.addEventListener('click', async (e) => {
 
 (async () => {
   $('detailed-options').innerHTML = renderOptions('detailed');
-  langHooks.push(showCwd, renderJobs, renderFiles, checkArchives);
-  jobDoneHooks.push((job) => { if (job.action === 'gather') checkArchives(); if (job.action === 'archive') refreshInfo(); });
+  langHooks.push(showCwd, renderJobs, renderFiles, checkArchives, () => { if (quick && quick.each) drawEach(quick.each); });
+  jobDoneHooks.push(async (job) => {
+    if (job.action === 'archive') refreshInfo();
+    if (job.action !== 'gather') return;
+    checkArchives();
+    if (job.status === 'done') archivesByDefault(await diskState());
+  });
   jobStartHooks.push((action) => { if (action === 'gather') checkArchives(); });
   applyLang();
   await refreshInfo();

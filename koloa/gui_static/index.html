@@ -51,6 +51,10 @@
         <label><span><span data-i18n="root">Archives folder</span> <button type="button" class="info" data-help="root" aria-label="?">i</button></span>
           <span class="picker"><input id="root" type="text" value="archives" autocomplete="off"><button type="button" data-pick="folder" data-into="root" title="..." >...</button></span></label>
       </div>
+      <div class="checks" id="archchecks"><span class="hint" data-i18n="arch_plot">Archives gathered for the star:</span>
+        <label><input type="checkbox" data-mirror="dace"> DACE <span class="hint" id="pts-dace"></span></label>
+        <label><input type="checkbox" data-mirror="carmenes"> CARMENES DR1 <span class="hint" id="pts-carmenes"></span></label>
+        <button type="button" class="info" data-help="arch_plot" aria-label="?">i</button></div>
       <div class="row">
         <button id="plot" type="button" data-i18n="plot">Plot</button>
         <span id="rvnote" class="hint"></span>
@@ -84,6 +88,7 @@
       <div id="fipplot" class="plot"></div>
       <div class="dual" id="pdual"><div class="track"></div><div class="sel" id="psel"></div>
         <input type="range" id="plo" min="0" max="1000" value="0" aria-label="period min"><input type="range" id="phi" min="0" max="1000" value="1000" aria-label="period max"></div>
+      <div id="fipeach"></div>
       <div class="row"><button type="button" id="refip" class="small" data-i18n="refip">Recompute the FIP</button><span class="hint" id="fipstale"></span></div>
       <h2 class="foldhead"><span data-i18n="fold_title">The fold at a peak</span> <button type="button" class="info" data-help="fold" aria-label="?">i</button></h2>
       <div class="row" id="foldbuttons"></div>

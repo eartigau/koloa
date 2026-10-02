@@ -124,10 +124,16 @@ def test_the_file_and_the_archives_are_told_apart(tmp_path):
     write_rv(RVData(times, rng.normal(0, 3, len(times)),
                     np.full(len(times), 1.0), inst=insts),
              str(tmp_path / 'arch' / 'GJ_436' / 'rv' / 'all_rv.csv'))
-    # the archives not asked for: the file alone
+    # the archives not asked for: the file alone, and a word of what was
+    #   gathered and not ticked
     res = gui.velocities(str(tmp_path / 'lbl.csv'), 'GJ 436',
                          str(tmp_path / 'arch'))
     assert [inst['name'] for inst in res['instruments']] == ['NIRPS']
+    assert 'DACE: 45 points gathered, not ticked' in res['notes']
+    # no file, nothing ticked: nothing, and why
+    res = gui.velocities('', 'GJ 436', str(tmp_path / 'arch'))
+    assert res['instruments'] == [] and any(
+        'CARMENES DR1: 12 points' in note for note in res['notes'])
     res = gui.velocities(str(tmp_path / 'lbl.csv'), 'GJ 436',
                          str(tmp_path / 'arch'), dace=True, carmenes=True)
     got = {inst['name']: (inst['source'], inst['n'])
@@ -194,6 +200,47 @@ def test_the_quick_look(tmp_path, monkeypatch):
     assert first['id'] == 1 and first['named']
     assert abs(first['period'] / 5.3 - 1) < 0.01
     assert abs(res['folds'][0]['K'] - 8.0) < 4 * res['folds'][0]['K_err']
+    assert state['each'] == []   # one instrument: the joint FIP is its own
     pdf = gui.quicklook_pdf(opts, qid=state['id'],
                             command_line='koloa star.csv --detailed')
     assert pdf[:4] == b'%PDF'
+
+
+def test_each_instrument_has_its_own_quick_fip(tmp_path, monkeypatch):
+    """several instruments: the joint FIP, then each instrument's own (one
+    with too few nights is skipped), in the PDF too; a new target forgets
+    the quick looks"""
+    import time
+    from koloa.simulate import simulate
+    from koloa.gather import write_rv
+    files = []
+    for seed, label, nvisits in ((3, 'AAA', 40), (4, 'BBB', 30),
+                                 (5, 'CCC', 6)):
+        sim = simulate(planets=[dict(P=5.3, K=8.0, e=0.0, tp=60000.0)],
+                       err=1.5, seed=seed, nvisits=nvisits, per_visit=1,
+                       baseline=300)['data']
+        write_rv(sim, str(tmp_path / f'{label}.csv'))
+        files.append(dict(path=str(tmp_path / f'{label}.csv'), label=label))
+    monkeypatch.setattr(gui, 'QUICK', dict(kmax=1, nsweep=150, nburn=80))
+    opts = dict(files=files)
+    state = gui.quick_fip(opts)
+    for _ in range(600):
+        state = gui.quick_state(state['id'])
+        if state['status'] != 'running':
+            break
+        time.sleep(0.5)
+    assert state['status'] == 'done', state['error']
+    each = {one['name']: one for one in state['each']}
+    assert set(each) == {'AAA', 'BBB', 'CCC'}
+    assert each['CCC']['skipped'] and each['CCC']['n'] == 6
+    for name in ('AAA', 'BBB'):
+        one = each[name]
+        assert not one['skipped']
+        assert len(one['period']) == len(one['family']) == len(one['alone'])
+        assert one['peaks'] and one['peaks'][0]['period'] > 0
+    assert abs(each['AAA']['peaks'][0]['period'] / 5.3 - 1) < 0.01, each['AAA']['peaks']
+    assert abs(state['result']['peaks'][0]['period'] / 5.3 - 1) < 0.01
+    pdf = gui.quicklook_pdf(opts, qid=state['id'])
+    assert pdf[:4] == b'%PDF'
+    gui.forget()
+    assert state['id'] not in gui.QUICKS

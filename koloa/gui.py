@@ -377,7 +377,10 @@ def archives(target: str, root: str = '') -> Dict[str, Any]:
         manifest = json.load(handle)
     return dict(exists=True, folder=folder, created=manifest.get('created'),
                 archives={key: val.get('status') for key, val in
-                          manifest.get('archives', {}).items()})
+                          manifest.get('archives', {}).items()},
+                points={key: val.get('npoints') for key, val in
+                        manifest.get('archives', {}).items()
+                        if val.get('npoints')})
 
 
 #: what a dialog of this machine says, by what it picks
@@ -487,7 +490,11 @@ def series_of(files: Any = '', target: str = '', root: str = '',
                      np.char.startswith(gathered.inst.astype(str), 'CARM'),
                      carmenes)):
                 # only the archives the report will use
-                if not asked or not np.any(sel):
+                if not np.any(sel):
+                    continue
+                if not asked:
+                    notes.append(f'{arch}: {int(np.sum(sel))} points '
+                                 f'gathered, not ticked')
                     continue
                 part = gathered.select(sel)
                 if filedata is not None:
@@ -537,6 +544,8 @@ def velocities(files: Any = '', target: str = '', root: str = '',
 QUICK = dict(kmax=2, nsweep=500, nburn=200)
 #: the periods of the window of a series from the ground [days]
 WINDOW = dict(day=0.99727, month=29.5306, year=365.25)
+#: the fewest nights for an instrument to have a quick FIP of its own
+QUICK_MIN_NIGHTS = 10
 #: the quick looks of this session
 QUICKS: Dict[str, Dict[str, Any]] = {}
 #: one quick FIP at a time (they share the progress hook of koloa.fip)
@@ -590,20 +599,29 @@ def _fip_curves(res, nbin: int = 3000) -> Dict[str, Any]:
     return out
 
 
+#: a FIP of the period or any of its aliases below which a family is
+#: certain: families below it are told apart by the FIP of the period alone
+#: (1e-17 and 1e-76 say the same thing)
+FAMILY_FLOOR = 1e-6
+
+
 def _distinct_peaks(res, width: float, nmax: int = 8
                     ) -> List[Dict[str, Any]]:
     """the peaks of the FIP, one per family of aliases, the best first:
     within a family (all at the same FIP of the period or any of its
     aliases), the period whose own FIP is the lowest, the others its
-    aliases"""
+    aliases; a peak is a dip of the FIP of the period alone (not a point of
+    a flat stretch at 1, where the period itself has nothing)"""
     from koloa.aliases import same_family
     fam = np.asarray(res.family if res.family is not None else res.fip)
     alone = np.asarray(res.fip)
     freq = np.asarray(res.freq)
     low = np.where((alone[1:-1] <= alone[:-2]) & (alone[1:-1] <= alone[2:])
+                   & (alone[1:-1] < 1.0 - 1e-6)
                    & (fam[1:-1] < 1.0))[0] + 1
     out: List[Dict[str, Any]] = []
-    for idx in low[np.lexsort((alone[low], fam[low]))]:
+    order = np.lexsort((alone[low], np.maximum(fam[low], FAMILY_FLOOR)))
+    for idx in low[order]:
         per = float(1.0 / freq[idx])
         if any(same_family(old['period'], per, width) for old in out):
             continue
@@ -745,6 +763,34 @@ def _run_quick(qid: str, data, target: str):
                 inflation={str(key): float(val) for key, val in
                            info.get('inflation', {}).items()},
                 settings=dict(QUICK, gp='none', trend=1))
+            # the FIP of each instrument on its own (its jitter sampled in
+            #   the FIP, no inflation needed), when there are several
+            insts = list(nights.instruments)
+            job['each'] = []
+            if len(insts) > 1:
+                from koloa.fip import oafip
+                from koloa.utils import blas_threads
+                for rank, inst in enumerate(insts):
+                    sub = nights.select(nights.inst == inst)
+                    if sub.n < QUICK_MIN_NIGHTS:
+                        job['each'].append(dict(name=str(inst), n=int(sub.n),
+                                                skipped=True))
+                        continue
+                    job['step'] = 'inst'
+                    job['step_detail'] = f'{rank + 1}/{len(insts)}: {inst}'
+                    job['progress'] = None
+                    with blas_threads(1):
+                        one = oafip(sub, kmax=QUICK['kmax'], outliers='both',
+                                    nsweep=QUICK['nsweep'],
+                                    nburn=QUICK['nburn'], nchains=2,
+                                    seed=3 + rank, progress=False, gp=None,
+                                    trend=1, nightly=False,
+                                    label=f'quick FIP of {inst}')
+                    job['each'].append(dict(
+                        _fip_curves(one), name=str(inst), n=int(sub.n),
+                        skipped=False,
+                        peaks=_distinct_peaks(one, 1.0 / max(sub.baseline,
+                                                             1.0), nmax=3)))
             job['status'] = 'done'
         except Exception as err:
             job['status'] = 'failed'
@@ -761,6 +807,7 @@ def quick_fip(opts: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError('no velocities to look at')
     qid = uuid.uuid4().hex[:8]
     QUICKS[qid] = dict(id=qid, status='running', step='waiting',
+                       step_detail='', each=[],
                        progress=None, result=None, error=None,
                        start=time.time(), end=None,
                        instruments=list(data.instruments))
@@ -770,13 +817,33 @@ def quick_fip(opts: Dict[str, Any]) -> Dict[str, Any]:
     return quick_state(qid)
 
 
+def forget() -> Dict[str, Any]:
+    """
+    A new target: the server forgets what the page did, as a new session
+    would (its runs that ended, its quick looks, the copy of the NASA
+    Exoplanet Archive read into memory, read again from disk when asked);
+    a run still running is kept (a process of its own: stopping it is the
+    page's Stop), and nothing on disk is touched
+
+    :return: dict, the runs kept
+    """
+    from koloa import archive as karchive
+    for jid in [jid for jid, job in JOBS.items()
+                if job.returncode is not None]:
+        del JOBS[jid]
+    # a quick FIP that runs ends on its own, unseen
+    QUICKS.clear()
+    karchive._TABLES = None
+    return dict(kept=[job.id for job in JOBS.values()])
+
+
 def quick_state(qid: str) -> Dict[str, Any]:
     """what the page shows of a quick FIP"""
     job = QUICKS[qid]
     return dict(job, elapsed=(job['end'] or time.time()) - job['start'])
 
 
-def _quicklook_figures(data, source, quick, xr, yr, pr, title):
+def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=()):
     """the figures of the quick look: the velocities shown, the quick FIP
     with its peaks named, the folds at them"""
     import matplotlib
@@ -813,7 +880,14 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title):
     per = np.asarray(quick['period'])
     ax.plot(per, quick['alone'], color='0.6', lw=0.8,
             label='the period alone')
-    ax.plot(per, quick['family'], color=kplot.C['koloa'], lw=1.0,
+    # each instrument in its colour, under the joint FIP (in black: the
+    #   colour of the first instrument is koloa's blue)
+    valid = [item for item in each if not item.get('skipped')]
+    for item in valid:
+        ax.plot(item['period'], item['family'], lw=0.7, alpha=0.85,
+                color=colour.get(item['name'], '0.5'),
+                label=f'{item["name"]} alone (period or alias)')
+    ax.plot(per, quick['family'], color=kplot.C['text'], lw=1.0,
             label='the period or any of its aliases')
     ax.axhline(2, color='0.3', lw=0.8, ls=':', label='FIP = 1 %')
     lo, hi = pr if pr else (per.min(), per.max())
@@ -849,6 +923,33 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title):
                  f'pass(es)', fontsize=9)
     fig.tight_layout()
     figs.append(('fip', fig))
+    if valid:
+        fig, axes = plt.subplots(len(valid), 1, sharex=True, squeeze=False,
+                                 figsize=(10, 0.6 + 1.5 * len(valid)))
+        for ax, item in zip(axes[:, 0], valid):
+            ax.plot(item['period'], item['alone'], color='0.6', lw=0.7)
+            ax.plot(item['period'], item['family'], lw=0.9,
+                    color=colour.get(item['name'], 'k'))
+            ax.axhline(2, color='0.3', lw=0.7, ls=':')
+            for pl in quick['known']:
+                if lo <= pl['P'] <= hi:
+                    ax.axvline(pl['P'], color=kplot.C['outlier'], lw=0.8,
+                               ls='--')
+            best = item['peaks'][0] if item['peaks'] else None
+            ax.text(0.005, 0.92, f'{item["name"]}, {item["n"]} nights'
+                    + (f'; best {best["period"]:.4f} d, FIP '
+                       f'{best["family"]:.1e}' if best else ''),
+                    transform=ax.transAxes, fontsize=8, va='top')
+            # room above the curve for the label of the panel
+            ax.set_ylim(0, max(2.4, 1.4 * max(item['family'])))
+            ax.set_ylabel('-log$_{10}$ FIP', fontsize=7)
+        ax = axes[-1, 0]
+        ax.set_xscale('log')
+        kplot.plain_log_ticks(ax, 'x')
+        ax.set_xlim(lo, hi)
+        ax.set_xlabel('period [d]')
+        fig.tight_layout(h_pad=0.3)
+        figs.append(('each', fig))
     folds = quick.get('folds') or []
     if folds:
         ncol = min(3, len(folds))
@@ -875,7 +976,7 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title):
 
 
 def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
-                   command_line: str) -> str:
+                   command_line: str, each=()) -> str:
     """the quick look in LaTeX: its figures, then a page of numbers"""
     import platform
     import textwrap
@@ -891,13 +992,17 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
         series='The velocities shown, each instrument about its median, in '
                'the ranges of the page.',
         fip='The quick FIP of the series shown: of the period or any of its '
-            'aliases (blue, what decides on a planet) and of the period '
+            'aliases (black, what decides on a planet) and of the period '
             'alone (grey); FIP = 1 \\% dotted, the window (a day, a synodic '
             'month, a year) dotted, the known planets dashed; the peaks '
             'below a FIP of 10 \\% (or the best three) numbered.',
         folds='The nightly means folded at each numbered peak: a sinusoid '
               'fitted with an offset per instrument and the trend, phase 0 '
-              'at the conjunction.')
+              'at the conjunction.',
+        each='The quick FIP of each instrument on its own (its nightly '
+             'means, its jitter sampled in the FIP): of the period or any '
+             'of its aliases (colour) and of the period alone (grey); '
+             'FIP = 1 \\% dotted, the known planets dashed.')
     for name in figs:
         out.append('\\begin{figure}[H]\\centering\n'
                    f'\\includegraphics[width=\\linewidth,height=0.27'
@@ -1001,6 +1106,19 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
                                    if same_family(pl['P'], pk['period'],
                                                   width)), ' (no peak)')
                            for pl in quick['known']) + '.\n')
+    if each:
+        out.append('\\subsection*{The FIP of each instrument}\n'
+                   '{\\small\\begin{tabular}{@{}lrl@{}}\n\\toprule\n'
+                   'Instrument & Nights & Its best peaks: P [d] (FIP, P or '
+                   'alias) \\\\\n\\midrule')
+        for item in each:
+            what = ('fewer than ' + str(QUICK_MIN_NIGHTS) + ' nights: no '
+                    'FIP of its own' if item.get('skipped') else
+                    '; '.join(f'{pk["period"]:.4f} ({pk["family"]:.1e})'
+                              for pk in item['peaks']) or 'none')
+            out.append(f'{escape(item["name"])} & {item["n"]} & '
+                       f'{escape(what)} \\\\')
+        out.append('\\bottomrule\n\\end{tabular}}\n')
     if command_line:
         out.append('\\subsection*{The detailed report}\n'
                    'The command line of the detailed report, as the page '
@@ -1039,9 +1157,10 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
     data, source, _ = selection(opts)
     if data is None:
         raise ValueError('no velocities to draw')
-    quick = (QUICKS.get(qid) or {}).get('result')
+    job = QUICKS.get(qid) or {}
+    quick, each = job.get('result'), job.get('each') or []
     title = (opts.get('target') or '').strip() or 'the series'
-    figs = _quicklook_figures(data, source, quick, xr, yr, pr, title)
+    figs = _quicklook_figures(data, source, quick, xr, yr, pr, title, each)
     tmp = tempfile.mkdtemp(prefix='koloa_quicklook_')
     try:
         for name, fig in figs:
@@ -1050,7 +1169,7 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
         with open(tex, 'w') as handle:
             handle.write(_quicklook_tex(data, source, quick, opts, xr, yr, pr,
                                         [name for name, _ in figs],
-                                        command_line))
+                                        command_line, each))
         pdf = compile_pdf(tex)
         if pdf and os.path.exists(pdf):
             with open(pdf, 'rb') as handle:
@@ -1198,6 +1317,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(pdf)
                 return None
+            if path == '/api/forget':
+                return self._json(forget())
             if path == '/api/stop':
                 job = JOBS[body['id']]
                 if job.returncode is None:
