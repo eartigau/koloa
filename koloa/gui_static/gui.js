@@ -437,6 +437,12 @@ function drawFip(r, elapsed) {
     notes.push({ x: Math.log10(pl.P), y: 0.92, xref: 'x', yref: 'paper', text: pl.name, showarrow: false, xanchor: 'left', font: { size: 10, color: '#e66767' } });
   }
   lines.push({ type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: 2, y1: 2, line: { color: '#a8b4ca', width: 1, dash: 'dot' } });
+  // the numbered peaks
+  for (const pk of r.peak_list.filter((p) => p.named)) {
+    notes.push({ x: Math.log10(pk.period), y: -Math.log10(Math.max(pk.family, 1e-15)), xref: 'x', yref: 'y',
+      text: `<b>#${pk.id}</b>`, showarrow: true, arrowhead: 0, ax: 0, ay: -22, font: { size: 12, color: '#ffffff' },
+      arrowcolor: '#a8b4ca', hovertext: `#${pk.id}: ${pk.period.toFixed(4)} d, FIP ${pk.family.toExponential(1)}` });
+  }
   Plotly.newPlot(div, [
     { x: r.period, y: r.alone, name: t('alone'), type: 'scatter', mode: 'lines', line: { color: '#8a93a3', width: 1 },
       hovertemplate: '%{x:.4f} d<br>-log10 FIP %{y:.2f}<extra></extra>' },
@@ -458,6 +464,34 @@ function drawFip(r, elapsed) {
   const per = r.period;
   pview = { dom: [per[0], per[per.length - 1]], p: [per[0], per[per.length - 1]] };
   syncPeriods();
+  // the folds at the numbered peaks
+  $('foldbuttons').innerHTML = (r.folds || []).map((f) => `<button type="button" class="small" data-fold="${f.id}">#${f.id} \u00b7 ${f.period.toFixed(4)} d</button>`).join('');
+  if (r.folds && r.folds.length) showFold(r.folds[0].id);
+}
+
+function showFold(id) {
+  const f = ((quick && quick.result && quick.result.folds) || []).find((x) => x.id === +id);
+  if (!f) return;
+  document.querySelectorAll('[data-fold]').forEach((b) => b.classList.toggle('on', +b.dataset.fold === f.id));
+  $('foldnote').innerHTML = `<b>#${f.id}</b>: P = ${f.period.toFixed(4)} d, K = ${f.K.toFixed(2)} \u00b1 ${f.K_err.toFixed(2)} m/s, `
+    + `rms ${f.rms.toFixed(2)} m/s \u00b7 ${esc(t('fold_note'))}`;
+  const order = (lastRV || []).map((inst) => inst.name);
+  const traces = f.instruments.map((inst) => {
+    const i = Math.max(0, order.indexOf(inst.name));
+    return { x: inst.phase, y: inst.rv, name: inst.name, type: 'scatter', mode: 'markers',
+      error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: COLOURS[i % 8] },
+      marker: { color: COLOURS[i % 8], symbol: SYMBOLS[i % 8], size: 7, line: { color: '#08111f', width: 1 } },
+      hovertemplate: `${inst.name}<br>phase %{x:.3f}<br>%{y:.2f} m/s<extra></extra>` };
+  });
+  traces.push({ x: f.curve.phase, y: f.curve.rv, name: `K = ${f.K.toFixed(2)} m/s`, type: 'scatter', mode: 'lines',
+    line: { color: '#e8eef8', width: 2 }, hoverinfo: 'skip' });
+  const axis = { gridcolor: 'rgba(200,220,255,0.10)', zerolinecolor: 'rgba(200,220,255,0.25)', color: '#7a8597' };
+  $('foldplot').classList.add('on');
+  Plotly.newPlot('foldplot', traces, {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(4,8,16,0.35)', font: { family: 'Space Grotesk, sans-serif', color: '#e8eef8' },
+    margin: { ...PLOT_MARGIN, t: 30 }, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' },
+    xaxis: { ...axis, title: t('phase_axis'), range: [0, 1] }, yaxis: { ...axis, title: 'RV [m/s]' },
+  }, { responsive: true, displaylogo: false });
 }
 
 // the period slider, on a log scale
@@ -490,7 +524,7 @@ async function quicklookPdf() {
   try {
     const resp = await fetch('/api/quicklook_pdf', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ options: opts, x: view ? view.x : null, y: view ? view.y : null, p: pview ? pview.p : null,
-        quick: quick && quick.status === 'done' ? quick.id : '' }) });
+        quick: quick && quick.status === 'done' ? quick.id : '', command: $('cmd-detailed').textContent }) });
     if (!resp.ok) throw new Error((await resp.json()).error || resp.statusText);
     const link = document.createElement('a');
     link.href = URL.createObjectURL(await resp.blob());
@@ -521,7 +555,8 @@ function newTarget() {
   $('rvplot').classList.remove('on');
   $('plotcard').classList.remove('on');
   $('fipcard').classList.remove('on');
-  if (window.Plotly) Plotly.purge($('fipplot'));
+  if (window.Plotly) { Plotly.purge($('fipplot')); Plotly.purge($('foldplot')); }
+  $('foldbuttons').innerHTML = ''; $('foldnote').textContent = '';
   view = null;
   quick = null;
   pview = null;
@@ -570,6 +605,7 @@ $('plo').addEventListener('input', periodsFromSliders);
 $('phi').addEventListener('input', periodsFromSliders);
 $('refip').addEventListener('click', startQuick);
 $('pdf').addEventListener('click', quicklookPdf);
+document.addEventListener('click', (e) => { const b = e.target.closest('[data-fold]'); if (b) showFold(b.dataset.fold); });
 $('fullrange').addEventListener('click', () => { $('clip').checked = false; view = null; refitY(); });
 window.addEventListener('resize', () => { if (view) setTimeout(syncSliders, 100); });
 $('run-gather').addEventListener('click', () => run('gather', options('gather')));

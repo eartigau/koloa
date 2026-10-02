@@ -188,5 +188,12 @@ def test_the_quick_look(tmp_path, monkeypatch):
     assert len(res['period']) == len(res['family']) == len(res['alone'])
     assert abs(res['peaks'][0]['period'] / 5.3 - 1) < 0.01
     assert res['passes'] == 2 and res['window']['year'] == 365.25
-    pdf = gui.quicklook_pdf(opts, qid=state['id'])
+    # the peaks numbered, one per family of aliases, the planet first, and
+    #   folded there with its K
+    first = res['peak_list'][0]
+    assert first['id'] == 1 and first['named']
+    assert abs(first['period'] / 5.3 - 1) < 0.01
+    assert abs(res['folds'][0]['K'] - 8.0) < 4 * res['folds'][0]['K_err']
+    pdf = gui.quicklook_pdf(opts, qid=state['id'],
+                            command_line='koloa star.csv --detailed')
     assert pdf[:4] == b'%PDF'

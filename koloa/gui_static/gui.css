@@ -162,3 +162,8 @@ h2 .hint { font-weight: 400; font-size: 0.85rem; }
 #fipcard .pbar span { display: block; height: 100%; background: var(--accent); transition: width 1s linear; }
 #fipcard .ptext { font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; }
 #pdual { margin-top: 2px; }
+
+/* the fold at a peak */
+#foldplot.plot.on { height: min(46vh, 420px); }
+.foldhead { margin-top: 18px; }
+[data-fold].on { background: rgba(98, 194, 255, 0.35); border-color: var(--accent); color: #fff; }
