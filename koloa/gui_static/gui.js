@@ -97,7 +97,9 @@ function checkArchives() {
 
 // the archives gathered, by the velocities: the same choice as the report's
 //   DACE and CARMENES DR1 boxes (what is plotted is what the report uses)
-const ARCHIVES = ['dace', 'carmenes'];
+const ARCHIVES = ['dace', 'carmenes', 'vizier'];
+// the archives of the manifest of a gather, by box
+const ARCHIVE_KEY = { dace: 'dace', carmenes: 'carmenes', vizier: 'published' };
 function reportBox(key) { return document.querySelector(`input[data-for="detailed"][data-opt="${key}"]`); }
 function syncMirrors() {
   document.querySelectorAll('[data-mirror]').forEach((box) => { const twin = reportBox(box.dataset.mirror); if (twin) box.checked = twin.checked; });
@@ -105,7 +107,8 @@ function syncMirrors() {
 function showDiskPoints() {
   const pts = (onDisk && onDisk.exists && onDisk.points) || {};
   for (const key of ARCHIVES) {
-    $(`pts-${key}`).textContent = pts[key] ? `(${pts[key]} ${t('points_word')})` : onDisk && onDisk.exists ? '(0)' : '';
+    const num = pts[ARCHIVE_KEY[key]];
+    $(`pts-${key}`).textContent = num ? `(${num} ${t('points_word')})` : onDisk && onDisk.exists ? '(0)' : '';
   }
   if (!(onDisk && onDisk.exists)) $('pts-dace').textContent = $('target').value.trim() ? `(${t('nothing_gathered')})` : '';
 }
@@ -120,7 +123,7 @@ function archivesByDefault(disk) {
   if (ARCHIVES.some((key) => reportBox(key) && reportBox(key).checked)) return false;
   let ticked = false;
   for (const key of ARCHIVES) {
-    if ((disk.points || {})[key] && reportBox(key)) { reportBox(key).checked = true; ticked = true; }
+    if ((disk.points || {})[ARCHIVE_KEY[key]] && reportBox(key)) { reportBox(key).checked = true; ticked = true; }
   }
   syncMirrors();
   updateCommands();
@@ -190,6 +193,10 @@ function massText(f) {
   return `<span class="massnote">${esc(what)} = ` + units.map(([u, s]) => `<b>${fmt(mm.best / s)}</b> \u2212${fmt(mm.lo / s)} +${fmt(mm.hi / s)} ${u}`).join(' = ')
     + ` <span class="hint">(M\u2605 = ${mm.M.toFixed(3)} \u00b1 ${mm.Merr.toFixed(3)} M\u2609)</span></span>`;
 }
+
+// a name as a trace's uid (Plotly makes CSS selectors of them: 'HIRES
+//   (Teklu+ 2025)' would break one)
+const safeId = (name) => String(name).replace(/[^A-Za-z0-9_-]/g, '_');
 
 function tile(label, value, wide) {
   return `<div class="stat${wide ? ' wide' : ''}"><div class="label">${esc(label)}</div><div class="value">${value}</div></div>`;
@@ -265,7 +272,7 @@ async function plotVelocities() {
   // the archives the report will use, and only those
   const asked = readOptions('detailed');
   const q = new URLSearchParams({ files: JSON.stringify(filesNow()), target: $('target').value.trim(), root: $('root').value.trim(),
-    dace: asked.dace ? '1' : '', carmenes: asked.carmenes ? '1' : '' });
+    dace: asked.dace ? '1' : '', carmenes: asked.carmenes ? '1' : '', vizier: asked.vizier ? '1' : '' });
   try {
     const res = await api(`/api/rv?${q}`);
     // the quick FIP on its own for one instrument; for several, once those
@@ -610,7 +617,7 @@ let pview = null;   // the periods shown, and their domain
 function shownOptions() {
   const asked = readOptions('detailed');
   return { files: filesNow(), target: $('target').value.trim(), root: $('root').value.trim(),
-    dace: !!asked.dace, carmenes: !!asked.carmenes, exclude: $('exclude').value,
+    dace: !!asked.dace, carmenes: !!asked.carmenes, vizier: !!asked.vizier, exclude: $('exclude').value,
     trend: !!asked.trend, curvature: !!asked.curvature, subtract: subtractList };
 }
 
@@ -751,7 +758,7 @@ function drawFip(r, each) {
   document.querySelectorAll('[data-fipview]').forEach((b) => b.classList.toggle('on', b.dataset.fipview === (valid.length ? fipView : 'joint')));
   for (const one of valid) {
     traces.push({ x: one.period, y: one.family, name: `${one.name} ${t('inst_alone')}`, type: 'scatter', mode: 'lines',
-      uid: `each-${one.name}`, visible: fipView === 'each',
+      uid: `each-${safeId(one.name)}`, visible: fipView === 'each',
       line: { color: instColour(one.name), width: 1 }, opacity: 0.85, legendrank: 10 + traces.length,
       hovertemplate: `${esc(one.name)}<br>%{x:.4f} d<br>-log10 FIP %{y:.2f}<extra></extra>` });
   }
@@ -1150,14 +1157,14 @@ function showModel() {
       if (pub) yp.push(modelAt({ model: pub, period: pub.period }, inst.name, tt) - inst.zero);
     }
     if (ylo.length) {
-      traces.push({ x, y: ylo, type: 'scatter', mode: 'lines', uid: `model-lo-${inst.name}`, line: { width: 0 }, showlegend: false, hoverinfo: 'skip' },
-        { x, y: yhi, type: 'scatter', mode: 'lines', uid: `model-hi-${inst.name}`, line: { width: 0 }, fill: 'tonexty',
+      traces.push({ x, y: ylo, type: 'scatter', mode: 'lines', uid: `model-lo-${safeId(inst.name)}`, line: { width: 0 }, showlegend: false, hoverinfo: 'skip' },
+        { x, y: yhi, type: 'scatter', mode: 'lines', uid: `model-hi-${safeId(inst.name)}`, line: { width: 0 }, fill: 'tonexty',
           fillcolor: 'rgba(215,222,235,0.22)', showlegend: false, hoverinfo: 'skip' });
     }
-    traces.push({ x, y, type: 'scatter', mode: 'lines', uid: `model-${inst.name}`, name: `#${f.id} \u00b7 ${f.period.toFixed(4)} d`,
+    traces.push({ x, y, type: 'scatter', mode: 'lines', uid: `model-${safeId(inst.name)}`, name: `#${f.id} \u00b7 ${f.period.toFixed(4)} d`,
       legendgroup: 'model', showlegend: legend, line: { color: COLOURS[i % 8], width: 1.2 }, opacity: 0.9, hoverinfo: 'skip' });
     if (pub) {
-      traces.push({ x, y: yp, type: 'scatter', mode: 'lines', uid: `model-pub-${inst.name}`, legendgroup: 'pub', showlegend: legend,
+      traces.push({ x, y: yp, type: 'scatter', mode: 'lines', uid: `model-pub-${safeId(inst.name)}`, legendgroup: 'pub', showlegend: legend,
         name: `\u2605 ${f.published.name} (${t('published')})`, line: { color: '#f5a524', width: 1.2, dash: 'dash' }, hoverinfo: 'skip' });
     }
     legend = false;
@@ -1487,7 +1494,7 @@ document.addEventListener('change', (e) => {
   }
   if (e.target.dataset && e.target.dataset.for === 'detailed' && ARCHIVES.includes(e.target.dataset.opt)) syncMirrors();
   // an archive ticked or not: the plot shows what the report will use
-  if (e.target.dataset && e.target.dataset.for === 'detailed' && ['dace', 'carmenes'].includes(e.target.dataset.opt)
+  if (e.target.dataset && e.target.dataset.for === 'detailed' && ARCHIVES.includes(e.target.dataset.opt)
       && $('plotcard').classList.contains('on')) plotVelocities();
   // a period of the literature ticked: the SHO at it; none: back to the bands
   if (e.target.name === 'prot') {

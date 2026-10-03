@@ -93,7 +93,10 @@ def main(argv=None):
                              'CARMENES DR1')
     parser.add_argument('--vizier', action='store_true',
                         help='with --detailed: add the velocities published '
-                             'with the known planets (VizieR)')
+                             'on VizieR (the surveys: Keck HIRES, the APF, '
+                             'the Lick Hamilton, HARPS by SERVAL; the tables '
+                             'of the star\'s papers and of its known '
+                             'planets\'), koloa.published')
     parser.add_argument('--no-dace', action='store_true',
                         help='with --gather: not DACE')
     parser.add_argument('--no-archive', action='store_true',
@@ -106,7 +109,8 @@ def main(argv=None):
                              'analysis): VizieR .dat files (time velocity '
                              'error instrument) or csv/rdb files')
     parser.add_argument('--no-vizier', action='store_true',
-                        help='with --detailed: no VizieR (the default)')
+                        help='with --detailed: no VizieR (the default); with '
+                             '--gather: not the published velocities')
     parser.add_argument('--no-latex', action='store_true',
                         help='no LaTeX/PDF report (detailed analysis)')
     parser.add_argument('--site', default=None,
@@ -156,10 +160,13 @@ def main(argv=None):
                              'the TESS light curves of the star')
     parser.add_argument('--gather', nargs='?', const='.', default=None,
                         metavar='ROOT',
-                        help='gather what DACE, CARMENES DR1 and TESS have '
+                        help='gather what DACE, CARMENES DR1, VizieR (the '
+                             'published velocities: HIRES, APF, Lick, HARPS '
+                             'by SERVAL, the star\'s papers) and TESS have '
                              'of the star named instead of a file, in '
                              'ROOT/<star> (koloa.gather); --no-dace, '
-                             '--no-carmenes, --no-tess leave one out')
+                             '--no-carmenes, --no-vizier, --no-tess leave one '
+                             'out')
     parser.add_argument('--gui', action='store_true',
                         help="koloa's GUI in the browser (koloa.gui): the "
                              'SIMBAD resolver, the velocities by instrument, '
@@ -191,8 +198,10 @@ def main(argv=None):
     if args.refresh_archive:
         from koloa.archive import tables
         from koloa.gather import carmenes_objects
+        from koloa.published import refresh_lists
         tables(refresh=True)
         carmenes_objects(refresh=True)
+        refresh_lists()
         if not args.filename:
             return
     if not args.filename and not (args.detailed and args.target):
@@ -202,7 +211,7 @@ def main(argv=None):
         from koloa.gather import gather
         gather(args.filename[0], args.gather, dace=not args.no_dace,
                carmenes=not args.no_carmenes, tess=not args.no_tess,
-               refresh=args.refresh)
+               vizier=not args.no_vizier, refresh=args.refresh)
         return
     if args.detailed:
         detailed_analysis(args.filename or None, outdir=args.outdir,

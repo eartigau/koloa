@@ -39,6 +39,7 @@ exactly. That is what makes the outlier-aware FIP affordable.
 | `koloa.analyze` | all of the above on one series, with a report and figures |
 | `koloa.detailed` | `detailed_analysis`: everything koloa can say about a star from one file, with its known planets (archive), more data (DACE, the velocities published with its planets on VizieR, and any given), the FIP in two passes, the known planets tested at their periods, a GP of the activity, the activity indicators and why each outlier is one, as a LaTeX/PDF report |
 | `koloa.literature` | published velocities: a VizieR .dat or csv file read (times to BJD - 2400000, km/s to m/s), and the tables of the papers of a star's planets found on VizieR from their bibcodes |
+| `koloa.published` | the velocities published for one star on VizieR: the surveys (Keck HIRES to 2023, Teklu et al. 2025, and Tal-Or et al. 2019; the California Legacy Survey's HIRES, APF and Lick Hamilton, Rosenthal et al. 2021; the Lick Hamilton of Fischer et al. 2014; HARPS by SERVAL, Trifonov et al. 2020), the star found by its position in their lists of stars (kept on this machine), then the tables of the papers SIMBAD lists for it; each source its own offset, a spectrum published twice kept once |
 | `koloa.gpcheck` | the signals against a GP of the activity (its prior the rotation period of the archive): the likelihood each adds, periodograms whitened by the GP with false-alarm levels from simulations of its noise, and the whole series with the GP |
 | `koloa.latex` | the detailed analysis as a LaTeX report, compiled to PDF by pdflatex |
 
@@ -89,7 +90,9 @@ file's OBJECT column), its known planets in the NASA Exoplanet Archive
 some networks only, and the analysis goes on without it; a key in
 DACE_API_KEY or ~/.dacerc adds what its account may see), CARMENES DR1
 (`--carmenes`, corrected for the nightly zero points) and the velocities
-published with the known planets (`--vizier`). Without them, the report
+published on VizieR (`--vizier`: the surveys of Keck HIRES, the APF, the
+Lick Hamilton and HARPS by SERVAL, the tables of the star's papers and of
+its known planets). Without them, the report
 uses the files alone. The orbits are fitted
 with a trend in time in the likelihood, the acceleration of the star,
 reported in m/s/yr with its errors and drawn with the model
@@ -134,7 +137,11 @@ outliers, and every figure.
 from its SIMBAD name, in `archives/GJ_436`: the velocities of DACE (one
 file per instrument era, with the indicators), those of CARMENES DR1
 (corrected for the nightly zero points, through GAVO's TAP service), the
-TESS light curves of every sector, every velocity together in
+velocities published on VizieR (`rv/published/`, `koloa.published`: the
+surveys of Keck HIRES, the APF, the Lick Hamilton and HARPS by SERVAL,
+asked only when the star is in their lists, and the tables of the star's
+papers, a spectrum published twice kept once; `--no-vizier` not to), the
+TESS light curves of every sector, every velocity of DACE and CARMENES together in
 `rv/all_rv.csv`, the identifiers and the periods of variability SIMBAD
 lists in `target.json`, and what each archive gave (or why not) in
 `manifest.json`. From Python, `koloa.gather.gather('GJ 436', 'archives')`,

@@ -1056,6 +1056,29 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
         labels.append(os.path.basename(item) if isinstance(item, str)
                       else series.name)
         kinds.append(('given', '', ''))
+    if vizier and ident is not None:
+        # the surveys and the star's papers on VizieR (koloa.published),
+        #   then the papers of its known planets
+        from koloa import published as kpub
+        try:
+            pnotes = kpub.fetch(ident, os.path.join(dace_folder or outdir,
+                                                    'published'),
+                                refresh=refresh)
+        except (OSError, ValueError) as err:
+            pnotes = []
+            log(f'published velocities: {err}', 'warn')
+        for note in pnotes:
+            if note.get('file'):
+                others.append(RVData.from_csv(os.path.join(
+                    dace_folder or outdir, 'published', note['file']),
+                    inst='inst', name=note['reference']))
+                labels.append(note['reference'])
+                kinds.append(('VizieR', note['catalogue'], note['note']))
+            elif note['kind'] == 'survey':
+                sources.append(dict(kind='VizieR', label=note['reference'],
+                                    n=0, instruments={},
+                                    note=f'{note["catalogue"]}: '
+                                         f'{note["note"]}'))
     if vizier and known.get('planets') and ident is not None:
         pubs, notes = klit.fetch(known, [ident['main']] + ident['aliases'],
                                  os.path.join(outdir, 'literature'),

@@ -106,7 +106,8 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
             raise ValueError('a SIMBAD name to gather the archives of')
         args = [target, '--gather', str(opts.get('root') or 'archives')]
         args += ['--no-dace'] * off['dace'] + ['--no-carmenes'] * off[
-            'carmenes'] + ['--no-tess'] * off['tess']
+            'carmenes'] + ['--no-vizier'] * off['vizier'] + ['--no-tess'] * \
+            off['tess']
         if opts.get('refresh'):
             args.append('--refresh')
         return args
@@ -524,7 +525,8 @@ def gathering(target: str, root: str = '') -> bool:
 
 
 def series_of(files: Any = '', target: str = '', root: str = '',
-              dace: bool = False, carmenes: bool = False):
+              dace: bool = False, carmenes: bool = False,
+              vizier: bool = False):
     """
     The series of the page: its files, and the archives gathered for the
     star that are asked for (set apart from the files as the report does)
@@ -581,19 +583,42 @@ def series_of(files: Any = '', target: str = '', root: str = '',
                 notes.append(f'{arch} ({folder}): {part.n} points')
         else:
             notes.append(f'nothing gathered in {folder} yet')
+        # the velocities published on VizieR (koloa.published), their
+        #   spectra already in the series left out
+        pdir = os.path.join(folder, 'rv', 'published')
+        from koloa import published as kpub
+        pub = kpub.load(pdir) if os.path.isdir(pdir) else None
+        if pub is not None and not vizier:
+            notes.append(f'VizieR: {pub.n} points gathered, not ticked')
+        elif pub is not None:
+            kept = [(part.time, np.array([kpub.family(val)
+                                          for val in part.inst]))
+                    for part in series]
+            # the spectra the series has left out, and then an instrument
+            #   with too few velocities for an offset of its own
+            fresh = kpub.enough(kpub._new(pub, kept))
+            if fresh is not None:
+                series.append(fresh)
+                source.update({name: 'VizieR' for name in fresh.instruments})
+                notes.append(f'VizieR ({pdir}): {fresh.n} points'
+                             + (f' ({pub.n - fresh.n} the same spectra as '
+                                f'the others)' if fresh.n < pub.n else ''))
+            else:
+                notes.append('VizieR: only spectra the others have')
     if not series:
         return None, source, notes
     return (series[0] if len(series) == 1 else merge(series)), source, notes
 
 
 def velocities(files: Any = '', target: str = '', root: str = '',
-               dace: bool = False, carmenes: bool = False
-               ) -> Dict[str, Any]:
+               dace: bool = False, carmenes: bool = False,
+               vizier: bool = False) -> Dict[str, Any]:
     """
     The velocities of a file and of a star's gathered archives, by
     instrument (each with its median taken out), for the plot of the page
     """
-    data, source, notes = series_of(files, target, root, dace, carmenes)
+    data, source, notes = series_of(files, target, root, dace, carmenes,
+                                    vizier)
     if data is None:
         return dict(instruments=[], notes=notes)
     out = []
@@ -639,7 +664,7 @@ def selection(opts: Dict[str, Any]):
     data, source, notes = series_of(
         opts.get('files') or opts.get('file') or '', opts.get('target', ''),
         opts.get('root', ''), bool(opts.get('dace')),
-        bool(opts.get('carmenes')))
+        bool(opts.get('carmenes')), bool(opts.get('vizier')))
     left = {name.upper() for name in str(opts.get('exclude') or '')
             .replace(',', ' ').split()}
     if data is not None and left:
@@ -2456,7 +2481,8 @@ def _summary(page: Dict[str, Any], result: Dict[str, Any],
         files=[os.path.basename(row['path'])
                for row in page.get('files') or []],
         archives=[name for key, name in (('dace', 'DACE'),
-                                         ('carmenes', 'CARMENES DR1'))
+                                         ('carmenes', 'CARMENES DR1'),
+                                         ('vizier', 'VizieR'))
                   if detailed.get(key)],
         exclude=str(detailed.get('exclude') or ''),
         acceleration=result.get('acceleration'))
@@ -2515,6 +2541,7 @@ def _remember_into(folder: str, rid: str, target: str,
     src = os.path.join(root, folder_name(target)) if target else ''
     if src and os.path.isdir(os.path.join(src, 'rv')):
         dst = os.path.join(folder, 'archives', folder_name(target))
+        # rv/ whole: DACE, CARMENES and the published velocities
         shutil.copytree(os.path.join(src, 'rv'), os.path.join(dst, 'rv'))
         for name in ('target.json', 'manifest.json'):
             if os.path.exists(os.path.join(src, name)):
@@ -2528,7 +2555,8 @@ def _remember_into(folder: str, rid: str, target: str,
                      for row in files], target,
                     arch['copy'] if arch else root,
                     dace=bool(detailed.get('dace')),
-                    carmenes=bool(detailed.get('carmenes')))
+                    carmenes=bool(detailed.get('carmenes')),
+                    vizier=bool(detailed.get('vizier')))
     # the files by their own names, not their copies'
     names = {os.path.basename(row['copy']): os.path.basename(row['path'])
              for row in files}
@@ -2644,6 +2672,7 @@ def page_options(page: Dict[str, Any]) -> Dict[str, Any]:
     return dict(files=page.get('files') or [], target=page.get('target', ''),
                 root=page.get('root', ''), dace=bool(detailed.get('dace')),
                 carmenes=bool(detailed.get('carmenes')),
+                vizier=bool(detailed.get('vizier')),
                 exclude=str(detailed.get('exclude') or ''),
                 trend=detailed.get('trend', True),
                 curvature=bool(detailed.get('curvature')),
@@ -2778,7 +2807,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(velocities(
                     files, query.get('target', ''), query.get('root', ''),
                     dace=query.get('dace') == '1',
-                    carmenes=query.get('carmenes') == '1'))
+                    carmenes=query.get('carmenes') == '1',
+                    vizier=query.get('vizier') == '1'))
             if url.path == '/api/jobs':
                 return self._json([job.state(0) for job in JOBS.values()])
             if url.path == '/api/job':

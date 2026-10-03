@@ -26,6 +26,10 @@ The folder of a star (the name as given, spaces as underscores):
                          service, Ribas et al. 2023), every scalar column
     rv/carmenes/CARMENES.csv   the velocities corrected for the nightly zero
                          points (SERVAL's a_rv), with the indicators
+    rv/published/        the velocities published on VizieR (koloa.published:
+                         the surveys, Keck HIRES, the APF, the Lick
+                         Hamilton, HARPS by SERVAL; the tables of the star's
+                         papers), a CSV per source and published.json
     phot/tess/fits/      the TESS light curves of MAST, one per sector (the
                          best of SPOC 2-minute, TESS-SPOC, QLP)
     phot/tess/s<sector>_<pipeline>.csv   each sector: rjd, flux, sflux [ppt]
@@ -348,8 +352,8 @@ def tess_photometry(ident: Dict[str, Any], target: str, folder: str,
 # -----------------------------------------------------------------------------
 def gather(target: str, root: str = '.', dace: bool = True,
            carmenes: bool = True, tess: bool = True,
-           api_key: Any = None, refresh: bool = False
-           ) -> Dict[str, Any]:
+           api_key: Any = None, refresh: bool = False,
+           vizier: bool = True) -> Dict[str, Any]:
     """
     Everything public about a star, in root/<target> (see the module)
 
@@ -361,6 +365,9 @@ def gather(target: str, root: str = '.', dace: bool = True,
     :param dace: bool, the velocities of DACE
     :param carmenes: bool, the velocities of CARMENES DR1
     :param tess: bool, the light curves of TESS
+    :param vizier: bool, the velocities published on VizieR (the surveys:
+                   Keck HIRES, the APF, the Lick Hamilton, HARPS by SERVAL;
+                   the tables of the star's papers), koloa.published
     :param api_key: str, None or False: a DACE API key, None to look for
                     one (DACE_API_KEY, ~/.dacerc), False for the public
                     data only (the key is never written anywhere)
@@ -448,6 +455,33 @@ def gather(target: str, root: str = '.', dace: bool = True,
                 status='none', message='not in CARMENES DR1, or no '
                 'velocity corrected for the nightly zero points')
         outcome(_told(manifest['archives']['carmenes']))
+    if vizier:
+        step('VizieR')
+        from koloa.published import fetch as published_fetch
+        pdir = os.path.join(rvdir, 'published')
+        notes = attempt('published', lambda: published_fetch(
+            ident, pdir, refresh=refresh))
+        if notes is not None:
+            kept = [note for note in notes if note.get('file')]
+            insts: Dict[str, int] = {}
+            for note in kept:
+                for name, num in note['instruments'].items():
+                    insts[name] = insts.get(name, 0) + num
+            manifest['archives']['published'] = dict(
+                status='ok' if kept else 'none',
+                npoints=int(sum(insts.values())), instruments=insts,
+                sources=[dict(reference=note['reference'],
+                              catalogue=note['catalogue'], n=note['n'],
+                              kind=note['kind']) for note in kept],
+                files=[os.path.join('rv', 'published', note['file'])
+                       for note in kept],
+                message=('' if kept else 'no published velocity of the star '
+                         'in the surveys or its papers on VizieR'))
+            nsurv = sum(note['kind'] == 'survey' for note in kept)
+            outcome((_told(manifest['archives']['published'])
+                     + (f'; from {nsurv} survey{"s" * (nsurv != 1)} and '
+                        f'{len(kept) - nsurv} paper'
+                        f'{"s" * (len(kept) - nsurv != 1)}' if kept else '')))
     if tess:
         step('TESS')
         lcs = attempt('tess', lambda: tess_photometry(ident, target, photdir,

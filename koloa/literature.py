@@ -279,20 +279,26 @@ def _columns(fields: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
 
 
 def vizier_velocities(catalogue: str, names: Sequence[str],
-                      reference: str = '', timeout: float = 60.0
+                      reference: str = '', timeout: float = 60.0,
+                      strict: bool = False
                       ) -> Tuple[Optional[RVData], str]:
     """
     The published velocities of a star in a VizieR catalogue
 
     A table is the star's when its name or description names the star, or
     when a column of names does (its rows are then selected), or when it is
-    the only table of velocities of the catalogue.
+    the only table of velocities of the catalogue (strict: and the
+    catalogue's description names the star; a paper that only mentions the
+    star has the velocities of another).
 
     :param catalogue: str, e.g. J/A+A/680/A28
     :param names: list of str, the names of the star (SIMBAD's aliases)
     :param reference: str, the paper (for the instruments' names, when one
                       is not given)
     :param timeout: float [s]
+    :param strict: bool, the only table of velocities of a catalogue is the
+                   star's only when the catalogue names it (a paper found in
+                   the star's bibliography, not one of its planets)
 
     :return: tuple, the series (None when there is none) and what was found,
              in words
@@ -326,11 +332,14 @@ def vizier_velocities(catalogue: str, names: Sequence[str],
                    if re.search(rf'(?<![\w-]){re.escape(name)}(?![\w-])',
                                 words, re.IGNORECASE)]
         cols['spectrograph'] = spectro[0] if len(spectro) == 1 else None
+        cols['catalogue_named'] = bool(pattern and pattern.search(
+            words.lower()))
         candidates.append((table.get('name'), cols, named))
     if not candidates:
         return None, f'{catalogue} has no table of velocities'
     chosen = [cand for cand in candidates if cand[2] or cand[1]['star']]
-    if not chosen and len(candidates) == 1:
+    if not chosen and len(candidates) == 1 and (
+            not strict or candidates[0][1]['catalogue_named']):
         chosen = candidates
     if not chosen:
         return None, (f'{catalogue}: {len(candidates)} tables of velocities, '
