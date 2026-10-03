@@ -642,8 +642,8 @@ def _distinct_peaks(res, width: float, nmax: int = 8
     return out
 
 
-def fold(data, period: float, valid: Optional[np.ndarray] = None
-         ) -> Dict[str, Any]:
+def fold(data, period: float, valid: Optional[np.ndarray] = None,
+         trend: int = 1) -> Dict[str, Any]:
     """
     The series folded at a period: a sinusoid fitted with an offset per
     instrument and a trend (weighted least squares, the errors of K scaled
@@ -654,6 +654,8 @@ def fold(data, period: float, valid: Optional[np.ndarray] = None
                   valid (not an outlier), from the FIP: each point weighs
                   that much more in the fit (an outlier hardly counts), and
                   it is given back with the points
+    :param trend: int, the order of the trend fitted with it (0: none, 1: an
+                  acceleration, 2: and its change)
 
     :return: dict, period, K, K_err, tc, rms, the points of each instrument
              (about its offset and the trend, with their probability to be
@@ -663,7 +665,8 @@ def fold(data, period: float, valid: Optional[np.ndarray] = None
     tref = float(np.median(time_))
     insts = list(data.instruments)
     cols = [(data.inst == inst).astype(float) for inst in insts]
-    cols.append((time_ - tref) / 365.25)
+    cols += [((time_ - tref) / 365.25) ** order
+             for order in range(1, trend + 1)]
     arg = 2 * np.pi * (time_ - tref) / period
     cols += [np.cos(arg), np.sin(arg)]
     design = np.column_stack(cols)
@@ -705,7 +708,35 @@ def fold(data, period: float, valid: Optional[np.ndarray] = None
     return out
 
 
-def _run_quick(qid: str, data, target: str):
+def trend_order(opts: Dict[str, Any]) -> int:
+    """the order of the trend the report fits, from its boxes: 0 without
+    a trend, 1 an acceleration (the default), 2 with its change"""
+    if opts.get('curvature'):
+        return 2
+    return 0 if opts.get('trend') is False else 1
+
+
+def _quick_acceleration(fit, trend: int) -> Optional[Dict[str, Any]]:
+    """the acceleration of the star (dv/dt) the fit of the quick look
+    measured, and its change when fitted: (value, minus, plus) from the
+    Laplace covariance of the maximum a posteriori, and its significance"""
+    if trend < 1:
+        return None
+    from koloa.secular import acceleration
+    try:
+        acc = acceleration(fit)
+    except (ValueError, np.linalg.LinAlgError):
+        return None
+    out = dict(tref=float(acc['tref']))
+    for key in ('accel', 'jerk'):
+        if key in acc:
+            val, low, high = (float(x) for x in acc[key])
+            out[key] = [val, low, high]
+            out[key + '_sigma'] = abs(val) / max(0.5 * (low + high), 1e-30)
+    return out
+
+
+def _run_quick(qid: str, data, target: str, trend: int = 1):
     """the quick FIP, in a thread, in the two passes of the report without
     its GP: the errors of each instrument inflated to the noise of a fit
     without planets, a first FIP; then to the noise of a fit with the
@@ -722,7 +753,7 @@ def _run_quick(qid: str, data, target: str):
                           and nights.nseq < nights.n else None)
             job['step'] = 'noise'
             noise = RVModel(nights, [], likelihood='mixture', unit='both',
-                            trend=1, seq_jitter=seq_jitter).fit(
+                            trend=trend, seq_jitter=seq_jitter).fit(
                 nstart=2, quiet=True)
             job['step'] = 'fip'
 
@@ -733,7 +764,7 @@ def _run_quick(qid: str, data, target: str):
             job['step'] = 'fip1'
             res, info = _fip(nights, noise, QUICK['kmax'], QUICK['nsweep'],
                              QUICK['nburn'], 1, 'quick FIP, first pass',
-                             gp=None, trend=1)
+                             gp=None, trend=trend)
             width = 1.0 / nights.baseline
             known = known_periods(target)
             # the second pass: the noise of a fit with the signals found and
@@ -751,13 +782,13 @@ def _run_quick(qid: str, data, target: str):
                 job['step'] = 'planets'
                 fit = RVModel(nights, [dict(period=per, period_range=(
                     0.98 * per, 1.02 * per)) for per in pers],
-                    likelihood='mixture', unit='both', trend=1,
+                    likelihood='mixture', unit='both', trend=trend,
                     seq_jitter=seq_jitter).fit(nstart=2, quiet=True)
                 job['step'] = 'fip2'
                 job['progress'] = None
                 res, info = _fip(nights, fit, QUICK['kmax'], QUICK['nsweep'],
                                  QUICK['nburn'], 2, 'quick FIP, second pass',
-                                 gp=None, trend=1)
+                                 gp=None, trend=trend)
                 passes = 2
             # the peaks: those below a FIP of 10 %, or the best three, named
             #   and folded
@@ -772,7 +803,8 @@ def _run_quick(qid: str, data, target: str):
             valid = res.reliability
             if valid is not None and len(valid) != nights.n:
                 valid = None
-            folds = [dict(fold(nights, pk['period'], valid), id=pk['id'])
+            folds = [dict(fold(nights, pk['period'], valid, trend),
+                          id=pk['id'])
                      for pk in named]
             job['result'] = dict(
                 _fip_curves(res), known=known, window=WINDOW, passes=passes,
@@ -787,7 +819,9 @@ def _run_quick(qid: str, data, target: str):
                              for inst in nights.instruments},
                 inflation={str(key): float(val) for key, val in
                            info.get('inflation', {}).items()},
-                settings=dict(QUICK, gp='none', trend=1))
+                settings=dict(QUICK, gp='none', trend=trend),
+                acceleration=_quick_acceleration(fit if pers else noise,
+                                                 trend))
             # the FIP of each instrument on its own (its jitter sampled in
             #   the FIP, no inflation needed), when there are several
             insts = list(nights.instruments)
@@ -809,7 +843,7 @@ def _run_quick(qid: str, data, target: str):
                                     nsweep=QUICK['nsweep'],
                                     nburn=QUICK['nburn'], nchains=2,
                                     seed=3 + rank, progress=False, gp=None,
-                                    trend=1, nightly=False,
+                                    trend=trend, nightly=False,
                                     label=f'quick FIP of {inst}')
                     job['each'].append(dict(
                         _fip_curves(one), name=str(inst), n=int(sub.n),
@@ -837,7 +871,8 @@ def quick_fip(opts: Dict[str, Any]) -> Dict[str, Any]:
                        start=time.time(), end=None,
                        instruments=list(data.instruments))
     threading.Thread(target=_run_quick, args=(qid, data,
-                                              opts.get('target', '')),
+                                              opts.get('target', ''),
+                                              trend_order(opts)),
                      daemon=True).start()
     return quick_state(qid)
 
@@ -1110,8 +1145,11 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
         sett = quick['settings']
         pkk = ', '.join(f'P(k={it}) = {val:.2f}'
                         for it, val in enumerate(quick.get('pk', [])))
+        order = sett.get('trend', 1)
+        drift = ('no trend' if order < 1 else 'a trend (the acceleration of '
+                 'the star)' if order == 1 else 'a trend and its curvature')
         out.append('\\subsection*{The quick FIP}\n'
-                   f'Outlier-aware, nightly means, no GP, a trend; '
+                   f'Outlier-aware, nightly means, no GP, {drift}; '
                    f'{sett["kmax"]} signals at most, {sett["nsweep"]} sweeps '
                    f'after {sett["nburn"]} (two chains), {quick["passes"]} '
                    f'pass(es)'
@@ -1119,6 +1157,22 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
                       + ', '.join(f'{per:.4f}' for per in quick["planets"])
                       + '\\,d)' if quick['passes'] > 1 else '')
                    + f'. {pkk}.\n')
+        acc = quick.get('acceleration')
+        if acc:
+            for key, what, unit in (('accel', 'Acceleration of the star, '
+                                     '$dv/dt$', 'm\\,s$^{-1}$\\,yr$^{-1}$'),
+                                    ('jerk', 'Its change, $d^2v/dt^2$',
+                                     'm\\,s$^{-1}$\\,yr$^{-2}$')):
+                if key in acc:
+                    val, low, high = acc[key]
+                    out.append(f'{what} $= {val:+.3g}_{{-{low:.2g}}}'
+                               f'^{{+{high:.2g}}}$ {unit} '
+                               f'({acc[key + "_sigma"]:.1f}\\,$\\sigma$)'
+                               + (f', at BJD$-$2400000 = {acc["tref"]:.1f}'
+                                  if key == 'accel' else '') + '.\n')
+            out.append('From the fit of the quick look (its signals and '
+                       'the known planets, no GP; Laplace errors), the '
+                       'perspective acceleration included.\n')
         folds = {item['id']: item for item in quick.get('folds') or []}
         out.append('{\\small\\begin{tabular}{@{}rrrrrrr@{}}\n\\toprule\n'
                    'ID & P [d] & FIP (P or alias) & FIP (P alone) & '
@@ -1267,7 +1321,8 @@ def _summary(page: Dict[str, Any], result: Dict[str, Any],
         archives=[name for key, name in (('dace', 'DACE'),
                                          ('carmenes', 'CARMENES DR1'))
                   if detailed.get(key)],
-        exclude=str(detailed.get('exclude') or ''))
+        exclude=str(detailed.get('exclude') or ''),
+        acceleration=result.get('acceleration'))
 
 
 def remember(page: Dict[str, Any], qid: str, note: str = ''

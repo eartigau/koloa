@@ -201,6 +201,11 @@ def test_the_quick_look(tmp_path, monkeypatch):
     assert abs(first['period'] / 5.3 - 1) < 0.01
     assert abs(res['folds'][0]['K'] - 8.0) < 4 * res['folds'][0]['K_err']
     assert state['each'] == []   # one instrument: the joint FIP is its own
+    # the acceleration of the star, measured with its errors (none here)
+    acc = res['acceleration']
+    assert res['settings']['trend'] == 1 and set(acc) >= {'accel', 'tref'}
+    assert acc['accel'][1] > 0 and abs(acc['accel'][0]) < 5 * acc['accel'][1]
+    assert 'jerk' not in acc
     pdf = gui.quicklook_pdf(opts, qid=state['id'],
                             command_line='koloa star.csv --detailed')
     assert pdf[:4] == b'%PDF'
@@ -321,3 +326,41 @@ def test_a_result_remembered_and_recalled(tmp_path, monkeypatch):
         gui.recall('../lbl.csv')
     gui.unremember(out['id'])
     assert gui.remembered() == []
+
+
+def test_the_quick_look_measures_the_acceleration(tmp_path, monkeypatch):
+    """a drift in the velocities: the quick look gives it back (and its
+    change with the curvature), its trend as the report's boxes say"""
+    import time
+    import numpy as np
+    from koloa.simulate import simulate
+    from koloa.gather import write_rv
+    sim = simulate(err=1.5, seed=7, nvisits=60, per_visit=1,
+                   baseline=1000)['data']
+    years = (sim.time - sim.time.mean()) / 365.25
+    sim.rv = sim.rv + 3.0 * years + 0.5 * years ** 2
+    write_rv(sim, str(tmp_path / 'drift.csv'))
+    monkeypatch.setattr(gui, 'QUICK', dict(kmax=1, nsweep=150, nburn=80))
+    assert gui.trend_order(dict(trend=False)) == 0
+    assert gui.trend_order(dict(trend=True, curvature=True)) == 2
+    assert gui.trend_order({}) == 1
+    out = {}
+    for curv in (False, True):
+        state = gui.quick_fip(dict(files=[dict(path=str(tmp_path /
+                                                         'drift.csv'))],
+                                   trend=True, curvature=curv))
+        for _ in range(300):
+            state = gui.quick_state(state['id'])
+            if state['status'] != 'running':
+                break
+            time.sleep(0.5)
+        assert state['status'] == 'done', state['error']
+        out[curv] = state['result']
+    acc = out[True]['acceleration']
+    assert out[True]['settings']['trend'] == 2
+    # d2v/dt2 = 2 x 0.5 m/s/yr^2; dv/dt = 3 m/s/yr at the middle
+    assert abs(acc['jerk'][0] - 1.0) < 4 * acc['jerk'][1]
+    assert abs(acc['accel'][0] - (3.0 + 1.0 * (acc['tref'] - sim.time.mean())
+                                  / 365.25)) < 4 * acc['accel'][1]
+    assert acc['accel_sigma'] > 5
+    assert 'jerk' not in out[False]['acceleration']

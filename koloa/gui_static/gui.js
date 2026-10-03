@@ -431,7 +431,8 @@ let pview = null;   // the periods shown, and their domain
 function shownOptions() {
   const asked = readOptions('detailed');
   return { files: filesNow(), target: $('target').value.trim(), root: $('root').value.trim(),
-    dace: !!asked.dace, carmenes: !!asked.carmenes, exclude: $('exclude').value };
+    dace: !!asked.dace, carmenes: !!asked.carmenes, exclude: $('exclude').value,
+    trend: !!asked.trend, curvature: !!asked.curvature };
 }
 
 async function startQuick() {
@@ -488,7 +489,25 @@ function fipSummary(r, elapsed) {
   const best = r.peaks[0];
   return `<p class="hint">${r.n} ${esc(t('nights'))} (${esc(insts)}); ${esc(t('no_gp'))}, ${r.settings.kmax} ${esc(t('signals_word'))}, `
     + `${r.settings.nsweep} ${esc(t('sweeps_word'))}, ${r.passes} ${esc(t('passes'))} \u00b7 ${clock(elapsed)}`
-    + (best ? ` \u00b7 ${esc(t('strongest'))}: <b>${best.period.toFixed(4)} d</b>, FIP ${best.family.toExponential(1)}` : '') + '</p>';
+    + (best ? ` \u00b7 ${esc(t('strongest'))}: <b>${best.period.toFixed(4)} d</b>, FIP ${best.family.toExponential(1)}` : '') + '</p>'
+    + `<p class="hint accel">${accelText(r)}</p>`;
+}
+
+// the acceleration of the star the quick look measured (and its change)
+function accelValue(v, unit) {
+  const [val, lo, hi] = v;
+  const err = Math.abs(lo - hi) < 0.05 * Math.max(lo, hi) ? `\u00b1 ${(0.5 * (lo + hi)).toPrecision(2)}`
+    : `\u2212${lo.toPrecision(2)} +${hi.toPrecision(2)}`;
+  return `${val >= 0 ? '+' : '\u2212'}${Math.abs(val).toPrecision(3)} ${err} ${unit}`;
+}
+function accelText(r) {
+  const order = (r.settings || {}).trend;
+  const acc = r.acceleration;
+  if (order === 0) return esc(t('no_trend_fit'));
+  if (!acc || !acc.accel) return '';
+  let out = `${esc(t('accel_star'))}: <b>dv/dt = ${accelValue(acc.accel, 'm/s/yr')}</b> (${acc.accel_sigma.toFixed(1)}\u03c3)`;
+  if (acc.jerk) out += ` \u00b7 d\u00b2v/dt\u00b2 = ${accelValue(acc.jerk, 'm/s/yr\u00b2')} (${acc.jerk_sigma.toFixed(1)}\u03c3)`;
+  return out + ` \u00b7 <span class="hint">${esc(t('accel_note'))}</span>`;
 }
 
 // the colour of an instrument: its colour in the plot of the velocities
@@ -747,19 +766,21 @@ function renderRemembered() {
   if (!rememberedList.length) { box.innerHTML = `<p class="hint">${esc(t('no_remembered'))}</p>`; return; }
   const exp = (v) => (+v).toExponential(1);
   box.innerHTML = `<div class="remwrap"><table class="mini"><tr><th>${esc(t('col_target'))}</th><th>${esc(t('col_when'))}</th>`
-    + `<th>${esc(t('col_nights'))}</th><th>${esc(t('col_peaks'))}</th><th>${esc(t('col_known'))}</th>`
+    + `<th>${esc(t('col_nights'))}</th><th>${esc(t('col_peaks'))}</th><th>dv/dt [m/s/yr]</th><th>${esc(t('col_known'))}</th>`
     + `<th>${esc(t('col_each'))}</th><th>${esc(t('col_data'))}</th><th></th></tr>`
     + rememberedList.map((e) => {
       const s = e.summary || {};
       const nights = `<b>${s.n || 0}</b><br>` + Object.entries(s.instruments || {}).map(([k, v]) => `${esc(k)} ${v}`).join('<br>');
       const peaks = (s.peaks || []).map((pk) => `#${pk.id} ${pk.period.toFixed(4)} (${exp(pk.family)})`).join('<br>') || esc(t('none'));
       const known = (s.known || []).map((pl) => `${esc(pl.name)} ${(+pl.P).toPrecision(5)}`).join('<br>') || esc(t('none'));
+      const acc = s.acceleration && s.acceleration.accel
+        ? `${accelValue(s.acceleration.accel, '')}<br>(${s.acceleration.accel_sigma.toFixed(1)}\u03c3)` : esc(t('none'));
       const each = (s.each || []).map((one) => `${esc(one.name)}: ${one.skipped ? '&lt; 10 n'
         : one.best ? `${one.best.period.toFixed(3)} (${exp(one.best.family)})` : esc(t('none'))}`).join('<br>') || esc(t('none'));
       const data = (s.files || []).map(esc).concat(s.archives || []).join('<br>')
         + (s.exclude ? `<br><span class="hint">\u2212 ${esc(s.exclude)}</span>` : '');
       return `<tr><td><b>${esc(e.target || '?')}</b>${e.note ? `<span class="note">${esc(e.note)}</span>` : ''}</td>`
-        + `<td class="mono">${esc(e.created || '')}</td><td class="mono">${nights}</td><td class="mono">${peaks}</td>`
+        + `<td class="mono">${esc(e.created || '')}</td><td class="mono">${nights}</td><td class="mono">${peaks}</td><td class="mono">${acc}</td>`
         + `<td class="mono">${known}</td><td class="mono">${each}</td><td class="mono">${data}</td>`
         + `<td class="acts"><button type="button" class="small go" data-recall="${esc(e.id)}">${esc(t('recall'))}</button>`
         + `<button type="button" class="small stop" data-unremember="${esc(e.id)}">${esc(t('forget'))}</button></td></tr>`;
@@ -838,6 +859,8 @@ document.addEventListener('change', (e) => {
   }
 });
 document.addEventListener('change', updateCommands);
+// what is shown, or how the trend is fitted, changed since the quick FIP
+document.addEventListener('change', checkStale);
 $('resolve').addEventListener('click', resolveStar);
 $('target').addEventListener('keydown', (e) => { if (e.key === 'Enter') resolveStar(); });
 $('plot').addEventListener('click', plotVelocities);
