@@ -635,15 +635,22 @@ def _distinct_peaks(res, width: float, nmax: int = 8
     return out
 
 
-def fold(data, period: float) -> Dict[str, Any]:
+def fold(data, period: float, valid: Optional[np.ndarray] = None
+         ) -> Dict[str, Any]:
     """
     The series folded at a period: a sinusoid fitted with an offset per
     instrument and a trend (weighted least squares, the errors of K scaled
     by the reduced chi^2 when it is above one), phase 0 at the conjunction
     (the velocity falling through zero, as in the report)
 
+    :param valid: np.ndarray or None, the probability of each point to be
+                  valid (not an outlier), from the FIP: each point weighs
+                  that much more in the fit (an outlier hardly counts), and
+                  it is given back with the points
+
     :return: dict, period, K, K_err, tc, rms, the points of each instrument
-             (about its offset and the trend) and the curve
+             (about its offset and the trend, with their probability to be
+             valid when given) and the curve
     """
     time_ = data.time
     tref = float(np.median(time_))
@@ -653,12 +660,15 @@ def fold(data, period: float) -> Dict[str, Any]:
     arg = 2 * np.pi * (time_ - tref) / period
     cols += [np.cos(arg), np.sin(arg)]
     design = np.column_stack(cols)
-    wgt = 1.0 / data.err ** 2
+    good = (np.ones(data.n) if valid is None
+            else np.clip(np.asarray(valid, float), 1e-6, 1.0))
+    wgt = good / data.err ** 2
     amat = design.T @ (design * wgt[:, None])
     coef = np.linalg.solve(amat, design.T @ (data.rv * wgt))
     cov = np.linalg.inv(amat)
     resid = data.rv - design @ coef
-    chi2 = float(np.sum(resid ** 2 * wgt)) / max(len(resid) - len(coef), 1)
+    chi2 = float(np.sum(resid ** 2 * wgt)) / max(np.sum(good) - len(coef),
+                                                 1)
     cov *= max(chi2, 1.0)
     acos, asin = coef[-2], coef[-1]
     amp = float(np.hypot(acos, asin))
@@ -672,7 +682,7 @@ def fold(data, period: float) -> Dict[str, Any]:
     shown = data.rv - design[:, :-2] @ coef[:-2]
     grid = np.linspace(0, 1, 201)
     out = dict(period=float(period), K=amp, K_err=kerr, tc=float(tc),
-               rms=float(np.std(resid)), chi2=chi2,
+               rms=float(np.std(resid[good >= 0.5])), chi2=chi2,
                curve=dict(phase=grid.tolist(),
                           rv=np.round(-amp * np.sin(2 * np.pi * grid),
                                       4).tolist()), instruments=[])
@@ -682,6 +692,9 @@ def fold(data, period: float) -> Dict[str, Any]:
             name=str(inst), phase=np.round(phase[sel], 5).tolist(),
             rv=np.round(shown[sel], 3).tolist(),
             err=np.round(data.err[sel], 3).tolist()))
+        if valid is not None:
+            out['instruments'][-1]['valid'] = np.round(valid[sel],
+                                                       4).tolist()
     return out
 
 
@@ -747,7 +760,12 @@ def _run_quick(qid: str, data, target: str):
                 named = peaks[:3]
             for pk in peaks:
                 pk['named'] = pk in named
-            folds = [dict(fold(nights, pk['period']), id=pk['id'])
+            # the probability of each night to be valid (not an outlier),
+            #   as the FIP saw it
+            valid = res.reliability
+            if valid is not None and len(valid) != nights.n:
+                valid = None
+            folds = [dict(fold(nights, pk['period'], valid), id=pk['id'])
                      for pk in named]
             job['result'] = dict(
                 _fip_curves(res), known=known, window=WINDOW, passes=passes,
@@ -963,6 +981,12 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=()):
                 ax.errorbar(inst['phase'], inst['rv'], inst['err'],
                             fmt=marker.get(inst['name'], 'o'), ms=3,
                             lw=0.5, color=colour.get(inst['name'], 'k'))
+                # circled: less than an even chance of being valid
+                low = np.asarray(inst.get('valid', []), float) < 0.5
+                if low.any():
+                    ax.plot(np.asarray(inst['phase'])[low],
+                            np.asarray(inst['rv'])[low], 'o', mfc='none',
+                            mec='k', ms=7, mew=0.8, zorder=5)
             ax.plot(item['curve']['phase'], item['curve']['rv'], color='k',
                     lw=1.0)
             ax.set_title(f'#{item["id"]}: P = {item["period"]:.4f} d, '
@@ -970,6 +994,9 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=()):
                          f'm/s', fontsize=8.5)
             ax.set_xlabel('phase (0 = conjunction)')
             ax.set_ylabel('RV [m s$^{-1}$]')
+            # the velocities shown as the series is
+            if yr:
+                ax.set_ylim(*yr)
         fig.tight_layout()
         figs.append(('folds', fig))
     return figs
@@ -998,7 +1025,10 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
             'below a FIP of 10 \\% (or the best three) numbered.',
         folds='The nightly means folded at each numbered peak: a sinusoid '
               'fitted with an offset per instrument and the trend, phase 0 '
-              'at the conjunction.',
+              'at the conjunction (each night weighted by its probability '
+              'of being valid), on the velocity range of the series; '
+              'circled, a night with less than a 50 \\% probability of '
+              'being valid (an outlier, as the FIP saw it).',
         each='The quick FIP of each instrument on its own (its nightly '
              'means, its jitter sampled in the FIP): of the period or any '
              'of its aliases (colour) and of the period alone (grey); '

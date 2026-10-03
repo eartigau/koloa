@@ -219,6 +219,8 @@ def test_each_instrument_has_its_own_quick_fip(tmp_path, monkeypatch):
         sim = simulate(planets=[dict(P=5.3, K=8.0, e=0.0, tp=60000.0)],
                        err=1.5, seed=seed, nvisits=nvisits, per_visit=1,
                        baseline=300)['data']
+        if label == 'AAA':
+            sim.rv[5] += 80.0   # an outlier
         write_rv(sim, str(tmp_path / f'{label}.csv'))
         files.append(dict(path=str(tmp_path / f'{label}.csv'), label=label))
     monkeypatch.setattr(gui, 'QUICK', dict(kmax=1, nsweep=150, nburn=80))
@@ -240,6 +242,16 @@ def test_each_instrument_has_its_own_quick_fip(tmp_path, monkeypatch):
         assert one['peaks'] and one['peaks'][0]['period'] > 0
     assert abs(each['AAA']['peaks'][0]['period'] / 5.3 - 1) < 0.01, each['AAA']['peaks']
     assert abs(state['result']['peaks'][0]['period'] / 5.3 - 1) < 0.01
+    # each night of the fold with its probability to be valid: the outlier
+    #   below an even chance, the others above
+    fold = state['result']['folds'][0]
+    valid = {one['name']: one['valid'] for one in fold['instruments']}
+    assert all(len(valid[one['name']]) == len(one['phase'])
+               for one in fold['instruments'])
+    assert sum(val < 0.5 for val in valid['AAA']) == 1
+    assert sum(val < 0.5 for val in valid['BBB']) == 0
+    # the outlier hardly counts in the fit of the fold
+    assert fold['K_err'] < 0.6 and abs(fold['K'] - 8.0) < 4 * fold['K_err']
     pdf = gui.quicklook_pdf(opts, qid=state['id'])
     assert pdf[:4] == b'%PDF'
     gui.forget()

@@ -333,6 +333,7 @@ function applyView() {
   if (!view || !window.Plotly || !$('rvplot').data) return;
   Plotly.relayout('rvplot', { 'xaxis.range': view.x.slice(), 'yaxis.range': view.y.slice() });
   syncSliders();
+  foldY();
 }
 
 function syncSliders() {
@@ -381,6 +382,7 @@ function fromZoom(ev) {
   if (ev['xaxis.autorange']) view.x = view.xdom.slice();
   if (ev['yaxis.autorange']) view.y = view.ydom.slice();
   syncSliders();
+  if (ev['yaxis.range[0]'] !== undefined || ev['yaxis.autorange']) foldY();
 }
 
 // the instruments left out: the field of the report is what counts; the
@@ -565,20 +567,39 @@ function showFold(id) {
   const order = (lastRV || []).map((inst) => inst.name);
   const traces = f.instruments.map((inst) => {
     const i = Math.max(0, order.indexOf(inst.name));
-    return { x: inst.phase, y: inst.rv, name: inst.name, type: 'scatter', mode: 'markers',
+    const valid = inst.valid ? `<br>${esc(t('p_valid'))} %{customdata:.2f}` : '';
+    return { x: inst.phase, y: inst.rv, name: inst.name, type: 'scatter', mode: 'markers', customdata: inst.valid,
       error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: COLOURS[i % 8] },
       marker: { color: COLOURS[i % 8], symbol: SYMBOLS[i % 8], size: 7, line: { color: '#08111f', width: 1 } },
-      hovertemplate: `${inst.name}<br>phase %{x:.3f}<br>%{y:.2f} m/s<extra></extra>` };
+      hovertemplate: `${inst.name}<br>phase %{x:.3f}<br>%{y:.2f} m/s${valid}<extra></extra>` };
   });
   traces.push({ x: f.curve.phase, y: f.curve.rv, name: `K = ${f.K.toFixed(2)} m/s`, type: 'scatter', mode: 'lines',
     line: { color: '#e8eef8', width: 2 }, hoverinfo: 'skip' });
+  // a white circle around a night with less than an even chance of being
+  //   valid (an outlier, as the FIP saw it)
+  const low = { x: [], y: [], p: [] };
+  for (const inst of f.instruments) {
+    (inst.valid || []).forEach((p, k) => { if (p < 0.5) { low.x.push(inst.phase[k]); low.y.push(inst.rv[k]); low.p.push(p); } });
+  }
+  if (low.x.length) {
+    traces.push({ x: low.x, y: low.y, customdata: low.p, name: t('p_valid_low'), type: 'scatter', mode: 'markers',
+      marker: { symbol: 'circle-open', size: 17, color: '#ffffff', line: { width: 1.6 } },
+      hovertemplate: `${esc(t('p_valid'))} %{customdata:.2f}<extra></extra>` });
+  }
   const axis = { gridcolor: 'rgba(200,220,255,0.10)', zerolinecolor: 'rgba(200,220,255,0.25)', color: '#7a8597' };
   $('foldplot').classList.add('on');
   Plotly.newPlot('foldplot', traces, {
     paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(4,8,16,0.35)', font: { family: 'Space Grotesk, sans-serif', color: '#e8eef8' },
     margin: { ...PLOT_MARGIN, t: 30 }, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' },
-    xaxis: { ...axis, title: t('phase_axis'), range: [0, 1] }, yaxis: { ...axis, title: 'RV [m/s]' },
+    xaxis: { ...axis, title: t('phase_axis'), range: [0, 1] },
+    // the velocities on the range of the series above
+    yaxis: { ...axis, title: 'RV [m/s]', ...(view && view.y ? { range: view.y.slice() } : {}) },
   }, { responsive: true, displaylogo: false });
+}
+
+// the fold follows the y range of the series
+function foldY() {
+  if (view && view.y && window.Plotly && $('foldplot').data) Plotly.relayout('foldplot', { 'yaxis.range': view.y.slice() });
 }
 
 // the period slider, on a log scale
