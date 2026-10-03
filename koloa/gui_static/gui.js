@@ -237,14 +237,31 @@ async function drawVelocities(res, extra) {
     $('rvtable').innerHTML = `<p class="hint">${esc(t('no_rv'))}</p>`;
     return false;
   }
-  const traces = res.instruments.map((inst, i) => ({
-    x: inst.time, y: inst.rv, name: `${inst.name} (${inst.source}, ${inst.n})`, type: 'scatter', mode: 'markers',
-    error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: COLOURS[i % 8] },
-    marker: { color: COLOURS[i % 8], symbol: SYMBOLS[i % 8], size: 7, line: { color: '#08111f', width: 1 } },
-    // the calendar date of each point, under the cursor
-    customdata: inst.time.map(dateText),
-    hovertemplate: `${inst.name}<br>%{customdata}<br>rjd %{x:.4f}<br>%{y:.2f} m/s<extra></extra>`,
-  }));
+  lastRes = { res, extra };
+  // the points by instrument, or by their BERV (on one scale for all; an
+  //   instrument without it grey)
+  const hasBerv = res.instruments.some((inst) => inst.berv);
+  $('scol-berv').disabled = !hasBerv;
+  const bervMode = seriesColour === 'berv' && hasBerv;
+  document.querySelectorAll('[data-scol]').forEach((b) => b.classList.toggle('on', b.dataset.scol === (bervMode ? 'berv' : 'inst')));
+  const top = bervMode ? Math.max(1e-3, ...res.instruments.flatMap((inst) => (inst.berv || []).filter((v) => v !== null).map(Math.abs))) : 1;
+  rvRight = bervMode ? 100 : PLOT_MARGIN.r;
+  let barShown = false;
+  const traces = res.instruments.map((inst, i) => {
+    let marker = { color: COLOURS[i % 8], symbol: SYMBOLS[i % 8], size: 7, line: { color: '#08111f', width: 1 } };
+    if (bervMode && inst.berv) {
+      marker = { ...marker, color: inst.berv, colorscale: 'RdBu', reversescale: false, cmin: -top, cmax: top, showscale: !barShown,
+        colorbar: { title: { text: 'BERV [km/s]' }, thickness: 12, len: 0.9, x: 1.01, outlinewidth: 0, tickfont: { size: 10 } } };
+      barShown = true;
+    } else if (bervMode) marker = { ...marker, color: '#5a6476' };
+    return { x: inst.time, y: inst.rv, name: `${inst.name} (${inst.source}, ${inst.n})`, type: 'scatter', mode: 'markers',
+      error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: bervMode ? 'rgba(200,220,255,0.35)' : COLOURS[i % 8] },
+      marker,
+      // the calendar date (and the BERV) of each point, under the cursor
+      customdata: inst.time.map((tt, k) => [dateText(tt), inst.berv ? inst.berv[k] : null]),
+      hovertemplate: `${inst.name}<br>%{customdata[0]}<br>rjd %{x:.4f}<br>%{y:.2f} m/s`
+        + `${inst.berv ? '<br>BERV %{customdata[1]:.2f} km/s' : ''}<extra></extra>` };
+  });
   const ninst = traces.length;
   // nothing to see on the axis of the dates: Plotly draws an axis a trace uses
   const times = res.instruments.flatMap((inst) => inst.time);
@@ -259,7 +276,7 @@ async function drawVelocities(res, extra) {
     await Plotly.newPlot(div, traces, {
       paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(4,8,16,0.35)',
       font: { family: 'Space Grotesk, sans-serif', color: '#e8eef8' },
-      margin: PLOT_MARGIN, showlegend: ninst > 1,
+      margin: { ...PLOT_MARGIN, r: rvRight }, showlegend: ninst > 1,
       // the legend at the top of the figure, the dates under it
       legend: { orientation: 'h', x: 0, y: 1, yref: 'container', yanchor: 'top' },
       xaxis: { ...axis, title: 'BJD - 2400000', tickformat: '.0f', exponentformat: 'none' }, yaxis: { ...axis, title: 'RV - median [m/s]' },
@@ -296,6 +313,10 @@ async function drawVelocities(res, extra) {
 //   the 3 to 97 percentile range, and the instruments kept
 // -----------------------------------------------------------------------------
 const PLOT_MARGIN = { l: 62, r: 12, t: 60, b: 48 };
+let rvRight = PLOT_MARGIN.r;   // the right margin of the series (its colour bar)
+let lastRes = null;            // the velocities drawn, to draw them again
+let seriesColour = 'inst';     // the series by instrument or by BERV
+try { seriesColour = localStorage.getItem('koloa-seriescolour') || 'inst'; } catch (err) { /* no storage */ }
 const STEPS = 1000;
 let view = null;   // x and y shown, their domains, the scale of the y slider
 
@@ -398,7 +419,7 @@ function dateAxis() {
   const div = $('rvplot');
   if (!window.Plotly || !div.data || !div.layout || !div.layout.xaxis || !div.layout.xaxis.range) return;
   const [x0, x1] = div.layout.xaxis.range.map(Number);
-  const tk = dateTicks(x0, x1, div.clientWidth - PLOT_MARGIN.l - PLOT_MARGIN.r);
+  const tk = dateTicks(x0, x1, div.clientWidth - PLOT_MARGIN.l - rvRight);
   Plotly.relayout(div, { 'xaxis2.tickvals': tk.vals, 'xaxis2.ticktext': tk.text });
 }
 
@@ -426,7 +447,7 @@ function sizeYSlider() {
   $('ydual').style.width = `${h}px`;
   $('ydual').style.transform = `translateY(${h}px) rotate(-90deg)`;
   $('xdual').style.marginLeft = `${PLOT_MARGIN.l}px`;
-  $('xdual').style.marginRight = `${PLOT_MARGIN.r}px`;
+  $('xdual').style.marginRight = `${rvRight}px`;
 }
 
 function fromSliders(ax) {
@@ -781,7 +802,8 @@ function showFold(id) {
       colorbar: { title: { text: t('fcol_date') }, tickvals: tk.vals, ticktext: tk.text } };
   } else if (mode === 'berv') {
     const top = Math.max(1e-3, ...f.instruments.flatMap((inst) => (inst.berv || []).filter((v) => v !== null).map(Math.abs)));
-    scale = { cmin: -top, cmax: top, colorscale: 'RdBu', reversescale: true, colorbar: { title: { text: 'BERV [km/s]' } } };
+    // Plotly's RdBu runs from blue to red: a positive BERV red, as in the PDF
+    scale = { cmin: -top, cmax: top, colorscale: 'RdBu', reversescale: false, colorbar: { title: { text: 'BERV [km/s]' } } };
   }
   const order = (lastRV || []).map((inst) => inst.name);
   let barShown = false;
@@ -953,7 +975,7 @@ async function quicklookPdf() {
       body: JSON.stringify({ options: opts, x: view ? view.x : null, y: view ? view.y : null, p: pview ? pview.p : null,
         quick: quick && quick.result ? quick.id : '', command: $('cmd-detailed').textContent,
         fold_colour: foldColour, overlay: $('foldoverlay').checked && foldShown !== null ? foldShown : null,
-        fold_model: foldModel }) });
+        fold_model: foldModel, series_colour: seriesColour }) });
     if (!resp.ok) throw new Error((await resp.json()).error || resp.statusText);
     const link = document.createElement('a');
     link.href = URL.createObjectURL(await resp.blob());
@@ -994,6 +1016,8 @@ function resetPage() {
   quick = null;
   pview = null;
   lastRV = null;
+  lastRes = null;
+  rvRight = PLOT_MARGIN.r;
   onDisk = null;
   foldShown = null;
   foldShownObj = null;
@@ -1167,6 +1191,18 @@ $('clip').addEventListener('change', refitY);
 $('plo').addEventListener('input', periodsFromSliders);
 $('phi').addEventListener('input', periodsFromSliders);
 $('refip').addEventListener('click', startQuick);
+// the series by instrument or by BERV: drawn again, its ranges kept
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-scol]');
+  if (!b || b.disabled) return;
+  seriesColour = b.dataset.scol;
+  try { localStorage.setItem('koloa-seriescolour', seriesColour); } catch (err) { /* no storage */ }
+  document.querySelectorAll('[data-scol]').forEach((x) => x.classList.toggle('on', x.dataset.scol === seriesColour));
+  if (!lastRes) return;
+  const keep = view ? { x: view.x.slice(), y: view.y.slice() } : null;
+  await drawVelocities(lastRes.res, lastRes.extra);
+  if (keep && view) { view.x = keep.x; view.y = keep.y; applyView(); }
+});
 // the quick FIP asked for, or stopped (while it waits for its turn too)
 document.addEventListener('click', (e) => {
   if (e.target.closest('.startfip')) startQuick();

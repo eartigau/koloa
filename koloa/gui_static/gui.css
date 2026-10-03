@@ -207,3 +207,4 @@ main[hidden] { display: none !important; }
 [data-fold].forced { border-style: dashed; }
 #fipstatus p.resid { color: #ffc66d; font-size: 0.88rem; }
 #fipplot { cursor: crosshair; }
+[data-scol].on { background: rgba(98, 194, 255, 0.35); border-color: var(--accent); color: #fff; position: relative; }

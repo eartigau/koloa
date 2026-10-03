@@ -534,6 +534,7 @@ def velocities(files: Any = '', target: str = '', root: str = '',
     if data is None:
         return dict(instruments=[], notes=notes)
     out = []
+    berv = _berv(data)
     for name in data.instruments:
         sel = data.inst == name
         # each instrument about its own median, whatever came before
@@ -544,6 +545,8 @@ def velocities(files: Any = '', target: str = '', root: str = '',
                         time=np.round(data.time[sel], 6).tolist(),
                         rv=np.round(rv, 3).tolist(),
                         err=np.round(data.err[sel], 3).tolist(),
+                        berv=(_listed(berv[sel], 3) if berv is not None
+                              and np.any(np.isfinite(berv[sel])) else None),
                         rms=float(np.std(data.rv[sel]))))
     return dict(instruments=out, notes=notes, n=int(data.n),
                 baseline=float(data.baseline))
@@ -1215,7 +1218,8 @@ def _date_ticks(t0: float, t1: float, most: int = 6):
 def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
                        fold_colour: str = 'inst',
                        overlay: Optional[int] = None,
-                       fold_model: str = 'sine'):
+                       fold_model: str = 'sine',
+                       series_colour: str = 'inst'):
     """the figures of the quick look: the velocities shown (with the
     solution of a fold on them when asked), the quick FIP with its peaks
     named, the folds at them (coloured by instrument, date or BERV)"""
@@ -1230,12 +1234,35 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
               for it, inst in enumerate(data.instruments)}
     figs = []
     fig, ax = plt.subplots(figsize=(10, 3.6))
+    # the points by instrument, or by their BERV (on one scale)
+    berv = _berv(data) if series_colour == 'berv' else None
+    bnorm = None
+    if berv is not None and np.any(np.isfinite(berv)):
+        top = max(float(np.nanmax(np.abs(berv))), 1e-3)
+        bnorm = matplotlib.colors.Normalize(-top, top)
     for inst in data.instruments:
         sel = data.inst == inst
-        ax.errorbar(data.time[sel], data.rv[sel] - np.median(data.rv[sel]),
-                    data.err[sel], fmt=marker[inst], ms=3.5, lw=0.6,
-                    color=colour[inst],
-                    label=f'{inst} ({source.get(inst, "")}, {int(sel.sum())})')
+        label = f'{inst} ({source.get(inst, "")}, {int(sel.sum())})'
+        rel = data.rv[sel] - np.median(data.rv[sel])
+        if bnorm is None:
+            ax.errorbar(data.time[sel], rel, data.err[sel], fmt=marker[inst],
+                        ms=3.5, lw=0.6, color=colour[inst], label=label)
+            continue
+        ax.errorbar(data.time[sel], rel, data.err[sel], fmt='none', lw=0.5,
+                    color='0.7', zorder=1)
+        if np.any(np.isfinite(berv[sel])):
+            # a thin edge: a BERV near zero is near white
+            ax.scatter(data.time[sel], rel, c=berv[sel], cmap='RdBu_r',
+                       norm=bnorm, s=14, marker=marker[inst], zorder=2,
+                       edgecolors='0.35', linewidths=0.3, label=label,
+                       plotnonfinite=True)
+        else:
+            ax.plot(data.time[sel], rel, marker[inst], ms=3.5, color='0.6',
+                    zorder=2, label=label)
+    if bnorm is not None:
+        bar = fig.colorbar(matplotlib.cm.ScalarMappable(bnorm, 'RdBu_r'),
+                           ax=ax, pad=0.01, fraction=0.03)
+        bar.set_label('BERV [km s$^{-1}$]')
     ax.axhline(0, color='0.6', lw=0.6, ls=':')
     # the folds as the page shows them: their sinusoid, or their Keplerian
     #   orbit when it was fitted
@@ -1409,7 +1436,8 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
                 ax.scatter(inst['phase'], inst['rv'], c=vals, cmap=cmap,
                            norm=norm, s=12, zorder=2,
                            marker=marker.get(inst['name'], 'o'),
-                           edgecolors='none', plotnonfinite=True)
+                           edgecolors='0.35', linewidths=0.3,
+                           plotnonfinite=True)
                 # circled: less than an even chance of being valid
                 low = np.asarray(inst.get('valid', []), float) < 0.5
                 if low.any():
@@ -1673,7 +1701,8 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
                   qid: str = '', command_line: str = '',
                   fold_colour: str = 'inst',
                   overlay: Optional[int] = None,
-                  fold_model: str = 'sine') -> bytes:
+                  fold_model: str = 'sine',
+                  series_colour: str = 'inst') -> bytes:
     """
     The quick look as a PDF, a LaTeX document: the velocities shown (the
     ranges of the page), the quick FIP with its peaks named, the folds at
@@ -1696,7 +1725,8 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
     quick, each = job.get('result'), job.get('each') or []
     title = (opts.get('target') or '').strip() or 'the series'
     figs = _quicklook_figures(data, source, quick, xr, yr, pr, title, each,
-                              fold_colour, overlay, fold_model)
+                              fold_colour, overlay, fold_model,
+                              series_colour)
     tmp = tempfile.mkdtemp(prefix='koloa_quicklook_')
     try:
         for name, fig in figs:
@@ -2120,7 +2150,8 @@ class Handler(BaseHTTPRequestHandler):
                                     body.get('command', ''),
                                     body.get('fold_colour') or 'inst',
                                     body.get('overlay'),
-                                    body.get('fold_model') or 'sine')
+                                    body.get('fold_model') or 'sine',
+                                    body.get('series_colour') or 'inst')
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/pdf')
                 self.send_header('Content-Length', str(len(pdf)))

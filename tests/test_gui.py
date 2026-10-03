@@ -459,8 +459,11 @@ def test_the_fold_carries_its_solution_dates_and_berv(tmp_path):
     for colour in ('date', 'berv'):
         pdf = gui.quicklook_pdf(dict(files=[dict(path=str(write))]),
                                 yr=[-5.0, 5.0], qid=qid, fold_colour=colour,
-                                overlay=1)
+                                overlay=1, series_colour=colour)
         assert pdf[:4] == b'%PDF'
+    # the series sent to the page: the BERV of each point
+    shown = gui.velocities([dict(path=str(write))])['instruments'][0]
+    assert len(shown['berv']) == shown['n'] and shown['berv'][0] is not None
 
 
 def test_a_fold_asked_its_keplerian_and_the_residuals(tmp_path, monkeypatch):
