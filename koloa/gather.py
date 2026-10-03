@@ -378,9 +378,15 @@ def gather(target: str, root: str = '.', dace: bool = True,
     ident = resolve(target)
     log(f'{target}: SIMBAD {ident["main"]}, TIC '
         f'{(ident.get("tic") or "none").replace("TIC ", "")}', 'info')
-    outcome(f'{ident["main"]}' + (f', {ident["tic"]}' if ident.get('tic')
-                                  else ''))
     info = dict(ident)
+    # the spectral type of the star and a rough mass from it
+    from koloa.stars import stellar
+    info['star'] = stellar(ident)
+    outcome(f'{ident["main"]}'
+            + (f', {ident["tic"]}' if ident.get('tic') else '')
+            + (f', {ident["sptype"]}' if ident.get('sptype') else '')
+            + (f', {info["star"]["mass"]:.2f} Msun (rough)'
+               if info['star'].get('mass') else ''))
     try:
         info['variability'] = variability(ident['main'])
     except Exception as err:  # SIMBAD's TAP is a help, not a need

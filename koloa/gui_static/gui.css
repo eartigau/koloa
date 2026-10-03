@@ -216,3 +216,6 @@ main[hidden] { display: none !important; }
 [data-transit] { color: #8eeac0; }
 #foldnote .trnote { display: block; margin-top: 4px; color: #8eeac0; }
 ol.steps .result { grid-column: 2 / 4; font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; color: var(--text); opacity: 0.85; }
+.massrow input { width: 6.5em; flex: 0 0 auto !important; }
+.massrow { font-size: 0.85rem; color: var(--muted); }
+#foldnote .massnote { display: block; margin-top: 4px; color: #e8eef8; }

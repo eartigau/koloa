@@ -144,6 +144,53 @@ async function refreshInfo() {
 // -----------------------------------------------------------------------------
 // the star
 // -----------------------------------------------------------------------------
+// the mass of the star: the resolver's (the archive's, or rough from its
+//   spectral type), unless one was typed
+function setMass(star) {
+  if (!star || !star.mass || $('mstar').dataset.typed) return;
+  $('mstar').value = (+star.mass).toFixed(3);
+  $('mstar_err').value = (+(star.mass_err || 0)).toFixed(3);
+  $('mstarsrc').textContent = star.source ? `${t('from_word')} ${star.source}` : '';
+}
+
+// m sin i of a companion [Earth masses], exactly (m not << M), and its
+//   error from draws of K, P, e and M (16th to 84th percentiles)
+const GM_SUN = 1.32712440018e20, MEARTH_MSUN = 3.003489e-6, MNEP_MEARTH = 17.14775, MJUP_MEARTH = 317.8284;
+function msini(K, P, e, M) {
+  const f = P * 86400 * Math.abs(K) ** 3 * (1 - e * e) ** 1.5 / (2 * Math.PI * GM_SUN);
+  let m = Math.cbrt(f * M * M);
+  for (let k = 0; k < 40; k++) m = Math.cbrt(f * (M + m) ** 2);
+  return m / MEARTH_MSUN;
+}
+function gauss() {
+  let u = 0, v = 0;
+  while (!u) u = Math.random();
+  while (!v) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+function minimumMass(f) {
+  const M = +$('mstar').value, Merr = +$('mstar_err').value || 0;
+  if (!(M > 0)) return null;
+  const e = f.kind === 'kepler' ? f.e || 0 : 0, eerr = f.kind === 'kepler' ? f.e_err || 0 : 0;
+  const best = msini(f.K, f.period, e, M);
+  const vals = [];
+  for (let k = 0; k < 3000; k++) {
+    vals.push(msini(f.K + (f.K_err || 0) * gauss(), f.period + (f.P_err || 0) * gauss(),
+      Math.min(0.99, Math.abs(e + eerr * gauss())), Math.max(0.01, M + Merr * gauss())));
+  }
+  vals.sort((a, b) => a - b);
+  return { best, lo: best - percentile(vals, 15.87), hi: percentile(vals, 84.13) - best, M, Merr };
+}
+function massText(f) {
+  const mm = minimumMass(f);
+  if (!mm) return `<span class="massnote hint">${esc(t('no_mstar'))}</span>`;
+  const fmt = (v) => (v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v.toPrecision(2));
+  const units = [['M\u2295', 1], ['M\u2646', MNEP_MEARTH], ['M\u2643', MJUP_MEARTH]];
+  const what = f.transit ? t('mass_transit') : 'm sin i';
+  return `<span class="massnote">${esc(what)} = ` + units.map(([u, s]) => `<b>${fmt(mm.best / s)}</b> \u2212${fmt(mm.lo / s)} +${fmt(mm.hi / s)} ${u}`).join(' = ')
+    + ` <span class="hint">(M\u2605 = ${mm.M.toFixed(3)} \u00b1 ${mm.Merr.toFixed(3)} M\u2609)</span></span>`;
+}
+
 function tile(label, value, wide) {
   return `<div class="stat${wide ? ' wide' : ''}"><div class="label">${esc(label)}</div><div class="value">${value}</div></div>`;
 }
@@ -191,8 +238,12 @@ async function resolveStar(refresh) {
       if (varTries <= 40) setTimeout(() => { if ($('target').value.trim() === asked) resolveStar(); }, 5000);
     }
     const carm = id.carmenes ? `${esc(id.carmenes.carmenes_id)}, ${esc(id.carmenes.nobs)} ${esc(t('points'))}` : esc(t('not_in'));
+    setMass(id.star);
+    const star = id.star || {};
+    const typeTile = `${esc(star.sptype || id.sptype || '-')}` + (star.mass ? ` \u00b7 ${star.mass.toFixed(2)} \u00b1 ${(star.mass_err || 0).toFixed(2)} M\u2609` : '');
     box.innerHTML = '<div class="stats-grid">'
       + tile(t('main'), esc(id.main)) + tile(t('tic'), esc((id.tic || '-').replace('TIC ', '')))
+      + tile(t('sptype'), typeTile)
       + tile(t('pos'), pos) + tile(t('gaia'), esc((id.gaia_dr3 || '-').replace('Gaia DR3 ', '')))
       + tile(t('names'), others, true) + tile(t('rotation'), rot.join('<br>') || esc(t('none')), true)
       + tile(t('known'), planets, true)
@@ -835,7 +886,9 @@ function showFold(id) {
       + `e = ${pm(f.e, f.e_err, 2)}, \u03c9 = ${f.omega.toFixed(0)}\u00b0, rms ${f.rms.toFixed(2)} m/s \u00b7 ${esc(t('fold_note_kep'))}`
     : `<b>#${f.id}</b>: P = ${f.period.toFixed(4)} d, K = ${f.K.toFixed(2)} \u00b1 ${f.K_err.toFixed(2)} m/s, `
       + `rms ${f.rms.toFixed(2)} m/s \u00b7 ${esc(t('fold_note'))}`;
-  $('foldnote').innerHTML += pubNote + transitNote(f);
+  $('foldnote').innerHTML += pubNote + transitNote(f)
+    // the minimum mass of a Keplerian orbit; the mass of a transiting one
+    + (f.kind === 'kepler' || f.transit ? massText(f) : '');
   // the colour of the points: their instrument, their date, or their BERV
   //   (when the series has it), on one scale for all
   const hasBerv = f.instruments.some((inst) => inst.berv);
@@ -1067,7 +1120,8 @@ async function quicklookPdf() {
       body: JSON.stringify({ options: opts, x: view ? view.x : null, y: view ? view.y : null, p: pview ? pview.p : null,
         quick: quick && quick.result ? quick.id : '', command: $('cmd-detailed').textContent,
         fold_colour: foldColour, overlay: $('foldoverlay').checked && foldShown !== null ? foldShown : null,
-        fold_model: foldModel, series_colour: seriesColour, fip_view: fipView }) });
+        fold_model: foldModel, series_colour: seriesColour, fip_view: fipView,
+        mstar: +$('mstar').value || null, mstar_err: +$('mstar_err').value || 0 }) });
     if (!resp.ok) throw new Error((await resp.json()).error || resp.statusText);
     const link = document.createElement('a');
     link.href = URL.createObjectURL(await resp.blob());
@@ -1114,6 +1168,8 @@ function resetPage() {
   foldShown = null;
   foldShownObj = null;
   subtractList = [];
+  delete $('mstar').dataset.typed;
+  $('mstarsrc').textContent = '';
   showDiskPoints();
 }
 
@@ -1312,6 +1368,15 @@ document.addEventListener('click', (e) => {
   else document.querySelectorAll('[data-fcol]').forEach((x) => x.classList.toggle('on', x.dataset.fcol === foldColour));
 });
 $('foldoverlay').addEventListener('change', showModel);
+// the mass of the star typed: kept (the resolver no longer fills it), and
+//   the masses of the fold shown again
+for (const id of ['mstar', 'mstar_err']) {
+  $(id).addEventListener('input', () => {
+    $('mstar').dataset.typed = '1';
+    $('mstarsrc').textContent = t('typed');
+    if (foldShown !== null) showFold(foldShown);
+  });
+}
 // the fold's sinusoid or its Keplerian orbit
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-fmodel]');

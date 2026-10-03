@@ -623,6 +623,13 @@ def test_a_fold_on_a_transit_ephemeris(tmp_path, monkeypatch):
     kep = gui.fold_request(qid, opts, transit='Sim b',
                            kind='kepler')['fold']['kepler']
     assert kep['tc'] == eph['t0'] and abs(kep['K'] - 6.0) < 4 * kep['K_err']
-    pdf = gui.quicklook_pdf(opts, qid=qid, fold_model='kepler',
-                            fip_view='joint')
+    pdf = gui.quicklook_pdf(dict(opts, mstar=0.5, mstar_err=0.05), qid=qid,
+                            fold_model='kepler', fip_view='joint')
     assert pdf[:4] == b'%PDF'
+    # the LaTeX document itself (not the figures alone, its fall-back)
+    import shutil
+    fitz = pytest.importorskip('fitz')
+    if shutil.which('pdflatex'):
+        text = ' '.join(page.get_text() for page in
+                        fitz.open(stream=pdf, filetype='pdf'))
+        assert 'transit ephemeris' in text and 'Jup' in text

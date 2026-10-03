@@ -306,6 +306,7 @@ def resolve_star(name: str, root: str = '', refresh: bool = False
         _start_variability(out.get('main') or name, kept)
         out['variability'], out['variability_pending'] = [], True
     out.update(folder=folder, planets=[], tois=[])
+    known = {}
     try:
         host = host_name(out)
         known = known_planets(host=host) if host else {}
@@ -326,6 +327,15 @@ def resolve_star(name: str, root: str = '', refresh: bool = False
             out['tois'] = tois(out['tic'])
         except Exception as err:
             out['tois_error'] = str(err)
+    # its spectral type and mass (the archive's, or rough from the type)
+    try:
+        from koloa.stars import stellar
+        if 'sptype' not in out:
+            out['sptype'] = resolve(out.get('main') or name).get('sptype')
+        out['star'] = stellar(out, known.get('star'))
+    except Exception as err:  # a help, not a need
+        out['star'] = dict(sptype=None, mass=None, mass_err=None,
+                           source=None, error=str(err))
     return out
 
 
@@ -1978,6 +1988,31 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
                 f'$\\,h from it'
                 + (f' ({eph["shift_sigma"]:.1f}\\,$\\sigma$)'
                    if eph.get('shift_sigma') is not None else '') + '.\n')
+        # the minimum masses: the mass of the star the page gives
+        mstar, mstar_err = opts.get('mstar'), opts.get('mstar_err') or 0.0
+
+        def masses(item, transit=False):
+            if not mstar:
+                return ''
+            from koloa.stars import minimum_mass
+            mm = minimum_mass(item['K'], item['period'],
+                              item.get('e') or 0.0, float(mstar),
+                              item.get('K_err') or 0.0,
+                              item.get('P_err') or 0.0,
+                              item.get('e_err') or 0.0, float(mstar_err))
+            return ((r'mass ($\sin i \approx 1$) ' if transit
+                     else r'$m \sin i$ ') + ' = '.join(
+                f'${val:.3g}_{{-{low:.2g}}}^{{+{high:.2g}}}$\\,{unit}'
+                for (val, low, high), unit in (
+                    (mm['earth'], r'M$_\oplus$'),
+                    (mm['neptune'], r'M$_\mathrm{Nep}$'),
+                    (mm['jupiter'], r'M$_\mathrm{Jup}$')))
+                + f' (M$_\\star$ = {float(mstar):.3f} $\\pm$ '
+                  f'{float(mstar_err):.3f}\\,M$_\\odot$)')
+        for item in quick.get('folds') or []:
+            if item.get('transit') and mstar:
+                out.append(f'\\#{item["id"]} {escape(item["transit"]["name"])}'
+                           f': {masses(item, transit=True)}.\n')
         keps = [dict(item['kepler'], id=item['id'])
                 for item in quick.get('folds') or [] if 'kepler' in item]
         if keps:
@@ -1995,6 +2030,10 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
                        'per instrument, the trend), the eccentricity free, '
                        'the period free within the peak; errors from the '
                        'Laplace covariance.\n')
+            for item in keps if mstar else []:
+                out.append(f'\\#{item["id"]}: '
+                           f'{masses(item, transit=bool(item.get("transit")))}'
+                           f'.\n')
         if quick['known']:
             from koloa.aliases import same_family
             width = 1.0 / max(data.baseline, 1.0)
@@ -2504,7 +2543,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/quickfip':
                 return self._json(quick_fip(body.get('options', {})))
             if path == '/api/quicklook_pdf':
-                pdf = quicklook_pdf(body.get('options', {}), body.get('x'),
+                pdf = quicklook_pdf(dict(body.get('options', {}),
+                                         mstar=body.get('mstar'),
+                                         mstar_err=body.get('mstar_err')),
+                                    body.get('x'),
                                     body.get('y'), body.get('p'),
                                     body.get('quick', ''),
                                     body.get('command', ''),

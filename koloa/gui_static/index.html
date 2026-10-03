@@ -42,6 +42,9 @@
         <button id="resolve" type="button" data-i18n="resolve">Resolve</button>
       </div>
       <div id="ident"></div>
+      <div class="row massrow"><label for="mstar"><span data-i18n="mstar">Mass of the star [M☉]</span></label>
+        <input id="mstar" type="number" step="any" min="0" autocomplete="off"> ± <input id="mstar_err" type="number" step="any" min="0" autocomplete="off">
+        <button type="button" class="info" data-help="mstar" aria-label="?">i</button><span class="hint" id="mstarsrc"></span></div>
       <p class="hint archive-line"><span id="archive-date"></span> <button id="run-archive" type="button" class="small" data-i18n="refresh">Refresh</button></p>
     </section>
 

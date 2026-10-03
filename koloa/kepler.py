@@ -31,8 +31,10 @@ KEPLER_TOL = 1.0e-12
 
 #: the gravitational constant times a solar mass [m^3 s^-2]
 GM_SUN = 1.32712440018e20
-#: the mass of Jupiter and of the Earth over the Sun's
-MJUP_MSUN = 9.547919e-4
+#: the mass of Jupiter and of the Earth over the Sun's: the ratios of the
+#: IAU 2015 nominal GMs (Jupiter the planet, not its system with its
+#: satellites, 1/1047.35)
+MJUP_MSUN = 9.545942e-4
 MEARTH_MSUN = 3.003489e-6
 DAY = 86400.0
 

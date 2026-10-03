@@ -107,14 +107,21 @@ def resolve(name: str, timeout: float = 30.0, refresh: bool = False
 
     :return: dict, name (as given), main (SIMBAD's main identifier), aliases
              (every identifier), and the ones koloa uses: gaia_dr3, tic,
-             hip, hd, gj (None when SIMBAD has none), and ra, dec (J2000,
-             degrees)
+             hip, hd, gj (None when SIMBAD has none), ra, dec (J2000,
+             degrees), sptype (SIMBAD's spectral type) and plx [mas]
     """
     kept = os.path.join(CACHE, 'sesame', re.sub(r'[^A-Za-z0-9+\-.]+', '_',
                                                 name.strip()) + '.json')
     if os.path.exists(kept) and not refresh:
         with open(kept) as handle:
-            return dict(json.load(handle), name=name)
+            out = dict(json.load(handle), name=name)
+        if 'sptype' in out:
+            return out
+        # kept before the spectral type was: asked once more, or as it is
+        try:
+            return resolve(name, timeout=timeout, refresh=True)
+        except Exception:
+            return out
     url = f'{SESAME}?{urllib.parse.quote(name)}'
     with urllib.request.urlopen(url, timeout=timeout) as resp:
         text = resp.read().decode('utf-8', 'replace')
@@ -130,12 +137,16 @@ def resolve(name: str, timeout: float = 30.0, refresh: bool = False
     # the position (J2000, degrees), for planning observations
     radeg = re.search(r'<jradeg>(.*?)</jradeg>', text)
     dedeg = re.search(r'<jdedeg>(.*?)</jdedeg>', text)
+    sptype = re.search(r'<spType>(.*?)</spType>', text)
+    plx = re.search(r'<plx><v>(.*?)</v>', text)
     out = dict(name=name, main=' '.join(main.group(1).split()),
                aliases=aliases, gaia_dr3=first('Gaia DR3'),
                tic=first('TIC'), hip=first('HIP'), hd=first('HD'),
                gj=first('GJ'),
                ra=float(radeg.group(1)) if radeg else None,
-               dec=float(dedeg.group(1)) if dedeg else None)
+               dec=float(dedeg.group(1)) if dedeg else None,
+               sptype=sptype.group(1).strip() if sptype else None,
+               plx=float(plx.group(1)) if plx else None)
     os.makedirs(os.path.dirname(kept), exist_ok=True)
     with open(kept, 'w') as handle:
         json.dump(out, handle)
