@@ -237,7 +237,9 @@ async function drawVelocities(res, extra) {
     x: inst.time, y: inst.rv, name: `${inst.name} (${inst.source}, ${inst.n})`, type: 'scatter', mode: 'markers',
     error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: COLOURS[i % 8] },
     marker: { color: COLOURS[i % 8], symbol: SYMBOLS[i % 8], size: 7, line: { color: '#08111f', width: 1 } },
-    hovertemplate: `${inst.name}<br>rjd %{x:.4f}<br>%{y:.2f} m/s<extra></extra>`,
+    // the calendar date of each point, under the cursor
+    customdata: inst.time.map(dateText),
+    hovertemplate: `${inst.name}<br>%{customdata}<br>rjd %{x:.4f}<br>%{y:.2f} m/s<extra></extra>`,
   }));
   const ninst = traces.length;
   // nothing to see on the axis of the dates: Plotly draws an axis a trace uses
@@ -712,7 +714,9 @@ let foldShown = null;    // the id of the fold shown
 let foldColour = 'inst'; // its points by instrument, date or BERV
 try { foldColour = localStorage.getItem('koloa-foldcolour') || 'inst'; } catch (err) { /* no storage */ }
 const RED = '#ff3b3b';
-const dateText = (r) => rjdDate(r).toISOString().slice(0, 10);
+// a time as a calendar date and hour (of the barycentric time: within
+//   minutes of UT)
+const dateText = (r) => `${rjdDate(r).toISOString().slice(0, 16).replace('T', ' ')} (BJD)`;
 
 let foldModel = 'sine';  // the fold's sinusoid, or its Keplerian orbit
 try { foldModel = localStorage.getItem('koloa-foldmodel') || 'sine'; } catch (err) { /* no storage */ }
@@ -742,8 +746,10 @@ function showFold(id) {
   // the colour of the points: their instrument, their date, or their BERV
   //   (when the series has it), on one scale for all
   const hasBerv = f.instruments.some((inst) => inst.berv);
+  const hasTime = f.instruments.some((inst) => inst.time && inst.time.length);
   $('fcol-berv').disabled = !hasBerv;
-  const mode = foldColour === 'berv' && !hasBerv ? 'inst' : foldColour;
+  $('fcol-date').disabled = !hasTime;
+  const mode = (foldColour === 'berv' && !hasBerv) || (foldColour === 'date' && !hasTime) ? 'inst' : foldColour;
   document.querySelectorAll('[data-fcol]').forEach((b) => b.classList.toggle('on', b.dataset.fcol === mode));
   let scale = null;
   if (mode === 'date') {

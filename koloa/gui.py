@@ -1887,10 +1887,64 @@ def recall(rid: str) -> Dict[str, Any]:
                        result=quick['result'], error=None, start=0.0,
                        end=float(quick.get('elapsed') or 0.0),
                        instruments=list(quick['result']['instruments']))
+    try:
+        if _refresh_folds(qid, page):
+            notes.append('folds kept before their dates, BERV and solution '
+                         'were: made again from the series')
+            # kept so, once and for all
+            with open(os.path.join(folder, 'quick.json'), 'w') as handle:
+                json.dump(dict(quick, result=QUICKS[qid]['result']), handle)
+    except (ValueError, OSError) as err:  # a help, not a need
+        notes.append(f'the folds as they were kept ({err})')
     return dict(page=page, rv=loaded['rv'], quick=quick_state(qid),
                 entry={key: entry.get(key) for key in
                        ('id', 'target', 'note', 'created', 'summary')},
                 notes=notes)
+
+
+def page_options(page: Dict[str, Any]) -> Dict[str, Any]:
+    """the options of the quick look (the page's shownOptions) from the
+    state of a page remembered"""
+    detailed = page.get('detailed') or {}
+    return dict(files=page.get('files') or [], target=page.get('target', ''),
+                root=page.get('root', ''), dace=bool(detailed.get('dace')),
+                carmenes=bool(detailed.get('carmenes')),
+                exclude=str(detailed.get('exclude') or ''),
+                trend=detailed.get('trend', True),
+                curvature=bool(detailed.get('curvature')),
+                subtract=page.get('subtract') or [])
+
+
+def _refresh_folds(qid: str, page: Dict[str, Any]) -> int:
+    """the folds of a result remembered before they carried their dates,
+    BERV and solution, made again from its series (each night's
+    probability of being valid as it was kept)
+
+    :return: int, how many were made again
+    """
+    result = QUICKS[qid]['result']
+    old = [item for item in result.get('folds') or []
+           if 'model' not in item or not all('time' in inst
+                                             for inst in item['instruments'])]
+    if not old:
+        return 0
+    series = _quick_series(qid, page_options(page))
+    nights = series['nights']
+    for item in old:
+        # the probability of each night, as the fold kept it, where the
+        #   nights are the same (elsewhere, valid)
+        valid, found = np.ones(nights.n), False
+        for inst in item['instruments']:
+            sel = np.flatnonzero(nights.inst == inst['name'])
+            if inst.get('valid') and len(inst['valid']) == len(sel):
+                valid[sel], found = inst['valid'], True
+        new = fold(nights, item['period'], valid if found else None,
+                   series['trend'])
+        keep = {key: item[key] for key in ('id', 'forced', 'kepler')
+                if key in item}
+        item.clear()
+        item.update(new, **keep)
+    return len(old)
 
 
 def unremember(rid: str) -> Dict[str, Any]:

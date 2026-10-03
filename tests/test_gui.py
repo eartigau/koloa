@@ -325,6 +325,26 @@ def test_a_result_remembered_and_recalled(tmp_path, monkeypatch):
     state = gui.quick_state(rec['quick']['id'])
     assert state['status'] == 'done' and state['result']['n'] == 45
     assert state['elapsed'] == 12.0
+    # a fold kept before folds carried their dates, BERV and solution: made
+    #   again from the series on recall, and kept so
+    qpath = tmp_path / 'remembered' / out['id'] / 'quick.json'
+    kept = json.loads(qpath.read_text())
+    nights = gui.selection(gui.page_options(page))[0].nightly()
+    nn = int(np.sum(nights.inst == 'NIRPS'))
+    kept['result']['folds'] = [dict(
+        id=1, period=2.644, K=1.0, K_err=0.5, rms=3.0, tc=60000.0,
+        curve=dict(phase=[0, 1], rv=[0, 0]),
+        instruments=[dict(name='NIRPS', phase=[0.1] * nn, rv=[0.0] * nn,
+                          err=[1.0] * nn, valid=[0.9] * (nn - 1) + [0.2])])]
+    qpath.write_text(json.dumps(kept))
+    rec = gui.recall(out['id'])
+    folds = rec['quick']['result']['folds']
+    nirps = [inst for inst in folds[0]['instruments']
+             if inst['name'] == 'NIRPS'][0]
+    assert 'model' in folds[0] and len(nirps['time']) == nn
+    assert sum(val < 0.5 for val in nirps['valid']) == 1
+    assert any('made again' in note for note in rec['notes'])
+    assert gui.recall(out['id'])['notes'] == []
     # the file changed and the archives moved since: their copies
     lbl.write_text(lbl.read_text() + '60301.0,0.0,1.0,100.0\n')
     os.rename(tmp_path / 'arch', tmp_path / 'arch_moved')
