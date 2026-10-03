@@ -26,7 +26,13 @@
     </div>
   </div>
 
-  <main class="layout">
+  <!-- the tabs: the analysis, and the results remembered -->
+  <nav class="tabs">
+    <button type="button" class="tab on" data-tab="analysis" data-i18n="tab_analysis">Analysis</button>
+    <button type="button" class="tab" data-tab="remembered"><span data-i18n="tab_remembered">Remembered targets</span> <span class="count" id="nrem"></span></button>
+  </nav>
+
+  <main class="layout" id="tab-analysis">
     <!-- the star -->
     <section class="card">
       <h2><span data-i18n="star">Star</span> <button type="button" class="info" data-help="target" aria-label="?">i</button></h2>
@@ -90,6 +96,11 @@
         <input type="range" id="plo" min="0" max="1000" value="0" aria-label="period min"><input type="range" id="phi" min="0" max="1000" value="1000" aria-label="period max"></div>
       <div id="fipeach"></div>
       <div class="row"><button type="button" id="refip" class="small" data-i18n="refip">Recompute the FIP</button><span class="hint" id="fipstale"></span></div>
+      <div class="row remrow">
+        <span class="check"><button type="button" id="remember" class="small" disabled data-i18n="remember">Remember the result</button><button type="button" class="info" data-help="remember" aria-label="?">i</button></span>
+        <label class="remnote"><span data-i18n="note">Note</span> <input id="remnote" type="text" autocomplete="off"></label>
+        <span class="hint" id="remstate"></span>
+      </div>
       <h2 class="foldhead"><span data-i18n="fold_title">The fold at a peak</span> <button type="button" class="info" data-help="fold" aria-label="?">i</button></h2>
       <div class="row" id="foldbuttons"></div>
       <p class="hint" id="foldnote"></p>
@@ -129,6 +140,15 @@
       <h2 data-i18n="runs">Runs</h2>
       <p class="hint" data-i18n="runs_hint">Each run is the command line above, in a process of its own; closing the page does not stop it, stopping the server does.</p>
       <div id="jobs"><p class="hint" data-i18n="no_runs">No run yet.</p></div>
+    </section>
+  </main>
+
+  <!-- the results remembered -->
+  <main class="layout" id="tab-remembered" hidden>
+    <section class="card span-3">
+      <h2><span data-i18n="rem_title">Remembered targets</span> <button type="button" class="info" data-help="remembered" aria-label="?">i</button></h2>
+      <p class="hint" data-i18n="rem_hint">The quick looks remembered, the last first: recall one to find the page as it was.</p>
+      <div id="remlist"></div>
     </section>
   </main>
 

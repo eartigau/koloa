@@ -179,7 +179,8 @@ async function resolveStar(refresh) {
       + `</span></button>`).join('');
     const toiTile = tois ? tois + `<span class="hint">${esc(t('toi_pick'))}</span>`
       : `<span class="hint">${esc(id.tois_error || t('toi_none'))}</span>`;
-    const where = id.disk ? `${t('from_disk')} (${id.disk}, ${id.disk_date})` : t('asked_now');
+    const disk = { 'the archives folder': t('disk_archives'), 'the copy kept': t('disk_kept') }[id.disk] || id.disk;
+  const where = id.disk ? `${t('from_disk')} (${disk}, ${id.disk_date})` : t('asked_now');
     if (rot.length) rot.push(`<label class="prot"><input type="radio" name="prot" value=""${now ? '' : ' checked'}> ${esc(t('no_sho'))}</label>`);
     if (id.variability_pending) {
       rot.push(`<span class="hint"><span class="spin"></span> ${esc(t('var_pending'))}</span>`);
@@ -216,53 +217,59 @@ async function plotVelocities() {
     dace: asked.dace ? '1' : '', carmenes: asked.carmenes ? '1' : '' });
   try {
     const res = await api(`/api/rv?${q}`);
-    note.textContent = (auto ? [t('arch_auto')] : []).concat(res.notes || []).join(' · ');
-    const div = $('rvplot');
-    if (!res.instruments.length) {
-      div.classList.remove('on'); if (window.Plotly) Plotly.purge(div);
-      $('rvtable').innerHTML = `<p class="hint">${esc(t('no_rv'))}</p>`;
-      return;
-    }
-    const traces = res.instruments.map((inst, i) => ({
-      x: inst.time, y: inst.rv, name: `${inst.name} (${inst.source}, ${inst.n})`, type: 'scatter', mode: 'markers',
-      error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: COLOURS[i % 8] },
-      marker: { color: COLOURS[i % 8], symbol: SYMBOLS[i % 8], size: 7, line: { color: '#08111f', width: 1 } },
-      hovertemplate: `${inst.name}<br>rjd %{x:.4f}<br>%{y:.2f} m/s<extra></extra>`,
-    }));
-    $('plotcard').classList.add('on');
-    div.classList.add('on');
-    const axis = { gridcolor: 'rgba(200,220,255,0.10)', zerolinecolor: 'rgba(200,220,255,0.25)', color: '#7a8597' };
-    lastRV = res.instruments;
-    if (window.Plotly) {
-      await Plotly.newPlot(div, traces, {
-        paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(4,8,16,0.35)',
-        font: { family: 'Space Grotesk, sans-serif', color: '#e8eef8' },
-        margin: PLOT_MARGIN, showlegend: traces.length > 1,
-        legend: { orientation: 'h', x: 0, y: 1.0, yanchor: 'bottom' },
-        xaxis: { ...axis, title: 'BJD - 2400000', tickformat: '.0f', exponentformat: 'none' }, yaxis: { ...axis, title: 'RV - median [m/s]' },
-      }, { responsive: true, displaylogo: false });
-      div.removeAllListeners && div.removeAllListeners('plotly_relayout');
-      div.on('plotly_relayout', fromZoom);
-    }
-    view = null;
-    $('rvtable').innerHTML = `<table class="mini"><tr><th>${esc(t('use'))}</th><th>${esc(t('inst'))}</th><th>${esc(t('source'))}</th><th>${esc(t('n'))}</th><th>${esc(t('rms'))}</th></tr>`
-      + res.instruments.map((inst, i) => `<tr data-row="${esc(inst.name)}"><td><input type="checkbox" data-inst="${esc(inst.name)}" checked></td>`
-        + `<td><span class="swatch" style="background:${COLOURS[i % 8]}"></span>${esc(inst.name)}</td>`
-        + `<td class="src${(inst.source || '').startsWith('file') ? ' src-file' : ''}">${esc((inst.source || '').startsWith('file') ? inst.source.replace('file', t('src_file')) : inst.source)}</td>`
-        + `<td class="num">${inst.n}</td><td class="num">${inst.rms.toFixed(2)}</td></tr>`).join('') + '</table>';
-    if (window.Plotly && div.on) {
-      div.removeAllListeners && div.removeAllListeners('plotly_legendclick');
-      div.on('plotly_legendclick', (ev) => {
-        const name = lastRV[ev.curveNumber].name;
-        setExcluded(name, !excludedSet().has(name.toUpperCase()));
-        return false;
-      });
-    }
-    styleExcluded();
-    startQuick();
+    if (await drawVelocities(res, auto ? [t('arch_auto')] : [])) startQuick();
   } catch (err) {
     note.innerHTML = `<span class="bad">${esc(err.message)}</span>`;
   }
+}
+
+// the velocities by instrument (from /api/rv, or a result recalled)
+async function drawVelocities(res, extra) {
+  const note = $('rvnote');
+  note.textContent = (extra || []).concat(res.notes || []).join(' · ');
+  const div = $('rvplot');
+  if (!res.instruments.length) {
+    div.classList.remove('on'); if (window.Plotly) Plotly.purge(div);
+    $('rvtable').innerHTML = `<p class="hint">${esc(t('no_rv'))}</p>`;
+    return false;
+  }
+  const traces = res.instruments.map((inst, i) => ({
+    x: inst.time, y: inst.rv, name: `${inst.name} (${inst.source}, ${inst.n})`, type: 'scatter', mode: 'markers',
+    error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: COLOURS[i % 8] },
+    marker: { color: COLOURS[i % 8], symbol: SYMBOLS[i % 8], size: 7, line: { color: '#08111f', width: 1 } },
+    hovertemplate: `${inst.name}<br>rjd %{x:.4f}<br>%{y:.2f} m/s<extra></extra>`,
+  }));
+  $('plotcard').classList.add('on');
+  div.classList.add('on');
+  const axis = { gridcolor: 'rgba(200,220,255,0.10)', zerolinecolor: 'rgba(200,220,255,0.25)', color: '#7a8597' };
+  lastRV = res.instruments;
+  if (window.Plotly) {
+    await Plotly.newPlot(div, traces, {
+      paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(4,8,16,0.35)',
+      font: { family: 'Space Grotesk, sans-serif', color: '#e8eef8' },
+      margin: PLOT_MARGIN, showlegend: traces.length > 1,
+      legend: { orientation: 'h', x: 0, y: 1.0, yanchor: 'bottom' },
+      xaxis: { ...axis, title: 'BJD - 2400000', tickformat: '.0f', exponentformat: 'none' }, yaxis: { ...axis, title: 'RV - median [m/s]' },
+    }, { responsive: true, displaylogo: false });
+    div.removeAllListeners && div.removeAllListeners('plotly_relayout');
+    div.on('plotly_relayout', fromZoom);
+  }
+  view = null;
+  $('rvtable').innerHTML = `<table class="mini"><tr><th>${esc(t('use'))}</th><th>${esc(t('inst'))}</th><th>${esc(t('source'))}</th><th>${esc(t('n'))}</th><th>${esc(t('rms'))}</th></tr>`
+    + res.instruments.map((inst, i) => `<tr data-row="${esc(inst.name)}"><td><input type="checkbox" data-inst="${esc(inst.name)}" checked></td>`
+      + `<td><span class="swatch" style="background:${COLOURS[i % 8]}"></span>${esc(inst.name)}</td>`
+      + `<td class="src${(inst.source || '').startsWith('file') ? ' src-file' : ''}">${esc((inst.source || '').startsWith('file') ? inst.source.replace('file', t('src_file')) : inst.source)}</td>`
+      + `<td class="num">${inst.n}</td><td class="num">${inst.rms.toFixed(2)}</td></tr>`).join('') + '</table>';
+  if (window.Plotly && div.on) {
+    div.removeAllListeners && div.removeAllListeners('plotly_legendclick');
+    div.on('plotly_legendclick', (ev) => {
+      const name = lastRV[ev.curveNumber].name;
+      setExcluded(name, !excludedSet().has(name.toUpperCase()));
+      return false;
+    });
+  }
+  styleExcluded();
+  return true;
 }
 
 // -----------------------------------------------------------------------------
@@ -430,6 +437,8 @@ function shownOptions() {
 async function startQuick() {
   $('fipcard').classList.add('on');
   $('fipstale').textContent = '';
+  $('remember').disabled = true;
+  $('remstate').textContent = '';
   $('fipstatus').innerHTML = `<p class="hint"><span class="spin"></span> ${esc(t('quick_noise'))}</p>`;
   try {
     const opts = shownOptions();
@@ -455,6 +464,7 @@ async function pollQuick(id) {
   const drawn = `${state.result ? 1 : 0}/${each.length}`;
   if (state.result && quick.drawn !== drawn) { drawFip(state.result, each); quick.drawn = drawn; }
   $('fipstatus').innerHTML = (state.result ? fipSummary(state.result, state.elapsed) : '') + quickRunning(state);
+  $('remember').disabled = state.status !== 'done';
   if (state.status === 'running') setTimeout(() => pollQuick(id), 1000);
 }
 
@@ -647,7 +657,7 @@ async function quicklookPdf() {
 // a new target: every field back to the page's own default, no file, no
 //   star, no plot, no run that ended, as fresh as a new session (a run that
 //   still runs stays: closing a page does not stop it either)
-function newTarget() {
+function resetPage() {
   document.querySelectorAll('main input, main select').forEach((el) => {
     if (el.type === 'checkbox') el.checked = el.defaultChecked;
     else if (el.tagName === 'SELECT') {
@@ -667,6 +677,7 @@ function newTarget() {
   if (window.Plotly) { Plotly.purge($('fipplot')); Plotly.purge($('foldplot')); }
   $('foldbuttons').innerHTML = ''; $('foldnote').textContent = '';
   $('fipeach').innerHTML = ''; $('fipstatus').innerHTML = '';
+  $('fipstale').textContent = ''; $('remstate').textContent = ''; $('remember').disabled = true;
   syncMirrors();
   view = null;
   quick = null;
@@ -674,6 +685,11 @@ function newTarget() {
   lastRV = null;
   onDisk = null;
   showDiskPoints();
+}
+
+function newTarget() {
+  resetPage();
+  showTab('analysis');
   // the runs that ended, the quick looks, the archive in memory: forgotten
   //   here and by the server (a run still running is kept: Stop stops it)
   for (const [id, job] of [...jobs]) if (job.status !== 'running') { jobs.delete(id); openLogs.delete(id); }
@@ -683,6 +699,111 @@ function newTarget() {
   updateCommands();
   checkArchives();
   $('target').focus();
+}
+
+// -----------------------------------------------------------------------------
+// the results remembered: a quick look kept, listed in its tab, recalled as
+//   it was
+// -----------------------------------------------------------------------------
+function showTab(name) {
+  document.querySelectorAll('.tabs .tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
+  $('tab-analysis').hidden = name !== 'analysis';
+  $('tab-remembered').hidden = name !== 'remembered';
+  if (name === 'remembered') loadRemembered();
+  else if (view) setTimeout(() => { syncSliders(); syncPeriods(); }, 50);
+}
+
+// the page as it is: what a recall puts back
+function pageState() {
+  return { target: $('target').value.trim(), files: filesNow(), root: $('root').value.trim(), outdir: $('outdir').value.trim(),
+    detailed: readOptions('detailed'), clip: $('clip').checked,
+    view: view ? { x: view.x.slice(), y: view.y.slice() } : null, periods: pview ? pview.p.slice() : null };
+}
+
+async function rememberResult() {
+  if (!quick || quick.status !== 'done') return;
+  if (quick.of !== JSON.stringify(shownOptions())) { $('remstate').textContent = t('stale'); return; }
+  $('remember').disabled = true;
+  $('remstate').innerHTML = `<span class="spin"></span> ${esc(t('remembering'))}`;
+  try {
+    const res = await api('/api/remember', { page: pageState(), quick: quick.id, note: $('remnote').value.trim() });
+    $('remstate').innerHTML = `<span class="ok">\u2713</span> ${esc(t('remembered_ok'))} (${esc(res.created)})`;
+    loadRemembered();
+  } catch (err) {
+    $('remstate').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
+    $('remember').disabled = false;
+  }
+}
+
+let rememberedList = [];
+async function loadRemembered() {
+  try { rememberedList = await api('/api/remembered'); } catch (err) { return; }
+  $('nrem').textContent = rememberedList.length ? `(${rememberedList.length})` : '';
+  renderRemembered();
+}
+
+function renderRemembered() {
+  const box = $('remlist');
+  if (!rememberedList.length) { box.innerHTML = `<p class="hint">${esc(t('no_remembered'))}</p>`; return; }
+  const exp = (v) => (+v).toExponential(1);
+  box.innerHTML = `<div class="remwrap"><table class="mini"><tr><th>${esc(t('col_target'))}</th><th>${esc(t('col_when'))}</th>`
+    + `<th>${esc(t('col_nights'))}</th><th>${esc(t('col_peaks'))}</th><th>${esc(t('col_known'))}</th>`
+    + `<th>${esc(t('col_each'))}</th><th>${esc(t('col_data'))}</th><th></th></tr>`
+    + rememberedList.map((e) => {
+      const s = e.summary || {};
+      const nights = `<b>${s.n || 0}</b><br>` + Object.entries(s.instruments || {}).map(([k, v]) => `${esc(k)} ${v}`).join('<br>');
+      const peaks = (s.peaks || []).map((pk) => `#${pk.id} ${pk.period.toFixed(4)} (${exp(pk.family)})`).join('<br>') || esc(t('none'));
+      const known = (s.known || []).map((pl) => `${esc(pl.name)} ${(+pl.P).toPrecision(5)}`).join('<br>') || esc(t('none'));
+      const each = (s.each || []).map((one) => `${esc(one.name)}: ${one.skipped ? '&lt; 10 n'
+        : one.best ? `${one.best.period.toFixed(3)} (${exp(one.best.family)})` : esc(t('none'))}`).join('<br>') || esc(t('none'));
+      const data = (s.files || []).map(esc).concat(s.archives || []).join('<br>')
+        + (s.exclude ? `<br><span class="hint">\u2212 ${esc(s.exclude)}</span>` : '');
+      return `<tr><td><b>${esc(e.target || '?')}</b>${e.note ? `<span class="note">${esc(e.note)}</span>` : ''}</td>`
+        + `<td class="mono">${esc(e.created || '')}</td><td class="mono">${nights}</td><td class="mono">${peaks}</td>`
+        + `<td class="mono">${known}</td><td class="mono">${each}</td><td class="mono">${data}</td>`
+        + `<td class="acts"><button type="button" class="small go" data-recall="${esc(e.id)}">${esc(t('recall'))}</button>`
+        + `<button type="button" class="small stop" data-unremember="${esc(e.id)}">${esc(t('forget'))}</button></td></tr>`;
+    }).join('') + '</table></div>';
+}
+
+async function recallResult(id) {
+  let res;
+  try { res = await api('/api/recall', { id }); } catch (err) { alert(err.message); return; }
+  showTab('analysis');
+  resetPage();
+  const page = res.page;
+  $('target').value = page.target || '';
+  $('root').value = page.root || 'archives';
+  $('outdir').value = page.outdir || '';
+  fileRows = (page.files && page.files.length ? page.files : [{ path: '', label: '' }]).map((r) => ({ path: r.path, label: r.label || '' }));
+  renderFiles();
+  for (const [key, val] of Object.entries(page.detailed || {})) {
+    const el = document.querySelector(`[data-for="detailed"][data-opt="${key}"]`);
+    if (!el) continue;
+    if (el.type === 'checkbox') el.checked = !!val; else el.value = val;
+  }
+  syncMirrors();
+  $('clip').checked = !!page.clip;
+  if (page.target) resolveStar();
+  checkArchives();
+  updateCommands();
+  // the velocities, the FIP and the folds as they were: nothing recomputed
+  $('plotcard').classList.add('on');
+  await drawVelocities(res.rv, res.notes);
+  if (view && page.view) { view.x = page.view.x; view.y = page.view.y; applyView(); }
+  quick = { ...res.quick, of: JSON.stringify(shownOptions()) };
+  $('fipcard').classList.add('on');
+  drawFip(quick.result, quick.each || []);
+  quick.drawn = `1/${(quick.each || []).length}`;
+  $('fipstatus').innerHTML = fipSummary(quick.result, quick.elapsed);
+  if (pview && page.periods) {
+    pview.p = page.periods;
+    Plotly.relayout('fipplot', { 'xaxis.range': [Math.log10(pview.p[0]), Math.log10(pview.p[1])] });
+    syncPeriods();
+  }
+  $('remnote').value = res.entry.note || '';
+  $('remstate').textContent = `${t('recalled_from')} ${res.entry.created}`;
+  $('plotcard').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // -----------------------------------------------------------------------------
@@ -776,11 +897,23 @@ document.addEventListener('click', async (e) => {
     updateCommands();
   }
   if (e.target.id === 'refresh-star') resolveStar(true);
+  const tab = e.target.closest('[data-tab]');
+  if (tab) showTab(tab.dataset.tab);
+  const rec = e.target.closest('[data-recall]');
+  if (rec) recallResult(rec.dataset.recall);
+  const unrem = e.target.closest('[data-unremember]');
+  if (unrem && confirm(t('forget_confirm'))) {
+    try { await api('/api/unremember', { id: unrem.dataset.unremember }); } catch (err) { alert(err.message); }
+    loadRemembered();
+  }
 });
+$('remember').addEventListener('click', rememberResult);
 
 (async () => {
   $('detailed-options').innerHTML = renderOptions('detailed');
-  langHooks.push(showCwd, renderJobs, renderFiles, checkArchives, () => { if (quick && quick.each) drawEach(quick.each); });
+  langHooks.push(showCwd, renderJobs, renderFiles, checkArchives, renderRemembered,
+    () => { if (quick && quick.each) drawEach(quick.each); });
+  loadRemembered();
   jobDoneHooks.push(async (job) => {
     if (job.action === 'archive') refreshInfo();
     if (job.action !== 'gather') return;

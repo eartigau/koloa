@@ -14,6 +14,10 @@ word for word, in a process of its own: what the page does, a batch does
 with the same line. The steps of a run (the 'step:' lines of koloa's log)
 show as they go, with the time each took, and the log as it comes.
 
+A quick look worth keeping is remembered (REMEMBERED: the page, its quick
+FIP, the velocities plotted, and a copy of the files and of the archives'
+velocities), listed in a tab of its own, and recalled as it was.
+
 The server listens on 127.0.0.1 only, and runs nothing but koloa, its
 arguments passed as such (no shell).
 
@@ -22,10 +26,13 @@ Created on 2026-10-01
 @author: artigau
 """
 import argparse
+import hashlib
 import json
 import mimetypes
 import os
+import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -1179,7 +1186,6 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
     :return: bytes, the PDF
     """
     import io
-    import shutil
     import tempfile
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_pdf import PdfPages
@@ -1214,6 +1220,209 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
         for _, fig in figs:
             plt.close(fig)
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# =============================================================================
+# The results remembered: a quick look kept, to be recalled as it was
+# =============================================================================
+#: where the results remembered are kept, one folder each
+REMEMBERED = os.path.join(os.path.expanduser('~'), '.cache', 'koloa',
+                          'remembered')
+
+
+def _sha1(path: str) -> str:
+    """the SHA-1 of a file, to know whether it changed"""
+    digest = hashlib.sha1()
+    with open(path, 'rb') as handle:
+        for block in iter(lambda: handle.read(1 << 20), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _entry_folder(rid: str) -> str:
+    """the folder of a result remembered, its name checked (no path)"""
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9+\-._]*', rid or ''):
+        raise ValueError(f'not a result remembered: {rid!r}')
+    folder = os.path.join(REMEMBERED, rid)
+    if not os.path.exists(os.path.join(folder, 'entry.json')):
+        raise ValueError(f'no result remembered as {rid}')
+    return folder
+
+
+def _summary(page: Dict[str, Any], result: Dict[str, Any],
+             each: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """what the list of the results remembered shows of one"""
+    named = [pk for pk in result.get('peak_list', []) if pk.get('named')]
+    detailed = page.get('detailed') or {}
+    return dict(
+        n=result.get('n'), instruments=result.get('instruments', {}),
+        peaks=[dict(id=pk['id'], period=pk['period'], family=pk['family'])
+               for pk in named],
+        known=result.get('known', []),
+        each=[dict(name=one['name'], n=one['n'], skipped=one['skipped'],
+                   best=(one['peaks'][0] if one.get('peaks') else None))
+              for one in each],
+        files=[os.path.basename(row['path'])
+               for row in page.get('files') or []],
+        archives=[name for key, name in (('dace', 'DACE'),
+                                         ('carmenes', 'CARMENES DR1'))
+                  if detailed.get(key)],
+        exclude=str(detailed.get('exclude') or ''))
+
+
+def remember(page: Dict[str, Any], qid: str, note: str = ''
+             ) -> Dict[str, Any]:
+    """
+    A quick look remembered: the page (its fields, its ranges), its quick
+    FIP (joint and of each instrument), the velocities plotted, and a copy
+    of its files and of the velocities of the star's archives, so that it
+    is recalled as it was, the files moved or the archives refreshed since
+
+    :param page: dict, the state of the page (target, files, root, outdir,
+                 detailed: the options of the report, clip, view, periods)
+    :param qid: str, the quick FIP shown (ended)
+    :param note: str, a word of why it is worth keeping
+
+    :return: dict, the entry (its id, and its summary)
+    """
+    from koloa.gather import folder_name
+    job = QUICKS.get(qid)
+    if not job or job.get('status') != 'done' or not job.get('result'):
+        raise ValueError('nothing to remember yet: the quick FIP has not '
+                         'ended')
+    target = str(page.get('target') or '').strip()
+    rid = (f'{folder_name(target) or "series"}_'
+           f'{time.strftime("%Y%m%d-%H%M%S")}')
+    folder = os.path.join(REMEMBERED, rid)
+    os.makedirs(os.path.join(folder, 'files'))
+    files = []
+    for rank, row in enumerate(page.get('files') or []):
+        path = os.path.abspath(os.path.expanduser(row['path']))
+        copy = os.path.join(folder, 'files',
+                            f'{rank}_{os.path.basename(path)}')
+        shutil.copy2(path, copy)
+        files.append(dict(path=path, label=row.get('label') or '',
+                          copy=copy, sha1=_sha1(copy)))
+    # the velocities of the archives (not the photometry: the report
+    #   fetches its own)
+    root = str(page.get('root') or 'archives')
+    arch = None
+    src = os.path.join(root, folder_name(target)) if target else ''
+    if src and os.path.isdir(os.path.join(src, 'rv')):
+        dst = os.path.join(folder, 'archives', folder_name(target))
+        shutil.copytree(os.path.join(src, 'rv'), os.path.join(dst, 'rv'))
+        for name in ('target.json', 'manifest.json'):
+            if os.path.exists(os.path.join(src, name)):
+                shutil.copy2(os.path.join(src, name), os.path.join(dst, name))
+        allrv = os.path.join(dst, 'rv', 'all_rv.csv')
+        arch = dict(root=os.path.abspath(root),
+                    copy=os.path.join(folder, 'archives'),
+                    sha1=_sha1(allrv) if os.path.exists(allrv) else '')
+    detailed = page.get('detailed') or {}
+    rv = velocities([dict(path=row['copy'], label=row['label'])
+                     for row in files], target,
+                    arch['copy'] if arch else root,
+                    dace=bool(detailed.get('dace')),
+                    carmenes=bool(detailed.get('carmenes')))
+    # the files by their own names, not their copies'
+    names = {os.path.basename(row['copy']): os.path.basename(row['path'])
+             for row in files}
+    for inst in rv.get('instruments', []):
+        src = inst.get('source', '')
+        if src.startswith('file: ') and src[6:] in names:
+            inst['source'] = 'file: ' + names[src[6:]]
+    rv['notes'] = [next((note.replace(copy, orig, 1)
+                         for copy, orig in names.items()
+                         if note.startswith(copy + ':')), note)
+                   for note in rv.get('notes', [])]
+    if arch:
+        rv['notes'] = [note.replace(arch['copy'], root)
+                       for note in rv['notes']]
+    entry = dict(id=rid, target=target, note=str(note or ''),
+                 created=time.strftime('%Y-%m-%d %H:%M'),
+                 page=page, files=files, archives=arch,
+                 summary=_summary(page, job['result'], job.get('each') or []))
+    for name, value in (('entry', entry), ('rv', rv),
+                        ('quick', dict(result=job['result'],
+                                       each=job.get('each') or [],
+                                       elapsed=quick_state(qid)['elapsed']))):
+        with open(os.path.join(folder, f'{name}.json'), 'w') as handle:
+            json.dump(value, handle)
+    return dict(id=rid, created=entry['created'], summary=entry['summary'])
+
+
+def remembered() -> List[Dict[str, Any]]:
+    """the results remembered, the last first (their entries)"""
+    out = []
+    if os.path.isdir(REMEMBERED):
+        for rid in os.listdir(REMEMBERED):
+            path = os.path.join(REMEMBERED, rid, 'entry.json')
+            if not os.path.exists(path):
+                continue
+            try:
+                with open(path) as handle:
+                    entry = json.load(handle)
+            except ValueError:   # a folder half written
+                continue
+            out.append({key: entry.get(key) for key in
+                        ('id', 'target', 'note', 'created', 'summary')})
+    return sorted(out, key=lambda entry: entry['id'].rsplit('_', 1)[-1],
+                  reverse=True)
+
+
+def recall(rid: str) -> Dict[str, Any]:
+    """
+    A result remembered, as it was: the page, the velocities plotted, the
+    quick FIP (ready for its PDF); each file is the original when it has
+    not changed, else its copy, and the archives likewise
+
+    :return: dict, page, rv, quick (its state), entry, notes
+    """
+    folder = _entry_folder(rid)
+    loaded = {}
+    for name in ('entry', 'rv', 'quick'):
+        with open(os.path.join(folder, f'{name}.json')) as handle:
+            loaded[name] = json.load(handle)
+    entry = loaded['entry']
+    page, notes = dict(entry['page']), []
+    rows = []
+    for row in entry['files']:
+        same = (os.path.exists(row['path'])
+                and _sha1(row['path']) == row['sha1'])
+        rows.append(dict(path=row['path'] if same else row['copy'],
+                         label=row['label']))
+        if not same:
+            notes.append(f'{os.path.basename(row["path"])}: changed or '
+                         f'moved since, its copy used')
+    page['files'] = rows
+    arch = entry.get('archives')
+    if arch:
+        from koloa.gather import folder_name
+        now = os.path.join(arch['root'], folder_name(entry['target']), 'rv',
+                           'all_rv.csv')
+        same = os.path.exists(now) and _sha1(now) == arch['sha1']
+        page['root'] = arch['root'] if same else arch['copy']
+        if not same:
+            notes.append('the archives refreshed or moved since: their '
+                         'copy used')
+    qid = uuid.uuid4().hex[:8]
+    quick = loaded['quick']
+    QUICKS[qid] = dict(id=qid, status='done', step='done', step_detail='',
+                       each=quick['each'], progress=None,
+                       result=quick['result'], error=None, start=0.0,
+                       end=float(quick.get('elapsed') or 0.0),
+                       instruments=list(quick['result']['instruments']))
+    return dict(page=page, rv=loaded['rv'], quick=quick_state(qid),
+                entry={key: entry.get(key) for key in
+                       ('id', 'target', 'note', 'created', 'summary')},
+                notes=notes)
+
+
+def unremember(rid: str) -> Dict[str, Any]:
+    """a result remembered, forgotten (its folder and its copies)"""
+    folder = _entry_folder(rid)
+    shutil.rmtree(folder)
+    return dict(id=rid)
 
 
 # =============================================================================
@@ -1271,6 +1480,8 @@ class Handler(BaseHTTPRequestHandler):
                                        query.get('start', '')))
             if url.path == '/api/quickfip':
                 return self._json(quick_state(query['id']))
+            if url.path == '/api/remembered':
+                return self._json(remembered())
             if url.path == '/api/archives':
                 state = archives(query.get('target', ''),
                                  query.get('root', ''))
@@ -1349,6 +1560,14 @@ class Handler(BaseHTTPRequestHandler):
                 return None
             if path == '/api/forget':
                 return self._json(forget())
+            if path == '/api/remember':
+                return self._json(remember(body.get('page', {}),
+                                           body.get('quick', ''),
+                                           body.get('note', '')))
+            if path == '/api/recall':
+                return self._json(recall(body.get('id', '')))
+            if path == '/api/unremember':
+                return self._json(unremember(body.get('id', '')))
             if path == '/api/stop':
                 job = JOBS[body['id']]
                 if job.returncode is None:

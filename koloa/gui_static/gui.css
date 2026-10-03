@@ -173,3 +173,20 @@ h2 .hint { font-weight: 400; font-size: 0.85rem; }
 #archchecks .hint { font-size: 0.82rem; }
 #fipeach table.mini { margin-top: 10px; }
 #fipeach td.peaks { font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; }
+
+/* the tabs: the analysis, and the results remembered */
+main[hidden] { display: none !important; }
+.tabs { max-width: 1180px; margin: 12px auto 0; padding: 0 20px; display: flex; gap: 8px; box-sizing: border-box; }
+.tabs .tab { border-radius: 10px; background: rgba(98, 194, 255, 0.06); }
+.tabs .tab.on { background: rgba(98, 194, 255, 0.28); border-color: var(--accent); color: #fff; font-weight: 700; }
+.tabs .count { font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; color: var(--muted); }
+.tabs .tab.on .count { color: #fff; }
+.remrow { gap: 12px; }
+.remnote { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--muted); flex: 1; max-width: 520px; }
+.remnote input { flex: 1; }
+.remwrap { overflow-x: auto; }
+#remlist table.mini td { vertical-align: top; padding-top: 7px; padding-bottom: 7px; border-top: 1px solid rgba(200, 220, 255, 0.08); }
+#remlist td.mono { font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; }
+#remlist td .note { display: block; color: var(--muted); font-size: 0.82rem; max-width: 260px; }
+#remlist td.acts { white-space: nowrap; }
+#remlist td.acts button { margin: 0 4px 4px 0; }

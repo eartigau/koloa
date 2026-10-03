@@ -256,3 +256,68 @@ def test_each_instrument_has_its_own_quick_fip(tmp_path, monkeypatch):
     assert pdf[:4] == b'%PDF'
     gui.forget()
     assert state['id'] not in gui.QUICKS
+
+
+def test_a_result_remembered_and_recalled(tmp_path, monkeypatch):
+    """a quick look remembered (the page, its FIP, the velocities, a copy of
+    the file and of the archives), listed, recalled as it was: the
+    originals while they have not changed, else their copies; forgotten"""
+    import os
+    import numpy as np
+    from koloa.data import RVData
+    from koloa.gather import write_rv
+    monkeypatch.setattr(gui, 'REMEMBERED', str(tmp_path / 'remembered'))
+    rng = np.random.default_rng(2)
+    tfile = np.sort(rng.uniform(60000, 60300, 30))
+    lbl = tmp_path / 'lbl.csv'
+    lbl.write_text('rjd,vrad,svrad,EXTSN060\n' + ''.join(
+        f'{tt!r},{rng.normal(0, 3)!r},1.0,100.0\n' for tt in tfile))
+    tarch = np.sort(rng.uniform(58000, 59000, 15))
+    write_rv(RVData(tarch, rng.normal(0, 3, 15), np.full(15, 1.0),
+                    inst=np.array(['HARPS15'] * 15)),
+             str(tmp_path / 'arch' / 'GJ_436' / 'rv' / 'all_rv.csv'))
+    qid = 'remember1'
+    gui.QUICKS[qid] = dict(
+        id=qid, status='done', step='done', step_detail='', progress=None,
+        error=None, start=0.0, end=12.0, instruments=['NIRPS', 'HARPS15'],
+        each=[], result=dict(n=45, instruments={'NIRPS': 30, 'HARPS15': 15},
+                             known=[], peak_list=[dict(
+                                 id=1, period=2.644, family=1e-5,
+                                 alone=1e-4, named=True)]))
+    page = dict(target='GJ 436', files=[dict(path=str(lbl), label='')],
+                root=str(tmp_path / 'arch'), outdir='',
+                detailed=dict(dace=True, carmenes=False, exclude=''),
+                clip=False, view=None, periods=None)
+    # a quick FIP that has not ended is not remembered
+    with pytest.raises(ValueError):
+        gui.remember(page, 'nothing')
+    out = gui.remember(page, qid, note='a peak at 2.64 d')
+    listed = gui.remembered()
+    assert [entry['id'] for entry in listed] == [out['id']]
+    assert listed[0]['note'] == 'a peak at 2.64 d'
+    assert listed[0]['summary']['archives'] == ['DACE']
+    assert listed[0]['summary']['peaks'][0]['period'] == 2.644
+    # recalled: the originals, unchanged; the velocities and the FIP kept
+    rec = gui.recall(out['id'])
+    assert rec['page']['files'][0]['path'] == str(lbl)
+    assert rec['page']['root'] == str(tmp_path / 'arch')
+    assert rec['notes'] == []
+    assert {inst['name']: inst['source'] for inst in rec['rv']['instruments']
+            } == {'NIRPS': 'file: lbl.csv', 'HARPS15': 'DACE'}
+    state = gui.quick_state(rec['quick']['id'])
+    assert state['status'] == 'done' and state['result']['n'] == 45
+    assert state['elapsed'] == 12.0
+    # the file changed and the archives moved since: their copies
+    lbl.write_text(lbl.read_text() + '60301.0,0.0,1.0,100.0\n')
+    os.rename(tmp_path / 'arch', tmp_path / 'arch_moved')
+    rec = gui.recall(out['id'])
+    copy = rec['page']['files'][0]['path']
+    assert copy.startswith(str(tmp_path / 'remembered')) and len(rec['notes']) == 2
+    assert rec['page']['root'].startswith(str(tmp_path / 'remembered'))
+    assert gui.velocities(rec['page']['files'], 'GJ 436', rec['page']['root'],
+                          dace=True)['n'] == 45
+    # only a result remembered, by its name
+    with pytest.raises(ValueError):
+        gui.recall('../lbl.csv')
+    gui.unremember(out['id'])
+    assert gui.remembered() == []
