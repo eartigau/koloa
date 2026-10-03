@@ -62,7 +62,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from koloa.data import RVData, merge
-from koloa.log import log, step
+from koloa.log import log, outcome, step
 
 # =============================================================================
 # Define variables
@@ -378,6 +378,8 @@ def gather(target: str, root: str = '.', dace: bool = True,
     ident = resolve(target)
     log(f'{target}: SIMBAD {ident["main"]}, TIC '
         f'{(ident.get("tic") or "none").replace("TIC ", "")}', 'info')
+    outcome(f'{ident["main"]}' + (f', {ident["tic"]}' if ident.get('tic')
+                                  else ''))
     info = dict(ident)
     try:
         info['variability'] = variability(ident['main'])
@@ -418,6 +420,7 @@ def gather(target: str, root: str = '.', dace: bool = True,
             manifest['archives']['dace'] = dict(
                 status='none', message='DACE has no public velocities under '
                 'the names of the star')
+        outcome(_told(manifest['archives']['dace']))
     if carmenes:
         step('CARMENES DR1')
         cdir = os.path.join(rvdir, 'carmenes')
@@ -438,6 +441,7 @@ def gather(target: str, root: str = '.', dace: bool = True,
             manifest['archives']['carmenes'] = dict(
                 status='none', message='not in CARMENES DR1, or no '
                 'velocity corrected for the nightly zero points')
+        outcome(_told(manifest['archives']['carmenes']))
     if tess:
         step('TESS')
         lcs = attempt('tess', lambda: tess_photometry(ident, target, photdir,
@@ -453,6 +457,8 @@ def gather(target: str, root: str = '.', dace: bool = True,
                 files=['phot/tess.csv']) if sectors else dict(
                 status='none', tic=lcs['tic'],
                 message='no light curve at MAST'))
+        if 'tess' in manifest['archives']:
+            outcome(_told(manifest['archives']['tess']))
     if series:
         both = merge(series, name=target)
         write_rv(both, os.path.join(rvdir, 'all_rv.csv'))
@@ -518,6 +524,23 @@ def archive_berv(folder: str, times: np.ndarray, tol: float = 1e-4
     near = np.abs(ref_t[pick] - times) <= tol
     out[near] = ref_v[pick][near]
     return out
+
+
+def _told(entry: Dict[str, Any]) -> str:
+    """what an archive gave, in words: its points, by instrument, or its
+    sectors; or why nothing"""
+    if entry.get('status') != 'ok':
+        return f'nothing: {entry.get("message") or entry.get("status")}'
+    if 'sectors' in entry:
+        sectors = entry['sectors']
+        return (f'{len(sectors)} sector{"s" if len(sectors) != 1 else ""}, '
+                f'{sum(item["npoints"] for item in sectors)} points ('
+                + ', '.join(f's{item["sector"]} {item["pipeline"]}'
+                            for item in sectors) + ')')
+    insts = entry.get('instruments') or {}
+    return (f'{entry.get("npoints", sum(insts.values()))} points'
+            + (': ' + ', '.join(f'{name} {num}' for name, num
+                                in insts.items()) if insts else ''))
 
 
 def load(folder: str, photometry: bool = True) -> Dict[str, Any]:

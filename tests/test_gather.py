@@ -132,3 +132,18 @@ def test_the_velocities_alone_or_a_sector_gone(tmp_path):
     got = load(str(tmp_path), photometry=False)
     assert got['rv'].n == 5 and got['tess'] == []
     assert load(str(tmp_path))['tess'] == []   # the sector is gone
+
+
+def test_what_an_archive_gave_in_words():
+    """the line under a step of a gather in koloa's GUI: the points of an
+    archive by instrument, the sectors of TESS, or why nothing"""
+    from koloa.gather import _told
+    assert _told(dict(status='ok', npoints=260, instruments=dict(
+        HARPS03=19, HARPS15=114, NIRPS=127))) == (
+        '260 points: HARPS03 19, HARPS15 114, NIRPS 127')
+    assert _told(dict(status='ok', sectors=[
+        dict(sector=13, pipeline='SPOC', npoints=100),
+        dict(sector=66, pipeline='QLP', npoints=50)])) == (
+        '2 sectors, 150 points (s13 SPOC, s66 QLP)')
+    assert _told(dict(status='none', message='not in DR1')) == (
+        'nothing: not in DR1')

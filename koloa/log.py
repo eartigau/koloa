@@ -75,6 +75,17 @@ def step(name: str):
     log(f'step: {name}', 'info')
 
 
+def outcome(message: str):
+    """
+    What a step of an analysis came to (the points an archive gave, say):
+    one line, 'result: <message>', that koloa's GUI shows under the step,
+    once it is over too
+
+    :param message: str, what it came to
+    """
+    log(f'result: {message}', 'value')
+
+
 def loud_warning(message: str):
     """
     A warning that is both logged in orange and raised as a KoloaWarning

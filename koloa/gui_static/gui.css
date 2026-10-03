@@ -215,3 +215,4 @@ main[hidden] { display: none !important; }
 [data-fold].transit, [data-transit] { border-color: rgba(108, 226, 173, 0.7); }
 [data-transit] { color: #8eeac0; }
 #foldnote .trnote { display: block; margin-top: 4px; color: #8eeac0; }
+ol.steps .result { grid-column: 2 / 4; font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; color: var(--text); opacity: 0.85; }

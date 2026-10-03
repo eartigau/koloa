@@ -222,6 +222,9 @@ class Job:
                     self.steps[-1]['end'] = now
                 self.steps.append(dict(name=message[6:], start=now, end=None,
                                        detail=''))
+            elif message.startswith('result: ') and self.steps:
+                # what the step came to: shown once it is over too
+                self.steps[-1]['result'] = message[8:][:400]
             elif self.steps and text.strip():
                 self.steps[-1]['detail'] = message[:160]
         self.returncode = self.proc.wait()

@@ -235,7 +235,8 @@ function renderJobs() {
       const detail = (last && running && st.progress ? progressHtml(st.progress) : '')
         + (last && running && st.detail && !(st.progress && st.detail.includes('% of the sweeps'))
           ? `<span class="detail">${esc(st.detail)}</span>` : '');
-      return `<li><span class="icon">${icon}</span><span>${esc(st.name)}</span><span class="time">${clock(st.elapsed)}</span>${detail}</li>`;
+      const result = st.result ? `<span class="result">${esc(st.result)}</span>` : '';
+      return `<li><span class="icon">${icon}</span><span>${esc(st.name)}</span><span class="time">${clock(st.elapsed)}</span>${result}${detail}</li>`;
     }).join('') || (running ? `<li><span class="icon"><span class="hourglass">⏳</span></span><span>${esc(t('starting'))}</span><span></span></li>` : '');
     const base = `/api/output?id=${job.id}&name=`;
     const files = (job.files || []).map((f) => `<a href="${base}${encodeURIComponent(f)}" target="_blank">${esc(f)}</a>`).join('');
