@@ -1533,7 +1533,7 @@ function renderBatch() {
   const head = cols.map(([k, label]) => `<th data-bsort="${k}" class="sortable${batchSort.key === k ? ' sorted' : ''}">${esc(label)}`
     + `${batchSort.key === k ? (batchSort.dir > 0 ? ' \u25b2' : ' \u25bc') : ''}</th>`).join('');
   const num = (v, d) => (v === null || v === undefined ? '' : v.toFixed(d));
-  $('batchtable').innerHTML = `<div class="remwrap"><table class="mini batch"><tr>${head}<th></th></tr>`
+  $('batchtable').innerHTML = `<div class="batchwrap"><table class="mini batch"><tr>${head}<th></th></tr>`
     + batchRows().map((r) => {
       let state = '';
       if (r.status === 'running' && r.stage === 'gather') state = `<span class="hourglass">\u23f3</span> ${esc(t('batch_gather'))}`;
@@ -1546,7 +1546,7 @@ function renderBatch() {
       const acc = r.accel !== null && r.accel !== undefined ? `${r.accel >= 0 ? '+' : '\u2212'}${Math.abs(r.accel).toPrecision(3)} \u00b1 ${r.accel_err.toPrecision(2)}` : '';
       if (r.note) state += ` <span class="hint" title="${esc(r.note)}">\u24d8</span>`;
       const nights = batch.archives ? `<td class="insts">${r.n ? `<b>${r.n}</b>` : ''}${instCell(r)}</td>` : `<td class="num">${r.n ?? ''}</td>`;
-      return `<tr><td title="${esc(r.path)}">${esc(r.name)}</td><td>${objectCell(r)}</td>${nights}<td class="num">${num(r.baseline, 0)}</td>`
+      return `<tr><td class="bname" title="${esc(r.path)}">${esc(r.name).replace(/_/g, '_<wbr>')}</td><td>${objectCell(r)}</td>${nights}<td class="num">${num(r.baseline, 0)}</td>`
         + `<td class="num">${num(r.period, 4)}</td><td class="num">${fipCell(r.fip)}</td><td class="num">${fipCell(r.fip_alone)}</td>`
         + `<td class="num">${r.K !== null && r.K !== undefined ? `${r.K.toFixed(2)} \u00b1 ${r.K_err.toFixed(2)}` : ''}</td><td class="num">${num(r.rms, 2)}</td>`
         + `<td class="num">${acc}</td><td class="num">${num(r.accel_sigma, 1)}</td>`
