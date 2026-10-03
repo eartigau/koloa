@@ -57,6 +57,9 @@ button.stop { border-color: rgba(230, 103, 103, 0.6); background: rgba(230, 103,
 .fields label { display: flex; flex-direction: column; gap: 4px; font-size: 0.82rem; color: var(--muted); }
 .checks { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0; font-size: 0.9rem; }
 .checks label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+/* the sources of VizieR, under its box */
+.checks.vzsources { margin: -4px 0 10px 22px; padding-left: 10px; border-left: 2px solid rgba(98, 194, 255, 0.25); }
+.checks.vzsources.off { opacity: 0.45; }
 
 .cmd { position: relative; margin: 10px 0 4px; }
 .cmd .codeblock { white-space: pre-wrap; word-break: break-all; padding-right: 76px; min-height: 1.2em; }

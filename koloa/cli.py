@@ -166,7 +166,19 @@ def main(argv=None):
                              'of the star named instead of a file, in '
                              'ROOT/<star> (koloa.gather); --no-dace, '
                              '--no-carmenes, --no-vizier, --no-tess leave one '
-                             'out')
+                             'out, --vizier-sources picks the sources of '
+                             'VizieR')
+    parser.add_argument('--vizier-sources', nargs='+', default=None,
+                        metavar='SOURCE',
+                        help='with --gather: the sources of the published '
+                             'velocities (all by default): teklu25 (Keck '
+                             'HIRES, Teklu et al. 2025), cls21 (HIRES, APF '
+                             'and Lick of the California Legacy Survey, '
+                             'Rosenthal et al. 2021), talor19 (Keck HIRES, '
+                             'Tal-Or et al. 2019), fischer14 (the Lick '
+                             'Hamilton, Fischer et al. 2014), rvbank20 '
+                             '(HARPS by SERVAL, Trifonov et al. 2020), papers '
+                             '(the tables of the star\'s papers)')
     parser.add_argument('--gui', action='store_true',
                         help="koloa's GUI in the browser (koloa.gui): the "
                              'SIMBAD resolver, the velocities by instrument, '
@@ -211,7 +223,8 @@ def main(argv=None):
         from koloa.gather import gather
         gather(args.filename[0], args.gather, dace=not args.no_dace,
                carmenes=not args.no_carmenes, tess=not args.no_tess,
-               vizier=not args.no_vizier, refresh=args.refresh)
+               vizier=not args.no_vizier, refresh=args.refresh,
+               vizier_sources=args.vizier_sources)
         return
     if args.detailed:
         detailed_analysis(args.filename or None, outdir=args.outdir,

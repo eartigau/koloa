@@ -1264,6 +1264,7 @@ function resetPage() {
   $('fipeach').innerHTML = ''; $('fipstatus').innerHTML = '';
   $('fipstale').textContent = ''; $('remstate').textContent = ''; $('remember').disabled = true;
   syncMirrors();
+  vizierSources();
   view = null;
   quick = null;
   pview = null;
@@ -1526,6 +1527,13 @@ document.addEventListener('change', (e) => {
   }
 });
 document.addEventListener('change', updateCommands);
+// the sources of VizieR follow its box: off with it
+function vizierSources() {
+  const on = $('gather-vizier').checked;
+  $('vzsources').classList.toggle('off', !on);
+  $('vzsources').querySelectorAll('input').forEach((el) => { el.disabled = !on; });
+}
+$('gather-vizier').addEventListener('change', vizierSources);
 // what is shown, or how the trend is fitted, changed since the quick FIP
 document.addEventListener('change', checkStale);
 $('resolve').addEventListener('click', resolveStar);

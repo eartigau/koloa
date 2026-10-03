@@ -47,6 +47,14 @@ def test_the_command_lines():
         '--no-fip-gp')
     assert gui.command('gather', dict(target='x', refresh=True))[-1] == (
         '--refresh')
+    # the sources of VizieR: all by default, some named, none no VizieR
+    assert gui.command('gather', dict(target='x', vz_talor19=False,
+                                      vz_papers=False))[-5:] == [
+        '--vizier-sources', 'teklu25', 'cls21', 'fischer14', 'rvbank20']
+    off = {f'vz_{key}': False for key in ('teklu25', 'cls21', 'talor19',
+                                          'fischer14', 'rvbank20', 'papers')}
+    assert gui.command('gather', dict(target='x', **off)) == [
+        'x', '--gather', 'archives', '--no-vizier']
     # the archives only when asked: a file alone fetches nothing, a name
     #   alone needs an archive ticked
     assert gui.command('detailed', dict(file='a.rdb')) == [

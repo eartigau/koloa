@@ -123,6 +123,9 @@ SURVEYS: List[Dict[str, Any]] = [
          rv='DRVmlcnzp', err='e_DRVmlcnzp', offset=2400000.0,
          eras=(57174.5, 'HARPS03 (RVBank)', 'HARPS15 (RVBank)')),
 ]
+#: the sources of published velocities, each fetched or not on its own: the
+#: surveys (their keys) and the tables of the star's papers ('papers')
+SOURCES: List[str] = [survey['key'] for survey in SURVEYS] + ['papers']
 
 
 # =============================================================================
@@ -411,7 +414,8 @@ def _write(data: RVData, path: str) -> None:
 
 
 def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
-          papers: bool = True, timeout: float = 60.0, workers: int = 8
+          papers: bool = True, timeout: float = 60.0, workers: int = 8,
+          sources: Optional[Sequence[str]] = None
           ) -> List[Dict[str, Any]]:
     """
     The published velocities of a star: the surveys, then the tables of
@@ -425,15 +429,34 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
     :param papers: bool, look at the papers too (not the surveys alone)
     :param timeout: float [s]
     :param workers: int, the questions to the CDS at once
+    :param sources: list of str or None, the sources asked (keys of
+                    SOURCES: the surveys, and 'papers'), None for all
 
     :return: list of dict, per source: kind (survey or paper), key,
              reference, catalogue, n, instruments, file and note
     """
+    if sources is None:
+        sources = list(SOURCES)
+    unknown = [key for key in sources if key not in SOURCES]
+    if unknown:
+        raise ValueError(f'no source {unknown} of published velocities: '
+                         f'{", ".join(SOURCES)}')
+    papers = papers and 'papers' in sources
+    asked = [key for key in SOURCES if key in sources
+             and (key != 'papers' or papers)]
     os.makedirs(folder, exist_ok=True)
     index = os.path.join(folder, 'published.json')
+    # the sources asked last time (all of them for a folder of before
+    #   they could be chosen): read back when they are the same
+    before = os.path.join(folder, 'sources.json')
     if os.path.exists(index) and not refresh:
-        with open(index) as handle:
-            return json.load(handle)
+        last = list(SOURCES)
+        if os.path.exists(before):
+            with open(before) as handle:
+                last = json.load(handle)
+        if set(last) == set(asked):
+            with open(index) as handle:
+                return json.load(handle)
     names = [ident.get('main') or ''] + list(ident.get('aliases') or [])
     notes, kept = [], []
 
@@ -464,6 +487,8 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
 
     # the surveys, by the position of the star
     for survey in SURVEYS:
+        if survey['key'] not in asked:
+            continue
         note = dict(kind='survey', key=survey['key'],
                     reference=survey['reference'],
                     catalogue=survey['catalogue'], n=0, instruments={},
@@ -534,6 +559,8 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
                             instruments={}, file=None, note=words))
     with open(index, 'w') as handle:
         json.dump(notes, handle, indent=1)
+    with open(before, 'w') as handle:
+        json.dump(asked, handle)
     return notes
 
 

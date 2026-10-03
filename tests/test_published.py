@@ -14,6 +14,7 @@ import json
 import xml.etree.ElementTree as ElementTree
 
 import numpy as np
+import pytest
 
 from koloa import literature, published
 from koloa.data import RVData
@@ -135,8 +136,23 @@ def test_a_star_fetched_and_read_back(tmp_path, monkeypatch):
     data = published.load(str(tmp_path / 'pub'))
     assert data.n == 5 and 'HARPS (X+ 2020)' in data.instruments
     # kept: read back, nothing asked
+    asked = published.survey_velocities
     monkeypatch.setattr(published, 'survey_velocities', None)
     assert published.fetch(ident, str(tmp_path / 'pub')) == notes
+    # some of the sources only: asked again, the others left out (the
+    #   spectrum CLS shares with Teklu now its own)
+    monkeypatch.setattr(published, 'survey_velocities', asked)
+    some = published.fetch(ident, str(tmp_path / 'pub'),
+                           sources=['cls21', 'rvbank20'])
+    assert [note['key'] for note in some] == ['cls21', 'rvbank20']
+    assert some[0]['n'] == 2
+    assert published.load(str(tmp_path / 'pub')).n == 2
+    # the same sources again: read back
+    monkeypatch.setattr(published, 'survey_velocities', None)
+    assert published.fetch(ident, str(tmp_path / 'pub'),
+                           sources=['rvbank20', 'cls21']) == some
+    with pytest.raises(ValueError, match='hires'):
+        published.fetch(ident, str(tmp_path / 'pub'), sources=['hires'])
     # what was learnt of the catalogues, for the next star
     with open(tmp_path / 'cache' / 'catalogues.json') as handle:
         assert json.load(handle)['J/A+A/600/A10']['rv']

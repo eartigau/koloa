@@ -138,13 +138,21 @@
     <!-- gather -->
     <section class="card span-3">
       <h2 data-i18n="gather">Gather the archives</h2>
-      <p class="hint" data-i18n="gather_hint">What DACE (with your key when there is one), CARMENES DR1 and TESS have of the star, kept in the archives folder, one folder per star.</p>
+      <p class="hint" data-i18n="gather_hint">What DACE (with your key when there is one), CARMENES DR1, VizieR (the velocities published: Keck HIRES, the APF and the Lick Hamilton of the US surveys, HARPS by SERVAL, the star’s papers) and TESS have of the star, kept in the archives folder, one folder per star.</p>
       <div class="checks">
         <label><input type="checkbox" data-opt="dace" data-for="gather" checked> DACE</label>
         <label><input type="checkbox" data-opt="carmenes" data-for="gather" checked> CARMENES DR1</label>
-        <label><input type="checkbox" data-opt="vizier" data-for="gather" checked> <span data-i18n="vizier_pub">VizieR (published)</span></label>
         <label><input type="checkbox" data-opt="tess" data-for="gather" checked> TESS</label>
+        <label><input type="checkbox" data-opt="vizier" data-for="gather" id="gather-vizier" checked> <span data-i18n="vizier_pub">VizieR (published)</span>:</label>
         <button type="button" class="info" data-help="gather_sources" aria-label="?">i</button>
+      </div>
+      <div class="checks vzsources" id="vzsources">
+        <label><input type="checkbox" data-opt="vz_teklu25" data-for="gather" checked> Keck HIRES (Teklu+ 2025)</label>
+        <label><input type="checkbox" data-opt="vz_cls21" data-for="gather" checked> HIRES, APF, Lick (CLS, Rosenthal+ 2021)</label>
+        <label><input type="checkbox" data-opt="vz_talor19" data-for="gather" checked> Keck HIRES (Tal-Or+ 2019)</label>
+        <label><input type="checkbox" data-opt="vz_fischer14" data-for="gather" checked> Lick Hamilton (Fischer+ 2014)</label>
+        <label><input type="checkbox" data-opt="vz_rvbank20" data-for="gather" checked> HARPS, SERVAL (Trifonov+ 2020)</label>
+        <label><input type="checkbox" data-opt="vz_papers" data-for="gather" checked> <span data-i18n="vz_papers">the star’s papers</span></label>
       </div>
       <div class="cmd"><pre id="cmd-gather" class="codeblock"></pre><button class="copy" data-copy="cmd-gather" type="button" data-i18n="copy">Copy</button></div>
       <div class="row"><button id="run-gather" class="go" type="button" data-i18n="run_gather">Gather</button><span id="ondisk" class="hint"></span></div>

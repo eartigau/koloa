@@ -105,9 +105,16 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
         if not target:
             raise ValueError('a SIMBAD name to gather the archives of')
         args = [target, '--gather', str(opts.get('root') or 'archives')]
+        # the sources of VizieR, each its box: none, VizieR left out; some,
+        #   named
+        from koloa.published import SOURCES
+        chosen = [key for key in SOURCES if opts.get(f'vz_{key}', True)]
+        novizier = off['vizier'] or not chosen
         args += ['--no-dace'] * off['dace'] + ['--no-carmenes'] * off[
-            'carmenes'] + ['--no-vizier'] * off['vizier'] + ['--no-tess'] * \
+            'carmenes'] + ['--no-vizier'] * novizier + ['--no-tess'] * \
             off['tess']
+        if not novizier and len(chosen) < len(SOURCES):
+            args += ['--vizier-sources'] + chosen
         if opts.get('refresh'):
             args.append('--refresh')
         return args

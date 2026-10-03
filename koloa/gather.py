@@ -61,7 +61,7 @@ import re
 import time as _time
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
@@ -353,7 +353,9 @@ def tess_photometry(ident: Dict[str, Any], target: str, folder: str,
 def gather(target: str, root: str = '.', dace: bool = True,
            carmenes: bool = True, tess: bool = True,
            api_key: Any = None, refresh: bool = False,
-           vizier: bool = True) -> Dict[str, Any]:
+           vizier: bool = True,
+           vizier_sources: Optional[Sequence[str]] = None
+           ) -> Dict[str, Any]:
     """
     Everything public about a star, in root/<target> (see the module)
 
@@ -368,6 +370,10 @@ def gather(target: str, root: str = '.', dace: bool = True,
     :param vizier: bool, the velocities published on VizieR (the surveys:
                    Keck HIRES, the APF, the Lick Hamilton, HARPS by SERVAL;
                    the tables of the star's papers), koloa.published
+    :param vizier_sources: list of str or None, the sources of VizieR
+                           asked (koloa.published.SOURCES: teklu25, cls21,
+                           talor19, fischer14, rvbank20, papers), None for
+                           all
     :param api_key: str, None or False: a DACE API key, None to look for
                     one (DACE_API_KEY, ~/.dacerc), False for the public
                     data only (the key is never written anywhere)
@@ -460,7 +466,7 @@ def gather(target: str, root: str = '.', dace: bool = True,
         from koloa.published import fetch as published_fetch
         pdir = os.path.join(rvdir, 'published')
         notes = attempt('published', lambda: published_fetch(
-            ident, pdir, refresh=refresh))
+            ident, pdir, refresh=refresh, sources=vizier_sources))
         if notes is not None:
             kept = [note for note in notes if note.get('file')]
             insts: Dict[str, int] = {}

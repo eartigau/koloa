@@ -141,7 +141,8 @@ file per instrument era, with the indicators), those of CARMENES DR1
 velocities published on VizieR (`rv/published/`, `koloa.published`: the
 surveys of Keck HIRES, the APF, the Lick Hamilton and HARPS by SERVAL,
 asked only when the star is in their lists, and the tables of the star's
-papers, a spectrum published twice kept once; `--no-vizier` not to), the
+papers, a spectrum published twice kept once; `--no-vizier` not to,
+`--vizier-sources teklu25 cls21 papers` for some of them only), the
 TESS light curves of every sector, every velocity of DACE and CARMENES together in
 `rv/all_rv.csv`, the identifiers and the periods of variability SIMBAD
 lists in `target.json`, and what each archive gave (or why not) in
