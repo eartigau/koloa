@@ -383,6 +383,7 @@ function applyView() {
   foldY();
   dateAxis();
   rvOffscale();
+  scheduleModel();
 }
 
 // the calendar dates on top of the time series: rjd (JD - 2400000) is
@@ -469,7 +470,7 @@ function fromZoom(ev) {
   if (ev['xaxis.autorange']) view.x = view.xdom.slice();
   if (ev['yaxis.autorange']) view.y = view.ydom.slice();
   syncSliders();
-  if (ev['xaxis.range[0]'] !== undefined || ev['xaxis.autorange']) dateAxis();
+  if (ev['xaxis.range[0]'] !== undefined || ev['xaxis.autorange']) { dateAxis(); scheduleModel(); }
   if (ev['xaxis.range[0]'] !== undefined || ev['yaxis.range[0]'] !== undefined || ev['xaxis.autorange'] || ev['yaxis.autorange']) {
     rvOffscale();
     if (ev['yaxis.range[0]'] !== undefined || ev['yaxis.autorange']) foldY();
@@ -693,18 +694,23 @@ function drawFip(r, each) {
 // a button per fold: the numbered peaks, then the periods asked
 function renderFoldButtons() {
   const folds = (quick && quick.result && quick.result.folds) || [];
-  $('foldbuttons').innerHTML = folds.map((f) => `<button type="button" class="small${f.forced ? ' forced' : ''}" data-fold="${f.id}"`
-    + `${f.forced ? ` title="${esc(t('asked'))}"` : ''}>#${f.id} \u00b7 ${f.period.toFixed(4)} d</button>`).join('');
+  const known = (quick && quick.result && quick.result.known) || [];
+  $('foldbuttons').innerHTML = folds.map((f) => `<button type="button" class="small${f.forced ? ' forced' : ''}${f.known ? ' known' : ''}" data-fold="${f.id}"`
+    + `${f.forced ? ` title="${esc(t('asked'))}"` : ''}>${f.known ? `\u2605 ${esc(f.known.name)}` : `#${f.id}`} \u00b7 ${f.period.toFixed(4)} d</button>`).join('')
+    // the known planets, at their published period whatever the FIP says
+    + known.filter((pl) => !folds.some((f) => f.known && f.known.name === pl.name))
+      .map((pl) => `<button type="button" class="small known" data-known="${esc(pl.name)}" title="${esc(t('known_fold'))}">`
+        + `\u2605 ${esc(pl.name)} \u00b7 ${(+pl.P).toPrecision(6)} d</button>`).join('');
   document.querySelectorAll('[data-fold]').forEach((b) => b.classList.toggle('on', +b.dataset.fold === foldShown));
 }
 
 // a fold at a period of one's own: clicked on the FIP (then at the dip of
 //   the period nearest) or typed (as it is)
-async function forceFold(period, snap) {
-  if (!quick || !quick.result || !(period > 0)) return;
+async function forceFold(period, snap, known) {
+  if (!quick || !quick.result || !(period > 0 || known)) return;
   $('foldnote').innerHTML = `<span class="spin"></span> ${esc(t('folding'))}`;
   try {
-    const res = await api('/api/fold', { quick: quick.id, period, snap: !!snap, kind: foldModel, options: shownOptions() });
+    const res = await api('/api/fold', { quick: quick.id, period, snap: !!snap, kind: foldModel, options: shownOptions(), known: known || '' });
     const folds = quick.result.folds = quick.result.folds || [];
     const old = folds.findIndex((x) => x.id === res.fold.id);
     if (old >= 0) folds[old] = res.fold; else folds.push(res.fold);
@@ -781,11 +787,14 @@ function showFold(id) {
   if (foldModel === 'kepler' && !base.kepler) { keplerOf(base); return; }
   const f = foldModel === 'kepler' ? { ...base.kepler, id: base.id, forced: base.forced } : base;
   foldShownObj = f;
+  const pubNote = f.published ? ` \u00b7 <span class="pubnote">\u2605 ${esc(t('published'))} (${esc(f.published.reference)}): `
+    + `P = ${f.published.period.toFixed(4)} d, K = ${f.published.K.toFixed(2)} m/s, e = ${f.published.e.toFixed(2)}</span>` : '';
   $('foldnote').innerHTML = f.kind === 'kepler'
     ? `<b>#${f.id}</b> ${esc(t('fmodel_kepler_short'))}: P = ${pm(f.period, f.P_err, 4)} d, K = ${pm(f.K, f.K_err, 2)} m/s, `
       + `e = ${pm(f.e, f.e_err, 2)}, \u03c9 = ${f.omega.toFixed(0)}\u00b0, rms ${f.rms.toFixed(2)} m/s \u00b7 ${esc(t('fold_note_kep'))}`
     : `<b>#${f.id}</b>: P = ${f.period.toFixed(4)} d, K = ${f.K.toFixed(2)} \u00b1 ${f.K_err.toFixed(2)} m/s, `
       + `rms ${f.rms.toFixed(2)} m/s \u00b7 ${esc(t('fold_note'))}`;
+  $('foldnote').innerHTML += pubNote;
   // the colour of the points: their instrument, their date, or their BERV
   //   (when the series has it), on one scale for all
   const hasBerv = f.instruments.some((inst) => inst.berv);
@@ -825,8 +834,19 @@ function showFold(id) {
       error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: scale ? 'rgba(200,220,255,0.35)' : COLOURS[i % 8] },
       marker, hovertemplate: `${hover}<extra></extra>` };
   });
+  // the 1-sigma envelope of the fit, light grey, under the points
+  if (f.curve.lo) {
+    traces.unshift({ x: f.curve.phase, y: f.curve.lo, type: 'scatter', mode: 'lines', line: { width: 0 }, hoverinfo: 'skip', showlegend: false },
+      { x: f.curve.phase, y: f.curve.hi, type: 'scatter', mode: 'lines', line: { width: 0 }, fill: 'tonexty',
+        fillcolor: 'rgba(215,222,235,0.22)', name: t('envelope'), hoverinfo: 'skip' });
+  }
   traces.push({ x: f.curve.phase, y: f.curve.rv, name: `K = ${f.K.toFixed(2)} m/s`, type: 'scatter', mode: 'lines',
     line: { color: '#e8eef8', width: 2 }, hoverinfo: 'skip' });
+  // a known planet: its published orbit, on the fold's phases
+  if (f.published) {
+    traces.push({ x: f.published.phase, y: f.published.rv, type: 'scatter', mode: 'lines', hoverinfo: 'skip',
+      name: `${f.published.name} (${f.published.reference || t('published')})`, line: { color: '#f5a524', width: 2, dash: 'dash' } });
+  }
   // a white circle around a night with less than an even chance of being
   //   valid (an outlier, as the FIP saw it)
   const low = { x: [], y: [], p: [] };
@@ -920,6 +940,11 @@ function modelAt(f, name, tt) {
   m.trend.forEach((c, k) => { v += c * span ** (k + 1); });
   return v;
 }
+let modelTimer = null;
+function scheduleModel() {
+  clearTimeout(modelTimer);
+  if ($('foldoverlay').checked) modelTimer = setTimeout(showModel, 150);
+}
 function showModel() {
   const div = $('rvplot');
   if (!window.Plotly || !div.data) return;
@@ -927,18 +952,44 @@ function showModel() {
   if (old.length) Plotly.deleteTraces(div, old);
   const f = $('foldoverlay').checked ? currentFold() : null;
   if (!f || !f.model) return;
+  // over the time shown (drawn again on a zoom: the sinusoid resolved)
+  const xr = view && view.x ? view.x : null;
+  const draws = f.draws || [];
+  const pub = f.published && f.published.model;
   const traces = [];
+  let legend = true;
   (lastRV || []).forEach((inst, i) => {
     if (!(inst.name in f.model.offsets) || inst.median === undefined) return;
-    const lo = Math.min(...inst.time), hi = Math.max(...inst.time), pad = 0.01 * (hi - lo + 1);
-    const n = Math.round(Math.min(20000, Math.max(400, 30 * (hi - lo) / f.period)));
-    const x = [], y = [];
+    let lo = Math.min(...inst.time), hi = Math.max(...inst.time);
+    const pad = 0.01 * (hi - lo + 1);
+    lo -= pad; hi += pad;
+    if (xr) { lo = Math.max(lo, xr[0]); hi = Math.min(hi, xr[1]); }
+    if (!(hi > lo)) return;
+    const n = Math.round(Math.min(4000, Math.max(300, 30 * (hi - lo) / f.period)));
+    const x = [], y = [], ylo = [], yhi = [], yp = [];
     for (let k = 0; k < n; k++) {
-      const tt = lo - pad + (hi - lo + 2 * pad) * k / (n - 1);
-      x.push(tt); y.push(modelAt(f, inst.name, tt) - inst.median);
+      const tt = lo + (hi - lo) * k / (n - 1);
+      x.push(tt);
+      y.push(modelAt(f, inst.name, tt) - inst.median);
+      if (draws.length > 5) {
+        const vals = draws.map((d) => modelAt({ model: d, period: d.period || f.period }, inst.name, tt)).sort((a, b) => a - b);
+        ylo.push(percentile(vals, 15.87) - inst.median);
+        yhi.push(percentile(vals, 84.13) - inst.median);
+      }
+      if (pub) yp.push(modelAt({ model: pub, period: pub.period }, inst.name, tt) - inst.median);
     }
-    traces.push({ x, y, type: 'scatter', mode: 'lines', uid: `model-${inst.name}`, name: `#${f.id} · ${f.period.toFixed(4)} d`,
-      legendgroup: 'model', showlegend: !traces.length, line: { color: COLOURS[i % 8], width: 1.2 }, opacity: 0.85, hoverinfo: 'skip' });
+    if (ylo.length) {
+      traces.push({ x, y: ylo, type: 'scatter', mode: 'lines', uid: `model-lo-${inst.name}`, line: { width: 0 }, showlegend: false, hoverinfo: 'skip' },
+        { x, y: yhi, type: 'scatter', mode: 'lines', uid: `model-hi-${inst.name}`, line: { width: 0 }, fill: 'tonexty',
+          fillcolor: 'rgba(215,222,235,0.16)', showlegend: false, hoverinfo: 'skip' });
+    }
+    traces.push({ x, y, type: 'scatter', mode: 'lines', uid: `model-${inst.name}`, name: `#${f.id} \u00b7 ${f.period.toFixed(4)} d`,
+      legendgroup: 'model', showlegend: legend, line: { color: COLOURS[i % 8], width: 1.2 }, opacity: 0.9, hoverinfo: 'skip' });
+    if (pub) {
+      traces.push({ x, y: yp, type: 'scatter', mode: 'lines', uid: `model-pub-${inst.name}`, legendgroup: 'pub', showlegend: legend,
+        name: `\u2605 ${f.published.name} (${t('published')})`, line: { color: '#f5a524', width: 1.2, dash: 'dash' }, hoverinfo: 'skip' });
+    }
+    legend = false;
   });
   if (traces.length) Plotly.addTraces(div, traces);
 }
@@ -1230,6 +1281,8 @@ document.addEventListener('click', (e) => {
   if (foldShown !== null) showFold(foldShown);
 });
 $('foldgo').addEventListener('click', () => forceFold(+$('foldp').value, false));
+// a known planet: a fold at its published period
+document.addEventListener('click', (e) => { const b = e.target.closest('[data-known]'); if (b) forceFold(0, false, b.dataset.known); });
 $('foldp').addEventListener('keydown', (e) => { if (e.key === 'Enter') forceFold(+$('foldp').value, false); });
 $('subtract').addEventListener('click', subtractFold);
 document.addEventListener('click', (e) => { if (e.target.id === 'unsubtract') { subtractList = []; startQuick(); } });

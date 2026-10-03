@@ -590,13 +590,59 @@ def known_periods(target: str) -> List[Dict[str, Any]]:
     if not target.strip():
         return []
     from koloa.archive import host_name, known_planets, resolve
+    def number(value):
+        return float(value) if value is not None else None
     try:
         host = host_name(resolve(target))
-        return [dict(name=pl['name'], P=float(pl['P']))
+        return [dict(name=pl['name'], P=float(pl['P']), K=number(pl.get('K')),
+                     e=number(pl.get('e')), omega=number(pl.get('omega')),
+                     tp=number(pl.get('tp')), tc=number(pl.get('tc')),
+                     reference=pl.get('reference') or '')
                 for pl in (known_planets(host=host)['planets'] if host
                            else []) if pl.get('P')]
     except Exception:  # a help, not a need
         return []
+
+
+def published(planet: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """the published orbit of a known planet as a Keplerian signal (the
+    archive's default solution: P, K, e, omega [deg], tp, or tc when there
+    is no tp), or None when it lacks K or an epoch"""
+    from koloa import kepler
+    if not planet.get('K') or (planet.get('tp') is None
+                               and planet.get('tc') is None):
+        return None
+    ecc = float(planet.get('e') or 0.0)
+    # an omega of 0 is one (not a missing one: 90 deg, a circular orbit's)
+    omega = np.radians(float(planet['omega'] if planet.get('omega')
+                             is not None else 90.0))
+    tperi = (float(planet['tp']) if planet.get('tp') is not None
+             else kepler.tc_to_tp(float(planet['tc']), planet['P'], ecc,
+                                  omega))
+    return dict(kind='kepler', period=float(planet['P']), tp=tperi, e=ecc,
+                omega=float(omega), K=float(planet['K']),
+                name=planet['name'], reference=planet.get('reference', ''))
+
+
+def _attach_published(item: Dict[str, Any]) -> None:
+    """a fold of a known planet given its published orbit: on the fold's
+    phases (its curve) and, with the fold's offsets and trend, as a model
+    of the series"""
+    from koloa import kepler
+    pub = published(item['known'])
+    if pub is None:
+        return
+    for one in [item] + ([item['kepler']] if 'kepler' in item else []):
+        grid = np.linspace(0, 1, 401)
+        rv = kepler.rv_keplerian(one['tc'] + grid * one['period'],
+                                 pub['period'], pub['tp'], pub['e'],
+                                 pub['omega'], pub['K'])
+        one['published'] = dict(pub, phase=grid.tolist(),
+                                rv=np.round(rv, 4).tolist(),
+                                model=dict(one['model'], **{
+                                    key: pub[key] for key in
+                                    ('kind', 'period', 'tp', 'e', 'omega',
+                                     'K')}))
 
 
 def _fip_curves(res, nbin: int = 3000) -> Dict[str, Any]:
@@ -654,6 +700,8 @@ def _distinct_peaks(res, width: float, nmax: int = 8
     return out
 
 
+#: draws of a fold's solution kept for its 1-sigma envelope on the series
+NDRAW = 60
 #: the names of the BERV column of a series (LBL: BERV; DACE: cal_berv)
 BERV_NAMES = ('BERV', 'berv', 'cal_berv')
 
@@ -726,11 +774,18 @@ def fold(data, period: float, valid: Optional[np.ndarray] = None,
     phase = ((time_ - tc) / period) % 1.0
     shown = data.rv - design[:, :-2] @ coef[:-2]
     grid = np.linspace(0, 1, 201)
+    # the 1-sigma envelope of the curve: (cos, sin) of each phase through
+    #   the covariance of the two amplitudes
+    gvec = np.array([np.cos(2 * np.pi * (tc + grid * period - tref) / period),
+                     np.sin(2 * np.pi * (tc + grid * period - tref) / period)])
+    curve = -amp * np.sin(2 * np.pi * grid)
+    sig = np.sqrt(np.einsum('ik,ij,jk->k', gvec, cov[-2:, -2:], gvec))
     out = dict(period=float(period), K=amp, K_err=kerr, tc=float(tc),
                rms=float(np.std(resid[good >= 0.5])), chi2=chi2,
-               curve=dict(phase=grid.tolist(),
-                          rv=np.round(-amp * np.sin(2 * np.pi * grid),
-                                      4).tolist()), instruments=[],
+               curve=dict(phase=grid.tolist(), rv=np.round(curve, 4).tolist(),
+                          lo=np.round(curve - sig, 4).tolist(),
+                          hi=np.round(curve + sig, 4).tolist()),
+               instruments=[],
                # v(t) = offset + sum_k trend_k ((t - tref) / yr)^k
                #        + cos cos(2 pi (t - tref) / P) + sin sin(...)
                model=dict(kind='sine', period=float(period), tref=tref,
@@ -740,6 +795,19 @@ def fold(data, period: float, valid: Optional[np.ndarray] = None,
                                  coef[len(insts):len(insts) + trend]],
                           ttrend=tref, tscale=365.25,
                           cos=float(acos), sin=float(asin)))
+    # draws of the solution (its covariance), for its envelope on the series
+    out['draws'] = []
+    try:
+        rng = np.random.default_rng(13)
+        for draw in rng.multivariate_normal(coef, cov, NDRAW):
+            out['draws'].append(dict(
+                out['model'], offsets={str(inst): float(draw[it])
+                                       for it, inst in enumerate(insts)},
+                trend=[float(val) for val in
+                       draw[len(insts):len(insts) + trend]],
+                cos=float(draw[-2]), sin=float(draw[-1])))
+    except (ValueError, np.linalg.LinAlgError):
+        out['draws'] = []
     berv = _berv(data)
     for inst in insts:
         sel = data.inst == inst
@@ -977,7 +1045,7 @@ def _snap(res, period: float, baseline: float) -> float:
 
 def fold_request(qid: str, opts: Dict[str, Any], period: Optional[float] = None,
                  fid: Optional[int] = None, kind: str = 'sine',
-                 snap: bool = False) -> Dict[str, Any]:
+                 snap: bool = False, known: str = '') -> Dict[str, Any]:
     """
     A fold the page asks for: at a period of its own (clicked on the FIP,
     then moved to the dip nearest; or typed, as it is), or the Keplerian
@@ -991,6 +1059,14 @@ def fold_request(qid: str, opts: Dict[str, Any], period: Optional[float] = None,
     series = _quick_series(qid, opts)
     nights = series['nights']
     folds = job['result'].setdefault('folds', [])
+    planet = None
+    if known:
+        # a known planet: at its published period, whatever the FIP says
+        planet = next((pl for pl in job['result'].get('known') or []
+                       if pl['name'] == known), None)
+        if planet is None:
+            raise ValueError(f'no known planet {known}')
+        period, snap = planet['P'], False
     if fid is not None:
         item = next((item for item in folds if item['id'] == int(fid)), None)
         if item is None:
@@ -1010,8 +1086,12 @@ def fold_request(qid: str, opts: Dict[str, Any], period: Optional[float] = None,
                         id=max([item['id'] for item in folds] + [0]) + 1,
                         forced=True)
             folds.append(item)
+    if planet is not None:
+        item['known'] = planet
     if kind == 'kepler' and 'kepler' not in item:
         item['kepler'] = fold_kepler(nights, item['period'], series['trend'])
+    if item.get('known'):
+        _attach_published(item)
     return dict(fold=item)
 
 
@@ -1137,6 +1217,7 @@ def fold_kepler(data, period: float, trend: int = 1,
     per, tperi, ecc, omega, amp = model.orbit(res.theta, 0)
     # the errors: the orbit of draws of the Laplace covariance
     errs = dict(P=np.nan, K=np.nan, e=np.nan)
+    draws, orbits = None, None
     if res.cov is not None and np.all(np.isfinite(res.cov)):
         rng = np.random.default_rng(11)
         try:
@@ -1146,7 +1227,7 @@ def fold_kepler(data, period: float, trend: int = 1,
                 low, high = np.percentile(orbits[:, col], [15.87, 84.13])
                 errs[key] = float(0.5 * (high - low))
         except (ValueError, np.linalg.LinAlgError):
-            pass
+            draws, orbits = None, None
     shown = data.rv - model.systematics(res.theta)
     tconj = kepler.tp_to_tc(tperi, per, ecc, omega)
     phase = ((data.time - tconj) / per) % 1.0
@@ -1156,14 +1237,23 @@ def fold_kepler(data, period: float, trend: int = 1,
     good = valid >= 0.5
     grid = np.linspace(0, 1, 401)
     insts = list(data.instruments)
+    # the 1-sigma envelope of the curve: the orbits of the draws, at the
+    #   times of the phases of the best one
+    times = tconj + grid * per
+    best = kepler.rv_keplerian(times, per, tperi, ecc, omega, amp)
+    if orbits is not None:
+        many = np.array([kepler.rv_keplerian(times, *orb) for orb in orbits])
+        low, high = np.percentile(many, [15.87, 84.13], axis=0)
+    else:
+        low = high = best
     out = dict(kind='kepler', period=float(per), P_err=errs['P'],
                K=float(amp), K_err=errs['K'], e=float(ecc),
                e_err=errs['e'], omega=float(np.degrees(omega) % 360),
                tp=float(tperi), tc=float(tconj),
                rms=float(np.std(resid[good] if good.any() else resid)),
-               curve=dict(phase=grid.tolist(), rv=np.round(
-                   kepler.rv_keplerian(tconj + grid * per, per, tperi, ecc,
-                                       omega, amp), 4).tolist()),
+               curve=dict(phase=grid.tolist(), rv=np.round(best, 4).tolist(),
+                          lo=np.round(low, 4).tolist(),
+                          hi=np.round(high, 4).tolist()),
                instruments=[],
                model=dict(kind='kepler', period=float(per), tp=float(tperi),
                           e=float(ecc), omega=float(omega), K=float(amp),
@@ -1174,6 +1264,22 @@ def fold_kepler(data, period: float, trend: int = 1,
                                  for deg in range(1, trend + 1)],
                           ttrend=float(model.tref),
                           tscale=float(max(data.baseline, 1e-9))))
+    # draws of the solution, for its envelope on the series
+    out['draws'] = []
+    for theta in (draws[:NDRAW] if draws is not None else []):
+        try:
+            dper, dtp, decc, dom, damp = model.orbit(theta, 0)
+        except (ValueError, FloatingPointError):
+            continue
+        if not 0 <= decc < 1:
+            continue
+        out['draws'].append(dict(
+            out['model'], period=float(dper), tp=float(dtp), e=float(decc),
+            omega=float(dom), K=float(damp),
+            offsets={str(inst): float(theta[model.index[f'offset_{inst}']])
+                     for inst in insts},
+            trend=[float(theta[model.index[f'trend_{deg}']])
+                   for deg in range(1, trend + 1)]))
     berv = _berv(data)
     for inst in insts:
         sel = data.inst == inst
@@ -1281,9 +1387,25 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
             grid = np.linspace(lo - 0.01 * (hi - lo + 1),
                                hi + 0.01 * (hi - lo + 1), npts)
             mod = model_at(shown, str(inst), grid, shown['period'])
-            if mod is not None:
-                ax.plot(grid, mod - np.median(data.rv[sel]), lw=0.6,
-                        alpha=0.8, color=colour[inst], zorder=1)
+            if mod is None:
+                continue
+            zero = np.median(data.rv[sel])
+            # its 1-sigma envelope, from the draws of the solution
+            many = [model_at(dict(model=draw), str(inst), grid,
+                             shown['period'])
+                    for draw in shown.get('draws') or []]
+            many = np.array([val for val in many if val is not None])
+            if len(many) > 5:
+                low, high = np.percentile(many, [15.87, 84.13], axis=0)
+                ax.fill_between(grid, low - zero, high - zero, lw=0,
+                                color='0.85', zorder=0)
+            ax.plot(grid, mod - zero, lw=0.6, alpha=0.8, color=colour[inst],
+                    zorder=1)
+            pub = (shown.get('published') or {}).get('model')
+            if pub:
+                ax.plot(grid, model_at(dict(model=pub), str(inst), grid,
+                                       pub['period']) - zero, lw=0.7,
+                        ls='--', color='#d97706', zorder=1)
         ax.text(0.99, 0.02, f'the solution of #{shown["id"]} '
                 f'({shown["period"]:.4f} d)', transform=ax.transAxes,
                 ha='right', fontsize=7, color='0.3')
@@ -1444,9 +1566,21 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
                     ax.plot(np.asarray(inst['phase'])[low],
                             np.asarray(inst['rv'])[low], 'o', mfc='none',
                             mec='k', ms=7, mew=0.8, zorder=5)
+            # the 1-sigma envelope of the fit, light grey
+            if item['curve'].get('lo'):
+                ax.fill_between(item['curve']['phase'], item['curve']['lo'],
+                                item['curve']['hi'], color='0.85', lw=0,
+                                zorder=0)
             ax.plot(item['curve']['phase'], item['curve']['rv'], color='k',
                     lw=1.0)
-            ax.set_title(f'#{item["id"]}: P = {item["period"]:.4f} d, '
+            pub = item.get('published')
+            if pub:
+                ax.plot(pub['phase'], pub['rv'], ls='--', color='#d97706',
+                        lw=1.0, label=f'{pub["name"]}, {pub["reference"]}')
+                ax.legend(fontsize=6, frameon=False, loc='lower left')
+            named = (item.get('published') or {}).get('name')
+            ax.set_title(f'#{item["id"]}' + (f' {named}' if named else '')
+                         + f': P = {item["period"]:.4f} d, '
                          f'K = {item["K"]:.2f} $\\pm$ {item["K_err"]:.2f} '
                          f'm/s' + (f', e = {item["e"]:.2f} $\\pm$ '
                                    f'{item["e_err"]:.2f}'
@@ -1508,7 +1642,9 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
               'circled, a night with less than a 50 \\% probability of '
               'being valid (an outlier, as the FIP saw it); coloured as on '
               'the page (by instrument, date or BERV); a red triangle at an '
-              'edge points to a night beyond the range.',
+              'edge points to a night beyond the range; light grey, the '
+              '1-$\\sigma$ envelope of the fit; dashed orange, the published '
+              'orbit of a known planet.',
         each='The quick FIP of each instrument on its own (its nightly '
              'means, its jitter sampled in the FIP): of the period or any '
              'of its aliases (colour) and of the period alone (grey); '
@@ -1636,7 +1772,10 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
                   if item.get('forced')]
         if forced:
             out.append('Folded at a period asked: ' + '; '.join(
-                f'\\#{item["id"]} {item["period"]:.4f}\\,d (K = '
+                f'\\#{item["id"]} '
+                + (f'{escape(item["known"]["name"])} (known) '
+                   if item.get('known') else '')
+                + f'{item["period"]:.4f}\\,d (K = '
                 f'${item["K"]:.2f} \\pm {item["K_err"]:.2f}$\\,m/s)'
                 for item in forced) + '.\n')
         keps = [dict(item['kepler'], id=item['id'])
@@ -2026,6 +2165,17 @@ def unremember(rid: str) -> Dict[str, Any]:
 # =============================================================================
 # The server
 # =============================================================================
+def _finite(value: Any) -> Any:
+    """a value for JSON: its nans and infinities None"""
+    if isinstance(value, float):
+        return value if np.isfinite(value) else None
+    if isinstance(value, dict):
+        return {key: _finite(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_finite(val) for val in value]
+    return value
+
+
 class Handler(BaseHTTPRequestHandler):
     """the page, its files, and its questions (/api/...)"""
 
@@ -2041,8 +2191,12 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _json(self, value: Any, code: int = 200):
-        self._send(code, json.dumps(value, default=str).encode(),
-                   'application/json')
+        try:
+            text = json.dumps(value, default=str, allow_nan=False)
+        except ValueError:
+            # a nan or an infinity: null (JSON has neither)
+            text = json.dumps(_finite(value), default=str)
+        self._send(code, text.encode(), 'application/json')
 
     def _file(self, path: str):
         if not os.path.isfile(path):
@@ -2168,7 +2322,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(fold_request(
                     body.get('quick', ''), body.get('options', {}),
                     body.get('period'), body.get('id'),
-                    body.get('kind') or 'sine', bool(body.get('snap'))))
+                    body.get('kind') or 'sine', bool(body.get('snap')),
+                    body.get('known') or ''))
             if path == '/api/remember':
                 return self._json(remember(body.get('page', {}),
                                            body.get('quick', ''),

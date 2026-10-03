@@ -471,6 +471,7 @@ def test_a_fold_asked_its_keplerian_and_the_residuals(tmp_path, monkeypatch):
     orbit, and the FIP of the residuals once its signal is subtracted: the
     second planet comes first"""
     import time
+    import numpy as np
     from koloa.simulate import simulate
     from koloa.gather import write_rv
     sim = simulate(planets=[dict(P=5.3, K=9.0, e=0.0, tp=60000.0),
@@ -506,6 +507,27 @@ def test_a_fold_asked_its_keplerian_and_the_residuals(tmp_path, monkeypatch):
     assert orbit['kind'] == 'kepler' and orbit['e'] < 0.3
     assert abs(orbit['K'] - 9.0) < 4 * orbit['K_err']
     assert abs(orbit['period'] - 5.3) < 0.01
+    # the 1-sigma envelope of each fit, and draws of its solution
+    assert len(got['curve']['lo']) == len(got['curve']['rv'])
+    assert all(lo <= mid + 1e-9 <= hi + 2e-9 for lo, mid, hi in zip(
+        got['curve']['lo'], got['curve']['rv'], got['curve']['hi']))
+    assert len(got['draws']) == gui.NDRAW and len(orbit['draws']) > 30
+    assert len(orbit['curve']['lo']) == len(orbit['curve']['rv'])
+    # a known planet: at its published period, whatever the FIP says, with
+    #   its published orbit
+    gui.QUICKS[qid]['result']['known'] = [dict(
+        name='Sim b', P=5.3, K=9.0, e=0.0, omega=0.0, tp=60000.0, tc=None,
+        reference='a test')]
+    kn = gui.fold_request(qid, opts, known='Sim b', kind='kepler')['fold']
+    assert kn['period'] == 5.3 and kn['known']['name'] == 'Sim b'
+    assert abs(max(kn['published']['rv']) - 9.0) < 0.01
+    assert kn['kepler']['published']['model']['K'] == 9.0
+    pub = kn['published']['model']
+    sel = sim.inst == sim.instruments[0]
+    # the published orbit is the simulated one: the points about it
+    resid = sim.rv[sel] - gui.model_at(dict(model=pub), str(sim.instruments[0]),
+                                       sim.time[sel], 5.3)
+    assert np.std(resid - np.median(resid)) < 7
     # a click on the side of a peak folds at its top; again, the same fold
     side = gui.fold_request(qid, opts, period=13.45, snap=True)['fold']
     assert abs(side['period'] / 13.7 - 1) < 0.003

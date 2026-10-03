@@ -208,3 +208,6 @@ main[hidden] { display: none !important; }
 #fipstatus p.resid { color: #ffc66d; font-size: 0.88rem; }
 #fipplot { cursor: crosshair; }
 [data-scol].on { background: rgba(98, 194, 255, 0.35); border-color: var(--accent); color: #fff; position: relative; }
+[data-fold].known, [data-known] { border-color: rgba(245, 165, 36, 0.7); }
+[data-known] { color: #f5c46a; }
+#foldnote .pubnote { color: #f5c46a; }
