@@ -1201,7 +1201,8 @@ def build(opts: Dict[str, Any], lang: str = 'en') -> bytes:
     :return: bytes, the .tar.gz
     """
     from koloa.gather import folder_name
-    from koloa.gui import DEFAULTS, _files, _number, trend_order
+    from koloa.gui import (DEFAULTS, _files, _number, instrument_names,
+                           trend_order)
     target = str(opts.get('target') or '').strip()
     paths, labels = _files(opts)
     folder = folder_name(target) if target else 'series'
@@ -1276,7 +1277,8 @@ def build(opts: Dict[str, Any], lang: str = 'en') -> bytes:
             + ('\n]' if files else ']'),
             ARCHIVE_FOLDER=repr(folder), USE_DACE=asked['dace'],
             USE_CARMENES=asked['carmenes'], USE_VIZIER=asked['vizier'],
-            EXCLUDE=repr(split('exclude')), TREND=trend_order(opts),
+            EXCLUDE=repr(instrument_names(opts.get('exclude'))),
+            TREND=trend_order(opts),
             KMAX=number('kmax', int) or DEFAULTS['kmax'],
             NSWEEP=number('nsweep', int) or DEFAULTS['nsweep'],
             NBURN=number('nburn', int) or DEFAULTS['nburn'],

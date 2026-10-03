@@ -199,11 +199,16 @@ def relabel(data: RVData, names: np.ndarray) -> RVData:
                   sequence_gap=data.sequence_gap, meta=dict(data.meta))
 
 
-def _target(data: RVData, target: Optional[str]) -> Optional[str]:
-    """the name of the star: given, from the OBJECT column, or the series
-    (a guess: SIMBAD may not know it, and the archives then add nothing)"""
+def _target(data: RVData, target: Optional[str],
+            files: Sequence[Any] = ()) -> Optional[str]:
+    """the name of the star: given; else its APERO name (the OBJECT column
+    of the file, or its name, lbl_<OBJECT>_<TEMPLATE>.rdb, in APERO's
+    database of names: koloa.apero_names) as SIMBAD knows it; else the
+    OBJECT column or the series (a guess: SIMBAD may not know it, and the
+    archives then add nothing)"""
     if target:
         return target
+    from koloa import apero_names
     guess = data.name
     for col in ('OBJECT', 'object', 'target', 'TARGET'):
         if col in data.meta and data.meta[col].dtype.kind in 'USO':
@@ -212,6 +217,20 @@ def _target(data: RVData, target: Optional[str]) -> Optional[str]:
             if best:
                 guess = best
                 break
+    tries = [guess] + [name for path in files if isinstance(path, str)
+                       for name in apero_names.name_candidates(path)]
+    for name in tries:
+        try:
+            entry = apero_names.lookup(name)
+        except (ImportError, OSError, ValueError) as err:
+            log(f'APERO names: not read ({err})', 'warn')
+            break
+        if entry is not None:
+            star = apero_names.simbad_target(entry)
+            log(f'no SIMBAD name given: {name!r}, from the file, is '
+                f'{entry["apero"]} in APERO\'s names, {star!r} for SIMBAD',
+                'value')
+            return star
     log(f'no SIMBAD name given: {guess!r}, from the file; give it '
         f'(target=, --target) for the archives to find the star', 'warn')
     return guess
@@ -953,7 +972,7 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
         parts = read_files(files, instruments, name)
         data = parts[0] if len(parts) == 1 else merge(parts,
                                                       name=parts[0].name)
-        star = _target(data, target)
+        star = _target(data, target, files)
         log(f'koloa, detailed: {star} ({data.name}), {data.n} exposures in '
             f'{data.nseq} visits over {data.baseline:.0f} d, '
             f'{", ".join(data.instruments)}')

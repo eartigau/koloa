@@ -19,8 +19,9 @@ Source = "https://github.com/eartigau/koloa"
 mcmc = ["emcee>=3"]
 radvel = ["radvel>=1.4"]
 tables = ["astropy>=5"]
+apero = ["pyyaml>=5"]
 test = ["pytest"]
-all = ["emcee>=3", "radvel>=1.4", "astropy>=5", "pytest"]
+all = ["emcee>=3", "radvel>=1.4", "astropy>=5", "pyyaml>=5", "pytest"]
 
 [project.scripts]
 koloa = "koloa.cli:main"

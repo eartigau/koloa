@@ -47,6 +47,14 @@ def test_the_command_lines():
         '--no-fip-gp')
     assert gui.command('gather', dict(target='x', refresh=True))[-1] == (
         '--refresh')
+    # an instrument with its source in brackets is one name, with commas
+    #   or spaces between the names
+    assert gui.instrument_names('HARPS03, HIRES (CLS) HIRES  (Teklu+ 2025)'
+                                ' NIRPS') == ['HARPS03', 'HIRES (CLS)',
+                                              'HIRES (Teklu+ 2025)', 'NIRPS']
+    assert gui.command('detailed', dict(target='x', file='a.rdb',
+                                        exclude='HIRES (CLS), HARPS03'))[
+        -3:] == ['--exclude', 'HIRES (CLS)', 'HARPS03']
     # the sources of VizieR: all by default, some named, none no VizieR
     assert gui.command('gather', dict(target='x', vz_talor19=False,
                                       vz_papers=False))[-5:] == [
@@ -707,6 +715,91 @@ def test_a_batch_fip(tmp_path, monkeypatch):
     assert state['status'] == 'stopped'
     assert all(item['status'] in ('stopped', 'failed')
                for item in state['items'])
+
+
+def test_a_batch_fip_with_every_archive(tmp_path, monkeypatch):
+    """a batch with the archives: the star of each file by its APERO name
+    (its OBJECT column), its archives gathered once (read from disk the
+    next time) and put with the file, the instruments of each line; a
+    file whose star is not known run alone; opened with its star"""
+    import time
+    import numpy as np
+    from koloa import gather as kgather
+    from koloa.data import RVData
+    from koloa.gather import write_rv
+    from koloa.simulate import simulate
+    pytest.importorskip('yaml')
+    db = tmp_path / 'apero' / 'pending'
+    db.mkdir(parents=True)
+    (db / 'GL1.yaml').write_text('APERO_NAME: GL1\nSIMBAD_NAME: GJ    1\n'
+                                 'STATUS: pending\nSPT:\n  value: M1.5V\n'
+                                 'ALIASES:\n- Gl 1\n')
+    monkeypatch.setenv('KOLOA_APERO_ASTROMETRICS', str(tmp_path / 'apero'))
+    sim = simulate(planets=[dict(P=5.3, K=9.0, e=0.0)], err=1.0, seed=3,
+                   nvisits=40, per_visit=1, baseline=300)['data']
+    lines = [f'{tt!r},{rv!r},{er!r},Gl 1\n'
+             for tt, rv, er in zip(sim.time, sim.rv, sim.err)]
+    (tmp_path / 'gl1.csv').write_text('rjd,vrad,svrad,OBJECT\n'
+                                      + ''.join(lines))
+    write_rv(simulate(planets=[], err=1.0, seed=4, nvisits=20, per_visit=1,
+                      baseline=300)['data'], str(tmp_path / 'other.csv'))
+    gathered = []
+
+    def gather(target, root, **kwargs):
+        gathered.append(target)
+        star = tmp_path / 'arch' / kgather.folder_name(target)
+        rng = np.random.default_rng(5)
+        tarch = np.sort(rng.uniform(sim.time.min() - 600,
+                                    sim.time.min() - 100, 25))
+        write_rv(RVData(tarch, 9.0 * np.sin(2 * np.pi * tarch / 5.3)
+                        + rng.normal(0, 1.5, 25), np.full(25, 1.5),
+                        inst=np.array(['HARPS15'] * 25)),
+                 str(star / 'rv' / 'all_rv.csv'))
+        (star / 'manifest.json').write_text(json.dumps(dict(
+            target=target, archives=dict(dace=dict(status='ok')))))
+    monkeypatch.setattr(kgather, 'gather', gather)
+    monkeypatch.setattr(gui, 'known_periods', lambda target: [])
+    monkeypatch.setattr(gui, 'transits_of', lambda target, known: [])
+    monkeypatch.setattr(gui, 'QUICK', dict(kmax=1, nsweep=150, nburn=80))
+    paths = [str(tmp_path / 'gl1.csv'), str(tmp_path / 'other.csv')]
+
+    def run():
+        state = gui.batch_fip(paths, dict(trend=True), archives=True,
+                              root=str(tmp_path / 'arch'))
+        for _ in range(600):
+            state = gui.batch_state(state['id'])
+            if state['status'] != 'running':
+                return state
+            time.sleep(0.5)
+        return state
+    state = run()
+    assert state['status'] == 'done' and state['archives']
+    first, other = state['items']
+    assert first['star']['apero'] == 'GL1' and first['star']['raw'] == 'Gl 1'
+    assert first['star']['target'] == 'GJ 1' and first['star']['spt'] == \
+        'M1.5V'
+    insts = first['summary']['instruments']
+    assert len(insts) == 2 and insts['HARPS15'] == 25
+    assert first['summary']['sources']['HARPS15'] == 'DACE'
+    assert [first['summary']['sources'][name] for name in insts
+            if name != 'HARPS15'] == ['file: gl1.csv']
+    assert abs(first['summary']['period'] / 5.3 - 1) < 0.01
+    # a file with no star: alone, and why
+    assert other['status'] == 'done' and other['star']['apero'] is None
+    assert 'HARPS15' not in other['summary']['instruments']
+    assert gathered == ['GJ 1']
+    opened = gui.batch_open(state['id'], 0)
+    assert opened['page']['target'] == 'GJ 1'
+    assert opened['page']['detailed']['dace'] is True
+    assert {inst['name'] for inst in opened['rv']['instruments']} >= {
+        'HARPS15'}
+    # again: the archives on disk, not gathered anew
+    state = run()
+    assert state['status'] == 'done' and gathered == ['GJ 1']
+    # the star of a file for the page
+    star = gui.star_of_file(paths[0])
+    assert star['apero'] == 'GL1' and star['target'] == 'GJ 1'
+    assert gui.star_of_file(str(tmp_path / 'none.csv'))['target'] == ''
 
 
 def test_the_zero_of_an_instrument_on_the_series():

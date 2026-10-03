@@ -39,6 +39,7 @@ exactly. That is what makes the outlier-aware FIP affordable.
 | `koloa.analyze` | all of the above on one series, with a report and figures |
 | `koloa.detailed` | `detailed_analysis`: everything koloa can say about a star from one file, with its known planets (archive), more data (DACE, the velocities published with its planets on VizieR, and any given), the FIP in two passes, the known planets tested at their periods, a GP of the activity, the activity indicators and why each outlier is one, as a LaTeX/PDF report |
 | `koloa.literature` | published velocities: a VizieR .dat or csv file read (times to BJD - 2400000, km/s to m/s), and the tables of the papers of a star's planets found on VizieR from their bibcodes |
+| `koloa.apero_names` | APERO's names of stars (SPIRou, NIRPS): a copy of APERO's astrometric database (streamed from its assets server), names looked for as APERO does, the star of a file (its OBJECT column or its LBL name) and its SIMBAD name |
 | `koloa.kit` | the analysis kit of a star (the GUI's Analysis script): a commented script of the analysis calling koloa's routines, its settings from the page, with the velocities, the archives and the star (YAML) in one .tar.gz that runs offline |
 | `koloa.published` | the velocities published for one star on VizieR: the surveys (Keck HIRES to 2023, Teklu et al. 2025, and Tal-Or et al. 2019; the California Legacy Survey's HIRES, APF and Lick Hamilton, Rosenthal et al. 2021; the Lick Hamilton of Fischer et al. 2014; HARPS by SERVAL, Trifonov et al. 2020), the star found by its position in their lists of stars (kept on this machine), then the tables of the papers SIMBAD lists for it; each source its own offset, a spectrum published twice kept once |
 | `koloa.gpcheck` | the signals against a GP of the activity (its prior the rotation period of the archive): the likelihood each adds, periodograms whitened by the GP with false-alarm levels from simulations of its noise, and the whole series with the GP |
@@ -178,6 +179,24 @@ comments (in English or in French, the page's language), its figures saved
 as PDF; beside it, the files of velocities, the archives gathered for the
 star, and `star.yaml` (and `star.json`), what SIMBAD, the NASA Exoplanet
 Archive and TESS say of the star. Its settings are those of the card.
+
+The star of a file is found by its APERO name when no SIMBAD name is
+given (`koloa.apero_names`): its OBJECT column (LBL keeps the header key
+of each spectrum), else its name (`lbl_<OBJECT>_<TEMPLATE>.rdb`, or
+`<OBJECT>_rv_....rdb`), looked for in APERO's database of names exactly
+as APERO looks (the same cleaning of the name, the same variants, its
+aliases), which gives its SIMBAD name; the page fills the star from it,
+and the report uses it. The database is a copy of the astrometrics folder
+of APERO's assets: its YAML files come first in the tarball of APERO's
+assets server, so the copy streams a few MB and stops (no APERO needed);
+made at the first lookup, again with `koloa --refresh-apero` or the
+page's Refresh APERO names (`KOLOA_APERO_ASTROMETRICS` points to a folder
+of one's own instead; reading it needs PyYAML, `pip install pyyaml`).
+
+The Batch FIP tab runs the quick FIP of many files: the object of each
+(its APERO name) in the table, and with every archive ticked, each star's
+archives (DACE, CARMENES DR1, VizieR) gathered and put with its file, the
+nights of each instrument in the table.
 
 From Python:
 

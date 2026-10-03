@@ -191,6 +191,12 @@ def main(argv=None):
                         help='with --detailed: instruments left out of the '
                              'analysis (NIRPS, HARPS03...), once the file, '
                              'DACE, CARMENES and VizieR are put together')
+    parser.add_argument('--refresh-apero', action='store_true',
+                        help="a new copy of APERO's database of names "
+                             '(koloa.apero_names: the astrometrics of its '
+                             'assets, a few MB), by which the star of a file '
+                             'is found when --target is not given (its '
+                             'OBJECT column, or lbl_<OBJECT>_<TEMPLATE>.rdb)')
     parser.add_argument('--refresh-archive', action='store_true',
                         help='fetch the NASA Exoplanet Archive again (koloa '
                              'keeps it in ~/.cache/koloa/archive)')
@@ -207,6 +213,11 @@ def main(argv=None):
         from koloa.gui import serve
         serve(args.port)
         return
+    if args.refresh_apero:
+        from koloa.apero_names import refresh
+        refresh()
+        if not args.filename and not args.refresh_archive:
+            return
     if args.refresh_archive:
         from koloa.archive import tables
         from koloa.gather import carmenes_objects

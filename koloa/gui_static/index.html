@@ -34,23 +34,29 @@
   </nav>
 
   <main class="layout" id="tab-analysis">
-    <!-- the star -->
-    <section class="card">
-      <h2><span data-i18n="star">Star</span> <button type="button" class="info" data-help="target" aria-label="?">i</button></h2>
-      <p class="hint" data-i18n="star_hint">Its SIMBAD name: the archives, DACE, CARMENES and TESS find it by that name.</p>
-      <div class="row">
-        <input id="target" type="text" autocomplete="off">
-        <button id="resolve" type="button" data-i18n="resolve">Resolve</button>
+    <!-- the star: its name, its mass, on the left; what SIMBAD and the
+         archives say of it, in tiles, on the right -->
+    <section class="card span-3" id="starcard">
+      <div class="starcols">
+        <div class="starmain">
+          <h2><span data-i18n="star">Star</span> <button type="button" class="info" data-help="target" aria-label="?">i</button></h2>
+          <p class="hint" data-i18n="star_hint">Its SIMBAD name: the archives, DACE, CARMENES and TESS find it by that name.</p>
+          <div class="row">
+            <input id="target" type="text" autocomplete="off">
+            <button id="resolve" type="button" data-i18n="resolve">Resolve</button>
+          </div>
+          <p class="hint" id="targetsrc"></p>
+          <div class="row massrow"><label for="mstar"><span data-i18n="mstar">Mass of the star [M☉]</span></label>
+            <input id="mstar" type="number" step="any" min="0" autocomplete="off"> ± <input id="mstar_err" type="number" step="any" min="0" autocomplete="off">
+            <button type="button" class="info" data-help="mstar" aria-label="?">i</button><span class="hint" id="mstarsrc"></span></div>
+          <p class="hint archive-line"><span id="archive-date"></span> <button id="run-archive" type="button" class="small" data-i18n="refresh">Refresh</button></p>
+        </div>
+        <div id="ident"></div>
       </div>
-      <div id="ident"></div>
-      <div class="row massrow"><label for="mstar"><span data-i18n="mstar">Mass of the star [M☉]</span></label>
-        <input id="mstar" type="number" step="any" min="0" autocomplete="off"> ± <input id="mstar_err" type="number" step="any" min="0" autocomplete="off">
-        <button type="button" class="info" data-help="mstar" aria-label="?">i</button><span class="hint" id="mstarsrc"></span></div>
-      <p class="hint archive-line"><span id="archive-date"></span> <button id="run-archive" type="button" class="small" data-i18n="refresh">Refresh</button></p>
     </section>
 
     <!-- the velocities -->
-    <section class="card span-2">
+    <section class="card span-3">
       <h2 data-i18n="velocities">Velocities</h2>
       <p class="hint" data-i18n="velocities_hint">A file of velocities (LBL .rdb, csv, DACE csv), the archives gathered for the star, or both. Untick an instrument (or click it in the legend) to leave it out of the report.</p>
       <div class="fields">
@@ -58,7 +64,7 @@
             <span class="spacer"></span><span data-i18n="inst_head">instrument</span> <button type="button" class="info" data-help="file_label" aria-label="?">i</button></span>
           <div id="filelist"></div>
           <button type="button" id="addfile" class="small" data-i18n="add_file">+ Add a file</button></div>
-        <label><span><span data-i18n="root">Archives folder</span> <button type="button" class="info" data-help="root" aria-label="?">i</button></span>
+        <label class="wide"><span><span data-i18n="root">Archives folder</span> <button type="button" class="info" data-help="root" aria-label="?">i</button></span>
           <span class="picker"><input id="root" type="text" value="archives" autocomplete="off"><button type="button" data-pick="folder" data-into="root" title="..." >...</button></span></label>
       </div>
       <div class="checks" id="archchecks"><span class="hint" data-i18n="arch_plot">Archives gathered for the star:</span>
@@ -194,7 +200,7 @@
   <main class="layout" id="tab-batch" hidden>
     <section class="card span-3">
       <h2><span data-i18n="tab_batch">Batch FIP</span> <button type="button" class="info" data-help="batch" aria-label="?">i</button></h2>
-      <p class="hint" data-i18n="batch_hint">The quick FIP of many files, one after the other, each on its own (no SIMBAD name: no archive, no known planet); a table of their best peaks and accelerations; open one in the Analysis tab to look closer.</p>
+      <p class="hint" data-i18n="batch_hint">The quick FIP of many files, one after the other: each file on its own, or with every archive of its star (found by its APERO name); a table of their objects, best peaks and accelerations; open one in the Analysis tab to look closer.</p>
       <div class="row">
         <button type="button" id="batchpick" class="small" data-i18n="batch_pick">Add files...</button>
         <span class="hint" data-i18n="batch_or">or the files of a folder:</span>
@@ -204,6 +210,12 @@
         <button type="button" id="batchclear" class="small" data-i18n="batch_clear">Clear</button>
       </div>
       <div id="batchfiles"></div>
+      <div class="checks">
+        <label><input type="checkbox" id="batcharchives"> <span data-i18n="batch_archives">every archive of each star (DACE, CARMENES DR1, VizieR), found by its APERO name</span></label>
+        <label><input type="checkbox" id="batchregather"> <span data-i18n="batch_regather">gather them again</span></label>
+        <button type="button" class="info" data-help="batch_archives" aria-label="?">i</button>
+      </div>
+      <p class="hint"><span id="aperostate"></span> <button type="button" id="aperorefresh" class="small" data-i18n="apero_refresh">Refresh APERO names</button></p>
       <div class="row"><button type="button" id="batchrun" class="go" data-i18n="batch_run">Run the FIPs</button><span class="hint" id="batchstatus"></span></div>
       <div id="batchtable"></div>
     </section>

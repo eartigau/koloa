@@ -153,7 +153,9 @@ function setMass(star) {
   if (!star || !star.mass || $('mstar').dataset.typed) return;
   $('mstar').value = (+star.mass).toFixed(3);
   $('mstar_err').value = (+(star.mass_err || 0)).toFixed(3);
-  $('mstarsrc').textContent = star.source ? `${t('from_word')} ${star.source}` : '';
+  // the source in the page's language when it is one of koloa's own
+  const src = { 'its spectral type (Pecaut & Mamajek 2013)': t('src_spt'), 'NASA Exoplanet Archive': t('src_archive') }[star.source] || star.source;
+  $('mstarsrc').textContent = star.source ? `${t('from_word')} ${src}` : '';
 }
 
 // m sin i of a companion [Earth masses], exactly (m not << M), and its
@@ -199,7 +201,25 @@ function massText(f) {
 const safeId = (name) => String(name).replace(/[^A-Za-z0-9_-]/g, '_');
 
 function tile(label, value, wide) {
-  return `<div class="stat${wide ? ' wide' : ''}"><div class="label">${esc(label)}</div><div class="value">${value}</div></div>`;
+  const span = wide === 'full' ? ' full' : wide ? ' wide' : '';
+  return `<div class="stat${span}"><div class="label">${esc(label)}</div><div class="value">${value}</div></div>`;
+}
+
+// the star of a file, when the page has none: its OBJECT column, else its
+//   name (lbl_<OBJECT>_<TEMPLATE>.rdb), in APERO's names, as SIMBAD knows it
+async function starFromFile(path) {
+  if (!path || !path.trim() || $('target').value.trim()) return;
+  let res;
+  try { res = await api(`/api/star_of_file?${new URLSearchParams({ path: path.trim() })}`); } catch (err) { return; }
+  if (!res.target || $('target').value.trim()) return;
+  $('target').value = res.target;
+  const from = res.source === 'OBJECT column' ? `OBJECT ${res.raw}` : `${t('file_name')} ${res.raw}`;
+  $('targetsrc').textContent = res.apero
+    ? `${t('from_file')}: ${from} \u2192 ${res.apero} (APERO), ${res.target} ${t('for_simbad')}`
+    : `${t('from_file')}: ${from} (${t('not_apero')})`;
+  checkArchives();
+  updateCommands();
+  resolveStar();
 }
 
 let varTarget = '', varTries = 0;
@@ -215,8 +235,11 @@ async function resolveStar(refresh) {
     // each period of the literature: a tick that makes it the SHO's
     const now = $('rotation').value.trim();
     const chip = (per, text) => `<label class="prot"><input type="radio" name="prot" value="${esc(per)}"${now && +now === +per ? ' checked' : ''}> `
-      + `${text} <span class="hint">${esc(t('use_sho'))}</span></label>`;
-    const rot = (id.variability || []).map((v) => chip(v.period, `${esc(v.type)} ${v.period} d <span class="hint">(${esc(v.bibcode || '')})</span>`));
+      + `${text}</label>`;
+    // each period once (SIMBAD may list one twice)
+    const seen = new Set();
+    const rot = (id.variability || []).filter((v) => { const k = `${v.type} ${v.period} ${v.bibcode}`; const n = !seen.has(k); seen.add(k); return n; })
+      .map((v) => chip(v.period, `${esc(v.type)} ${v.period} d <span class="hint">(${esc(v.bibcode || '')})</span>`));
     if (id.carmenes && id.carmenes.p_rot) rot.push(chip(id.carmenes.p_rot, `ROT ${esc(id.carmenes.p_rot)} d <span class="hint">(CARMENES, ${esc(id.carmenes.p_rot_source || '')})</span>`));
     if (id.archive_rotation) rot.push(chip(id.archive_rotation, `ROT ${esc(id.archive_rotation)} d <span class="hint">(NASA Exoplanet Archive)</span>`));
     const num = (v, d) => (v == null || v === '' ? '?' : (+v).toFixed(d));
@@ -252,10 +275,11 @@ async function resolveStar(refresh) {
       + tile(t('main'), esc(id.main)) + tile(t('tic'), esc((id.tic || '-').replace('TIC ', '')))
       + tile(t('sptype'), typeTile)
       + tile(t('pos'), pos) + tile(t('gaia'), esc((id.gaia_dr3 || '-').replace('Gaia DR3 ', '')))
-      + tile(t('names'), others, true) + tile(t('rotation'), rot.join('<br>') || esc(t('none')), true)
+      + tile(t('names'), others, true)
+      + tile(rot.length > 1 ? `${t('rotation')} \u00b7 ${t('use_sho_head')}` : t('rotation'), rot.length ? `<div class="prots">${rot.join('')}</div>` : esc(t('none')), 'full')
       + tile(t('known'), planets, true)
-      + tile(t('toi_title'), toiTile, true)
-      + tile(t('carmenes'), carm, true) + '</div>'
+      + tile(t('toi_title'), toiTile, (id.tois || []).length > 0)
+      + tile(t('carmenes'), carm) + '</div>'
       + `<p class="hint">${esc(where)} <button type="button" class="small" id="refresh-star">${esc(t('refresh_star'))}</button></p>`;
   } catch (err) {
     box.innerHTML = `<p class="hint bad">${esc(err.message)}</p>`;
@@ -579,14 +603,17 @@ function fromZoom(ev) {
 // the instruments left out: the field of the report is what counts; the
 // boxes of the table and the legend of the plot write into it
 let lastRV = null;
+// the names of the field, separated by commas or spaces: a name with its
+//   source in brackets is one ('HIRES (CLS)', 'HIRES (Teklu+ 2025)')
+const namesOf = (text) => (String(text || '').match(/[^\s,(]+(?:\s*\([^)]*\))?/g) || []).map((s) => s.replace(/\s+/g, ' ').trim());
 function excludedSet() {
-  return new Set($('exclude').value.split(/[\s,]+/).filter(Boolean).map((s) => s.toUpperCase()));
+  return new Set(namesOf($('exclude').value).map((s) => s.toUpperCase()));
 }
 
 function setExcluded(name, off) {
-  const kept = $('exclude').value.split(/[\s,]+/).filter((s) => s && s.toUpperCase() !== name.toUpperCase());
+  const kept = namesOf($('exclude').value).filter((s) => s.toUpperCase() !== name.toUpperCase());
   if (off) kept.push(name);
-  $('exclude').value = kept.join(' ');
+  $('exclude').value = kept.join(', ');
   updateCommands();
   styleExcluded();
   checkStale();
@@ -1253,6 +1280,7 @@ function resetPage() {
   fileRows = [{ path: '', label: '' }];
   renderFiles();
   $('ident').innerHTML = '';
+  $('targetsrc').textContent = '';
   $('rvnote').textContent = '';
   $('rvtable').innerHTML = '';
   if (window.Plotly) Plotly.purge($('rvplot'));
@@ -1433,7 +1461,8 @@ function addBatchFiles(paths) {
 async function runBatch() {
   if (!batchFiles.length) return;
   try {
-    batch = await api('/api/batch', { paths: batchFiles, options: readOptions('detailed') });
+    batch = await api('/api/batch', { paths: batchFiles, options: readOptions('detailed'), archives: $('batcharchives').checked,
+      regather: $('batchregather').checked, root: $('root').value.trim() });
     pollBatch(batch.id);
   } catch (err) {
     $('batchstatus').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
@@ -1450,10 +1479,27 @@ async function pollBatch(id) {
 const fipCell = (v) => (v === null || v === undefined ? ''
   : `<span class="${v < 0.01 ? 'ok' : ''}">${v > 0 ? v.toExponential(1) : '&lt; 1e-300'}</span>`);
 function batchRows() {
-  const rows = batch.items.map((item, i) => ({ ...item, i, ...(item.summary || {}) }));
+  const rows = batch.items.map((item, i) => ({ ...item, i, ...(item.summary || {}), object: objectName(item) }));
   const { key, dir } = batchSort;
-  const val = (r) => (key === 'name' ? r.name : r[key] === null || r[key] === undefined ? Infinity * dir : r[key]);
-  return rows.sort((a, b) => (key === 'name' ? dir * a.name.localeCompare(b.name) : dir * (val(a) - val(b))));
+  const val = (r) => (r[key] === null || r[key] === undefined ? Infinity * dir : r[key]);
+  if (key === 'name' || key === 'object') return rows.sort((a, b) => dir * String(a[key]).localeCompare(String(b[key])));
+  return rows.sort((a, b) => dir * (val(a) - val(b)));
+}
+// the object of a file of a batch: its APERO name, else the name read
+const objectName = (item) => (item.star ? item.star.apero || item.star.raw || '' : '');
+function objectCell(item) {
+  const s = item.star;
+  if (!s) return '';
+  const from = s.source === 'OBJECT column' ? `OBJECT ${s.raw}` : `${t('file_name')} ${s.raw}`;
+  const tip = s.apero ? `${from} \u2192 ${s.apero} (APERO${s.status ? `, ${s.status}` : ''}), ${s.target} ${t('for_simbad')}`
+    : `${from} (${t('not_apero')})`;
+  return `<span title="${esc(tip)}">${esc(objectName(item))}</span>${s.spt ? ` <span class="hint">${esc(s.spt)}</span>` : ''}`;
+}
+// the instruments of a line (nights of each), their sources in the tip
+function instCell(r) {
+  if (!r.instruments) return '';
+  const src = r.sources || {};
+  return Object.entries(r.instruments).map(([name, n]) => `<span title="${esc(src[name] || '')}">${esc(name)}\u00a0${n}</span>`).join('');
 }
 function renderBatch() {
   if (!batch) { $('batchtable').innerHTML = ''; $('batchstatus').textContent = ''; return; }
@@ -1462,22 +1508,25 @@ function renderBatch() {
   $('batchstatus').innerHTML = `${running ? '<span class="hourglass">\u23f3</span> ' : ''}${done} / ${batch.items.length} \u00b7 ${clock(batch.elapsed)}`
     + (running ? ` <button type="button" class="small stop" id="batchstop">${esc(t('stop_fip'))}</button>` : '')
     + (done ? ` <button type="button" class="small" id="batchcsv">CSV</button>` : '');
-  const cols = [['name', t('col_file')], ['n', t('col_nights')], ['baseline', t('col_span')], ['period', 'P [d]'],
-    ['fip', t('col_fip')], ['fip_alone', t('col_fip_alone')], ['K', 'K [m/s]'], ['rms', 'rms [m/s]'], ['accel', 'dv/dt [m/s/yr]'], ['accel_sigma', '\u03c3']];
+  const cols = [['name', t('col_file')], ['object', t('col_object')]].concat(batch.archives ? [['n', t('col_insts')]] : [['n', t('col_nights')]]).concat([['baseline', t('col_span')], ['period', 'P [d]'],
+    ['fip', t('col_fip')], ['fip_alone', t('col_fip_alone')], ['K', 'K [m/s]'], ['rms', 'rms [m/s]'], ['accel', 'dv/dt [m/s/yr]'], ['accel_sigma', '\u03c3']]);
   const head = cols.map(([k, label]) => `<th data-bsort="${k}" class="sortable${batchSort.key === k ? ' sorted' : ''}">${esc(label)}`
     + `${batchSort.key === k ? (batchSort.dir > 0 ? ' \u25b2' : ' \u25bc') : ''}</th>`).join('');
   const num = (v, d) => (v === null || v === undefined ? '' : v.toFixed(d));
   $('batchtable').innerHTML = `<div class="remwrap"><table class="mini batch"><tr>${head}<th></th></tr>`
     + batchRows().map((r) => {
       let state = '';
-      if (r.status === 'running') {
+      if (r.status === 'running' && r.stage === 'gather') state = `<span class="hourglass">\u23f3</span> ${esc(t('batch_gather'))}`;
+      else if (r.status === 'running') {
         const p = r.progress;
         state = `<span class="hourglass">\u23f3</span> ${esc(t({ noise: 'quick_noise', fip1: 'quick_fip1', planets: 'quick_planets', fip2: 'quick_fip2' }[r.step] || 'quick_noise'))}`
           + (p ? ` ${Math.round(100 * p.done / Math.max(p.total, 1))} %` : '');
       } else if (r.status === 'failed' || r.status === 'stopped') state = `<span class="bad">${esc(r.error || t(r.status))}</span>`;
       else if (r.status === 'waiting') state = `<span class="hint">${esc(t('batch_waiting'))}</span>`;
       const acc = r.accel !== null && r.accel !== undefined ? `${r.accel >= 0 ? '+' : '\u2212'}${Math.abs(r.accel).toPrecision(3)} \u00b1 ${r.accel_err.toPrecision(2)}` : '';
-      return `<tr><td title="${esc(r.path)}">${esc(r.name)}</td><td class="num">${r.n ?? ''}</td><td class="num">${num(r.baseline, 0)}</td>`
+      if (r.note) state += ` <span class="hint" title="${esc(r.note)}">\u24d8</span>`;
+      const nights = batch.archives ? `<td class="insts">${r.n ? `<b>${r.n}</b>` : ''}${instCell(r)}</td>` : `<td class="num">${r.n ?? ''}</td>`;
+      return `<tr><td title="${esc(r.path)}">${esc(r.name)}</td><td>${objectCell(r)}</td>${nights}<td class="num">${num(r.baseline, 0)}</td>`
         + `<td class="num">${num(r.period, 4)}</td><td class="num">${fipCell(r.fip)}</td><td class="num">${fipCell(r.fip_alone)}</td>`
         + `<td class="num">${r.K !== null && r.K !== undefined ? `${r.K.toFixed(2)} \u00b1 ${r.K_err.toFixed(2)}` : ''}</td><td class="num">${num(r.rms, 2)}</td>`
         + `<td class="num">${acc}</td><td class="num">${num(r.accel_sigma, 1)}</td>`
@@ -1485,8 +1534,10 @@ function renderBatch() {
     }).join('') + '</table></div>';
 }
 function batchCsv() {
-  const head = ['file', 'path', 'nights', 'baseline_d', 'period_d', 'fip', 'fip_alone', 'K_ms', 'K_err_ms', 'rms_ms', 'dvdt_msyr', 'dvdt_err_msyr', 'dvdt_sigma', 'status'];
-  const lines = [head.join(',')].concat(batchRows().map((r) => [r.name, r.path, r.n, r.baseline, r.period, r.fip, r.fip_alone, r.K, r.K_err,
+  const head = ['file', 'path', 'object', 'apero_name', 'simbad_name', 'nights', 'instruments', 'baseline_d', 'period_d', 'fip', 'fip_alone', 'K_ms', 'K_err_ms', 'rms_ms', 'dvdt_msyr', 'dvdt_err_msyr', 'dvdt_sigma', 'status'];
+  const insts = (r) => (r.instruments ? Object.entries(r.instruments).map(([k, n]) => `${k} ${n}`).join('; ') : '');
+  const lines = [head.join(',')].concat(batchRows().map((r) => [r.name, r.path, r.star ? r.star.raw : '', r.star ? r.star.apero : '', r.star ? r.star.target : '',
+    r.n, insts(r), r.baseline, r.period, r.fip, r.fip_alone, r.K, r.K_err,
     r.rms, r.accel, r.accel_err, r.accel_sigma, r.status].map((v) => (v === null || v === undefined ? '' : `"${String(v).replace(/"/g, '""')}"`)).join(',')));
   const link = document.createElement('a');
   link.href = URL.createObjectURL(new Blob([lines.join('\n') + '\n'], { type: 'text/csv' }));
@@ -1506,7 +1557,12 @@ document.addEventListener('input', (e) => {
   }
   updateCommands();
   if (e.target.id === 'target' || e.target.id === 'root') checkArchives();
+  if (e.target.id === 'target') $('targetsrc').textContent = '';
   if (e.target.id === 'exclude') styleExcluded();
+});
+// a file's path typed: its star, when the page has none
+document.addEventListener('change', (e) => {
+  if (e.target.classList && e.target.classList.contains('fpath')) starFromFile(e.target.value);
 });
 document.addEventListener('change', (e) => {
   if (e.target.dataset && e.target.dataset.inst) setExcluded(e.target.dataset.inst, !e.target.checked);
@@ -1632,6 +1688,7 @@ document.addEventListener('click', async (e) => {
         field.value = res.path;
         if (picker.dataset.row !== undefined) fileRows[+picker.dataset.row].path = res.path;
         updateCommands();
+        if (picker.dataset.row !== undefined) starFromFile(res.path);
         if (picker.dataset.into === 'root') checkArchives();
       }
     } catch (err) {
@@ -1687,6 +1744,21 @@ $('batchfolderadd').addEventListener('click', async () => {
 });
 $('batchclear').addEventListener('click', () => { batchFiles = []; renderBatchFiles(); });
 $('batchrun').addEventListener('click', runBatch);
+// the copy of APERO's names: what it is, and a new one
+async function aperoState() {
+  try {
+    const s = await api('/api/apero_names');
+    $('aperostate').textContent = s.objects ? `${t('apero_names')}: ${s.objects} ${t('objects')}${s.tarball ? `, ${s.tarball}` : ''}${s.fetched ? ` (${s.fetched})` : ''}` : t('apero_none');
+  } catch (err) { $('aperostate').textContent = ''; }
+}
+$('aperorefresh').addEventListener('click', async () => {
+  const btn = $('aperorefresh');
+  btn.disabled = true;
+  $('aperostate').innerHTML = `<span class="spin"></span> ${esc(t('apero_fetching'))}`;
+  try { await api('/api/apero_refresh', {}); } catch (err) { alert(err.message); }
+  btn.disabled = false;
+  aperoState();
+});
 document.addEventListener('click', async (e) => {
   const del = e.target.closest('[data-bdel]');
   if (del) { batchFiles.splice(+del.dataset.bdel, 1); renderBatchFiles(); }
@@ -1707,7 +1779,8 @@ document.addEventListener('click', async (e) => {
 (async () => {
   $('detailed-options').innerHTML = renderOptions('detailed');
   renderBatchFiles();
-  langHooks.push(showCwd, renderJobs, renderFiles, checkArchives, renderRemembered, dateAxis, renderBatchFiles, renderBatch,
+  aperoState();
+  langHooks.push(aperoState, showCwd, renderJobs, renderFiles, checkArchives, renderRemembered, dateAxis, renderBatchFiles, renderBatch,
     () => { if (quick && quick.each) drawEach(quick.each); });
   loadRemembered();
   jobDoneHooks.push(async (job) => {

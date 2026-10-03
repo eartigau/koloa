@@ -69,6 +69,14 @@ def _number(value: Any, kind=float) -> Optional[float]:
     return kind(str(value).strip())
 
 
+def instrument_names(text: Any) -> List[str]:
+    """the instruments a field names, separated by commas or spaces: a
+    name with its source in brackets is one ('HIRES (CLS)', 'HIRES
+    (Teklu+ 2025)', 'HARPS03 (RVBank)'), its spaces made single"""
+    return [re.sub(r'\s+', ' ', name).strip() for name in re.findall(
+        r'[^\s,(]+(?:\s*\([^)]*\))?', str(text or ''))]
+
+
 def _files(opts: Dict[str, Any]):
     """the files of the page (files: path and instrument of each; or file,
     one path) and their instruments ('' for the name the file gives)"""
@@ -150,7 +158,7 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
         args.append('--no-fip-gp')
     elif rotation and fipgp == 'banded':
         args += ['--fip-gp', 'banded']
-    exclude = str(opts.get('exclude') or '').replace(',', ' ').split()
+    exclude = instrument_names(opts.get('exclude'))
     if exclude:
         args += ['--exclude'] + exclude
     dmap = opts.get('detection_map') or 'none'
@@ -669,8 +677,7 @@ def selection(opts: Dict[str, Any]):
         opts.get('files') or opts.get('file') or '', opts.get('target', ''),
         opts.get('root', ''), bool(opts.get('dace')),
         bool(opts.get('carmenes')), bool(opts.get('vizier')))
-    left = {name.upper() for name in str(opts.get('exclude') or '')
-            .replace(',', ' ').split()}
+    left = {name.upper() for name in instrument_names(opts.get('exclude'))}
     if data is not None and left:
         keep = ~np.isin(np.char.upper(data.inst.astype(str)), list(left))
         data = data.select(keep) if keep.any() else None
@@ -1480,19 +1487,75 @@ def forget() -> Dict[str, Any]:
     return dict(kept=[job.id for job in JOBS.values()])
 
 
+def star_of_file(path: str) -> Dict[str, Any]:
+    """the star of a file of velocities: its OBJECT column, else its
+    name, in APERO's database of names (koloa.apero_names), as SIMBAD knows
+    it; the name itself when the database does not have it"""
+    from koloa import apero_names
+    path = os.path.expanduser(str(path).strip())
+    if not path or not os.path.isfile(path):
+        return dict(raw=None, source=None, apero=None, target='', entry=None)
+    try:
+        return apero_names.star_of_file(path)
+    except (ImportError, OSError, ValueError) as err:
+        out = dict(raw=None, source=None, apero=None, target='', entry=None,
+                   error=str(err))
+        raw = apero_names.file_object(path)
+        if raw:
+            out.update(raw=raw, source='OBJECT column', target=raw)
+        return out
+
+
+def apero_state() -> Dict[str, Any]:
+    """the copy of APERO's database of names: where, how many objects,
+    from which tarball, when"""
+    from koloa import apero_names
+    path = apero_names.folder()
+    out = dict(folder=path, objects=0, tarball=None, fetched=None)
+    if not apero_names.yaml_files(path):
+        return out
+    source = os.path.join(path, 'source.json')
+    if os.path.exists(source):
+        with open(source) as handle:
+            out.update({key: val for key, val in json.load(handle).items()
+                        if key in ('tarball', 'fetched')})
+    try:
+        out['objects'] = len(apero_names.load_index(path)['entries'])
+    except (ImportError, OSError, ValueError) as err:
+        out['error'] = str(err)
+    return out
+
+
+def apero_refresh() -> Dict[str, Any]:
+    """a new copy of APERO's database of names (koloa.apero_names.
+    refresh), and what it is"""
+    from koloa import apero_names
+    apero_names.refresh()
+    return apero_state()
+
+
 #: the batch FIPs of this session
 BATCHES: Dict[str, Dict[str, Any]] = {}
 
 
-def batch_fip(paths: List[str], opts: Dict[str, Any]) -> Dict[str, Any]:
+def batch_fip(paths: List[str], opts: Dict[str, Any],
+              archives: bool = False, regather: bool = False,
+              root: str = '') -> Dict[str, Any]:
     """
-    The quick FIP of many files, one after the other, in a thread: each
-    file on its own, with no SIMBAD name (no archive, no known planet),
-    the trend as the report's boxes say; each kept as a quick FIP of its
-    own, to be opened in the page
+    The quick FIP of many files, one after the other, in a thread, the
+    trend as the report's boxes say; each kept as a quick FIP of its own,
+    to be opened in the page. The star of each file is its APERO name (its
+    OBJECT column, else its name, in koloa.apero_names); with archives,
+    every archive of that star is gathered (DACE, CARMENES DR1, VizieR;
+    koloa.gather, kept in root, again with regather) and put with the file
+    (set apart from it as the report does), and its known planets go into
+    the second pass; without, each file is on its own
 
     :param paths: list of str, the files of velocities
     :param opts: dict, the options of the page (trend, curvature)
+    :param archives: bool, the archives of each star with its file
+    :param regather: bool, gather the archives again (not those on disk)
+    :param root: str, the folder of the archives
 
     :return: dict, the state of the batch (batch_state)
     """
@@ -1503,9 +1566,13 @@ def batch_fip(paths: List[str], opts: Dict[str, Any]) -> Dict[str, Any]:
     bid = uuid.uuid4().hex[:8]
     BATCHES[bid] = dict(id=bid, status='running', start=time.time(),
                         end=None, cancel=False, trend=trend_order(opts),
+                        archives=bool(archives), regather=bool(regather),
+                        root=root or 'archives',
                         items=[dict(path=path, name=os.path.basename(path),
                                     status='waiting', qid=None, error=None,
-                                    summary=None) for path in paths])
+                                    summary=None, star=None, stage=None,
+                                    note=None)
+                               for path in paths])
     threading.Thread(target=_run_batch, args=(bid,), daemon=True).start()
     return batch_state(bid)
 
@@ -1532,16 +1599,64 @@ def _batch_summary(result: Dict[str, Any], data) -> Dict[str, Any]:
         accel_sigma=(result.get('acceleration') or {}).get('accel_sigma'))
 
 
+def _batch_star(item: Dict[str, Any]) -> None:
+    """the star of a file of a batch (its APERO name), for its line"""
+    star = star_of_file(item['path'])
+    entry = star.get('entry') or {}
+    item['star'] = dict(raw=star.get('raw'), source=star.get('source'),
+                        apero=star.get('apero'), target=star.get('target'),
+                        spt=entry.get('spt'), status=entry.get('status'))
+
+
+def _batch_archives(batch: Dict[str, Any], item: Dict[str, Any]):
+    """the series of a file of a batch with every archive of its star
+    (gathered first unless on disk): the series, its sources, the star"""
+    from koloa.gather import folder_name, gather
+    target = (item['star'] or {}).get('target') or ''
+    if not target:
+        item['note'] = 'no star: the file alone'
+        data, source, _ = series_of([dict(path=item['path'])])
+        return data, source, ''
+    folder = os.path.join(batch['root'], folder_name(target))
+    if batch['regather'] or not os.path.exists(os.path.join(
+            folder, 'manifest.json')):
+        item['stage'] = 'gather'
+        try:
+            gather(target, batch['root'], dace=True, carmenes=True,
+                   tess=False, vizier=True, refresh=batch['regather'])
+        except Exception as err:  # the file alone, and why
+            item['note'] = f'archives not gathered ({type(err).__name__}: ' \
+                f'{err})'
+    item['stage'] = None
+    data, source, _ = series_of([dict(path=item['path'])], target,
+                                batch['root'], dace=True, carmenes=True,
+                                vizier=True)
+    return data, source, target
+
+
 def _run_batch(bid: str) -> None:
-    """the files of a batch, one quick FIP after the other"""
+    """the files of a batch: the star of each (its APERO name), then one
+    quick FIP after the other (with the archives of its star when asked)"""
     batch = BATCHES[bid]
+    for item in batch['items']:
+        try:
+            _batch_star(item)
+        except Exception as err:  # a star not found is no failure
+            item['note'] = f'star not found ({type(err).__name__}: {err})'
     for item in batch['items']:
         if batch['cancel']:
             item['status'] = 'stopped'
             continue
         item['status'] = 'running'
         try:
-            data, _, _ = selection(dict(files=[dict(path=item['path'])]))
+            target, source = '', {}
+            if batch['archives']:
+                data, source, target = _batch_archives(batch, item)
+            else:
+                data, _, _ = selection(dict(files=[dict(path=item['path'])]))
+            if batch['cancel']:
+                item['status'] = 'stopped'
+                continue
             if data is None:
                 raise ValueError('no velocity in the file')
             qid = uuid.uuid4().hex[:8]
@@ -1551,12 +1666,13 @@ def _run_batch(bid: str) -> None:
                                start=time.time(), end=None, batch=bid,
                                instruments=list(data.instruments))
             item['qid'] = qid
-            _run_quick(qid, data, '', batch['trend'], each=False)
+            _run_quick(qid, data, target, batch['trend'], each=False)
             job = QUICKS[qid]
             item['status'] = job['status']
             item['error'] = job.get('error')
             if job.get('result'):
-                item['summary'] = _batch_summary(job['result'], data)
+                item['summary'] = dict(_batch_summary(job['result'], data),
+                                       sources=source)
         except Exception as err:
             item['status'] = 'failed'
             item['error'] = f'{type(err).__name__}: {err}'
@@ -1571,12 +1687,14 @@ def batch_state(bid: str) -> Dict[str, Any]:
     items = []
     for item in batch['items']:
         one = {key: item[key] for key in ('path', 'name', 'status', 'qid',
-                                          'error', 'summary')}
+                                          'error', 'summary', 'star',
+                                          'stage', 'note')}
         job = QUICKS.get(item['qid']) if item['qid'] else None
         if job is not None and item['status'] == 'running':
             one.update(step=job.get('step'), progress=job.get('progress'))
         items.append(one)
     return dict(id=bid, status=batch['status'], items=items,
+                archives=batch.get('archives', False),
                 elapsed=(batch['end'] or time.time()) - batch['start'])
 
 
@@ -1598,14 +1716,19 @@ def batch_open(bid: str, index: int) -> Dict[str, Any]:
     item = batch['items'][int(index)]
     if not item['qid'] or item['qid'] not in QUICKS:
         raise ValueError(f'{item["name"]}: no quick FIP to open')
+    # with its archives, the page has its star and them ticked
+    arch = bool(batch.get('archives'))
+    target = ((item.get('star') or {}).get('target') or '') if arch else ''
+    root = batch.get('root', '') if arch else ''
     detailed = dict(trend=batch['trend'] >= 1, curvature=batch['trend'] >= 2,
-                    dace=False, carmenes=False, exclude='')
-    page = dict(target='', files=[dict(path=item['path'], label='')],
-                root='', outdir='', detailed=detailed, clip=False, view=None,
-                periods=None, subtract=[])
-    return dict(page=page, rv=velocities([dict(path=item['path'])]),
+                    dace=arch, carmenes=arch, vizier=arch, exclude='')
+    page = dict(target=target, files=[dict(path=item['path'], label='')],
+                root=root, outdir='', detailed=detailed, clip=False,
+                view=None, periods=None, subtract=[])
+    return dict(page=page, rv=velocities([dict(path=item['path'])], target,
+                                         root, arch, arch, arch),
                 quick=quick_state(item['qid']), notes=[],
-                entry=dict(id='', target=item['name'], note='',
+                entry=dict(id='', target=target or item['name'], note='',
                            created=time.strftime('%Y-%m-%d %H:%M')))
 
 
@@ -2206,7 +2329,7 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
     asked = [name for key, name in (('dace', 'DACE'),
                                     ('carmenes', 'CARMENES DR1'))
              if opts.get(key)]
-    left = str(opts.get('exclude') or '').split()
+    left = instrument_names(opts.get('exclude'))
     rows = [('Archives', ', '.join(asked) or 'none'),
             ('Left out', ', '.join(left) or 'none')]
     if xr:
@@ -2799,6 +2922,10 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == '/api/listfiles':
                 return self._json(list_files(query.get('folder', ''),
                                              query.get('pattern', '*.rdb')))
+            if url.path == '/api/star_of_file':
+                return self._json(star_of_file(query.get('path', '')))
+            if url.path == '/api/apero_names':
+                return self._json(apero_state())
             if url.path == '/api/archives':
                 state = archives(query.get('target', ''),
                                  query.get('root', ''))
@@ -2905,13 +3032,18 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(kit)
                 return None
+            if path == '/api/apero_refresh':
+                return self._json(apero_refresh())
             if path == '/api/forget':
                 return self._json(forget())
             if path == '/api/quickstop':
                 return self._json(stop_quick(body.get('id', '')))
             if path == '/api/batch':
                 return self._json(batch_fip(body.get('paths') or [],
-                                            body.get('options') or {}))
+                                            body.get('options') or {},
+                                            bool(body.get('archives')),
+                                            bool(body.get('regather')),
+                                            body.get('root') or ''))
             if path == '/api/batchstop':
                 return self._json(stop_batch(body.get('id', '')))
             if path == '/api/batch_open':
