@@ -367,6 +367,23 @@ def _new(data: RVData, kept: List[Tuple[np.ndarray, np.ndarray]]
     return data if np.all(fresh) else data.select(fresh)
 
 
+def new_spectra(data: RVData, kept: Sequence[RVData]) -> Optional[RVData]:
+    """
+    The velocities of a series that are not spectra of other series (a
+    spectrum published twice, or one that a file or an archive has): none
+    within SAME_ANY of a velocity of any of them, or within SAME_FAMILY of
+    one of the same spectrograph
+
+    :param data: RVData, the series
+    :param kept: list of RVData, the series it is set against
+
+    :return: RVData or None (when every velocity is another's)
+    """
+    return _new(data, [(part.time, np.array([family(val)
+                                             for val in part.inst]))
+                       for part in kept])
+
+
 def _tidy(data: RVData, title: str) -> RVData:
     """a paper's instruments: its own (their own offsets), and one when
     its 'instrument' column is not one (numbers, or a value per row)"""

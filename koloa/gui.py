@@ -591,12 +591,9 @@ def series_of(files: Any = '', target: str = '', root: str = '',
         if pub is not None and not vizier:
             notes.append(f'VizieR: {pub.n} points gathered, not ticked')
         elif pub is not None:
-            kept = [(part.time, np.array([kpub.family(val)
-                                          for val in part.inst]))
-                    for part in series]
             # the spectra the series has left out, and then an instrument
             #   with too few velocities for an offset of its own
-            fresh = kpub.enough(kpub._new(pub, kept))
+            fresh = kpub.enough(kpub.new_spectra(pub, series))
             if fresh is not None:
                 series.append(fresh)
                 source.update({name: 'VizieR' for name in fresh.instruments})
@@ -2880,6 +2877,26 @@ class Handler(BaseHTTPRequestHandler):
                                  'attachment; filename="koloa_quicklook.pdf"')
                 self.end_headers()
                 self.wfile.write(pdf)
+                return None
+            if path == '/api/analysis_script':
+                # the analysis kit: the script of the analysis with the
+                #   page's settings, its data, its star (koloa.kit)
+                from koloa.gather import folder_name
+                from koloa.kit import build
+                opts = dict(body.get('options', {}),
+                            mstar=body.get('mstar'),
+                            mstar_err=body.get('mstar_err'))
+                kit = build(opts, body.get('lang') or 'en')
+                target = str(opts.get('target') or '').strip()
+                name = (f'koloa_{folder_name(target) if target else "series"}'
+                        f'_analysis.tar.gz')
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/gzip')
+                self.send_header('Content-Length', str(len(kit)))
+                self.send_header('Content-Disposition',
+                                 f'attachment; filename="{name}"')
+                self.end_headers()
+                self.wfile.write(kit)
                 return None
             if path == '/api/forget':
                 return self._json(forget())

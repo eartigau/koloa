@@ -1217,6 +1217,28 @@ async function quicklookPdf() {
   }
 }
 
+// the analysis kit: the script of the analysis with the settings of the
+//   report's card, the velocities and the star, as a .tar.gz
+async function analysisScript() {
+  const opts = options('detailed');
+  const btn = $('script-detailed');
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/api/analysis_script', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ options: opts, lang, mstar: +$('mstar').value || null, mstar_err: +$('mstar_err').value || 0 }) });
+    if (!resp.ok) throw new Error((await resp.json()).error || resp.statusText);
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(await resp.blob());
+    link.download = `koloa_${folderName(opts.target || '') || 'series'}_analysis.tar.gz`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // a new target: every field back to the page's own default, no file, no
 //   star, no plot, no run that ended, as fresh as a new session (a run that
 //   still runs stays: closing a page does not stop it either)
@@ -1262,7 +1284,7 @@ function newTarget() {
   showTab('analysis');
   // the runs that ended, the quick looks, the archive in memory: forgotten
   //   here and by the server (a run still running is kept: Stop stops it)
-  for (const [id, job] of [...jobs]) if (job.status !== 'running') { jobs.delete(id); openLogs.delete(id); }
+  for (const [id, job] of [...jobs]) if (job.status !== 'running') { jobs.delete(id); closedLogs.delete(id); }
   renderJobs();
   api('/api/forget', {}).catch(() => {});
   history.replaceState(null, '', location.pathname);
@@ -1539,6 +1561,7 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('.stopfip') && quick) api('/api/quickstop', { id: quick.id }).catch(() => {});
 });
 $('pdf').addEventListener('click', quicklookPdf);
+$('script-detailed').addEventListener('click', analysisScript);
 document.addEventListener('click', (e) => { const b = e.target.closest('[data-fold]'); if (b) showFold(b.dataset.fold); });
 // the colour of the fold: by instrument, date or BERV
 document.addEventListener('click', (e) => {

@@ -72,7 +72,7 @@ const TEXT = {
     dmap: 'Detection map', dmap_none: 'none', dmap_fip: 'by the FIP (hours)', dmap_search: 'blind search (minutes)',
     fip_gp: 'GP in the FIP, by band', exposures: 'every exposure (not nightly means)',
     archive: 'Exoplanet Archive', gpcheck: 'signals against a GP', duck: 'duck test', latex: 'PDF report',
-    run_detailed: 'Make the report', runs: 'Runs',
+    run_detailed: 'Make the report', analysis_script: 'Analysis script', runs: 'Runs',
     runs_hint: 'Each run is the command line above, in a process of its own; closing the page does not stop it, stopping the server does.',
     no_runs: 'No run yet.', cwd: 'Runs from', rel: '(relative paths start there)',
     stop: 'Stop', log: 'Log', report: 'Report (PDF)', files: 'Files',
@@ -160,7 +160,7 @@ const TEXT = {
     dmap: 'Carte de détection', dmap_none: 'aucune', dmap_fip: 'par le FIP (heures)', dmap_search: 'recherche aveugle (minutes)',
     fip_gp: 'GP dans le FIP, par bande', exposures: 'chaque pose (pas les moyennes par nuit)',
     archive: 'Exoplanet Archive', gpcheck: 'signaux face à un GP', duck: 'duck test', latex: 'rapport PDF',
-    run_detailed: 'Faire le rapport', runs: 'Exécutions',
+    run_detailed: 'Faire le rapport', analysis_script: 'Script d’analyse', runs: 'Exécutions',
     runs_hint: 'Chaque exécution est la ligne de commande ci-dessus, dans son propre processus ; fermer la page ne l’arrête pas, arrêter le serveur oui.',
     no_runs: 'Aucune exécution pour l’instant.', cwd: 'Lancé depuis', rel: '(les chemins relatifs partent de là)',
     stop: 'Arrêter', log: 'Journal', report: 'Rapport (PDF)', files: 'Fichiers',
@@ -214,7 +214,8 @@ async function api(path, body) {
 // the runs
 // -----------------------------------------------------------------------------
 const jobs = new Map(); // id -> state, with all its lines
-const openLogs = new Set();
+// the logs closed by hand (a log is open by default)
+const closedLogs = new Set();
 
 function clock(sec) {
   sec = Math.max(0, Math.round(sec));
@@ -268,12 +269,12 @@ function renderJobs() {
       <pre class="codeblock">${esc(job.line)}</pre>
       <ol class="steps">${steps}</ol>
       ${files ? `<div class="files"><span class="hint">${esc(t('files'))}:</span>${files}</div>` : ''}
-      <details data-log="${job.id}"${openLogs.has(job.id) ? ' open' : ''}><summary>${esc(t('log'))} (${job.lines.length})</summary>
+      <details data-log="${job.id}"${closedLogs.has(job.id) ? '' : ' open'}><summary>${esc(t('log'))} (${job.lines.length})</summary>
         <pre class="codeblock log">${esc(job.lines.slice(-400).join('\n'))}</pre></details>
     </div>`;
   }).join('');
   box.querySelectorAll('details[data-log]').forEach((d) => {
-    d.addEventListener('toggle', () => { if (d.open) openLogs.add(d.dataset.log); else openLogs.delete(d.dataset.log); });
+    d.addEventListener('toggle', () => { if (d.open) closedLogs.delete(d.dataset.log); else closedLogs.add(d.dataset.log); });
     const pre = d.querySelector('pre');
     pre.scrollTop = pre.scrollHeight;
   });
@@ -334,6 +335,10 @@ const HELP = {
   gather_sources: {
     en: 'Which archives to gather. DACE: the velocities of HARPS, ESPRESSO, NIRPS, CORALIE..., the public ones, and with your key (DACE_API_KEY or ~/.dacerc) what your account may see. CARMENES DR1: the GTO velocities of 2016 to 2020, about 360 M dwarfs of the north, corrected for the nightly zero points. VizieR (published): the velocities published for the star, one star at a time: the surveys of Keck HIRES (to 2023), the APF, the Lick Hamilton and HARPS by SERVAL, found by the star’s position in their lists (kept on this machine), and the tables of the star’s papers (its bibliography in SIMBAD); a minute to a few for a well-studied star, then kept with the archives (see the VizieR box of the report). TESS: the light curve of every sector at MAST (SPOC 2-minute when there is one, else TESS-SPOC or QLP).',
     fr: 'Les archives à récupérer. DACE : les vitesses de HARPS, ESPRESSO, NIRPS, CORALIE..., les publiques, et avec votre clé (DACE_API_KEY ou ~/.dacerc) ce que votre compte peut voir. CARMENES DR1 : les vitesses du GTO de 2016 à 2020, environ 360 naines M du nord, corrigées des points zéro nocturnes. VizieR (publiées) : les vitesses publiées pour l’étoile, une étoile à la fois : les relevés de Keck HIRES (jusqu’en 2023), de l’APF, du Lick Hamilton et de HARPS par SERVAL, trouvés par la position de l’étoile dans leurs listes (gardées sur cette machine), et les tables des articles de l’étoile (sa bibliographie dans SIMBAD) ; une minute à quelques-unes pour une étoile très étudiée, puis gardées avec les archives (voir la case VizieR du rapport). TESS : la courbe de lumière de chaque secteur à MAST (SPOC 2 minutes s’il y en a une, sinon TESS-SPOC ou QLP).',
+  },
+  analysis_script: {
+    en: 'A kit to run the analysis yourself, and change it: a .tar.gz with analysis.py, a Python script that calls koloa’s routines step by step (the velocities read and put together, a fit of their noise, the FIP in two passes, the Keplerian orbits of the signals with their errors and minimum masses, the acceleration of the star, the folds, the FIP of the residuals), every step explained in its comments (in the language of this page), its figures saved as PDF; the files of velocities given; the archives gathered for the star (DACE, CARMENES DR1, VizieR, the TESS light curve); and star.yaml, what SIMBAD, the NASA Exoplanet Archive and TESS say of the star (star.json, the same, without PyYAML). Its settings are those of this card (the archives ticked, the instruments left out, the trend, the FIP), and it runs offline: python analysis.py in its folder. It may hold data that are not public (your files, DACE with a key).',
+    fr: 'Un paquet pour faire l’analyse vous-même, et la modifier : un .tar.gz avec analysis.py, un script Python qui appelle les routines de koloa étape par étape (les vitesses lues et mises ensemble, un ajustement de leur bruit, le FIP en deux passages, les orbites képlériennes des signaux avec leurs erreurs et leurs masses minimales, l’accélération de l’étoile, les repliements, le FIP des résidus), chaque étape expliquée dans ses commentaires (dans la langue de cette page), ses figures sauvegardées en PDF ; les fichiers de vitesses donnés ; les archives récupérées pour l’étoile (DACE, CARMENES DR1, VizieR, la courbe de lumière TESS) ; et star.yaml, ce que SIMBAD, la NASA Exoplanet Archive et TESS disent de l’étoile (star.json, le même, sans PyYAML). Ses réglages sont ceux de cette carte (les archives cochées, les instruments écartés, la tendance, le FIP), et il tourne sans réseau : python analysis.py dans son dossier. Il peut contenir des données non publiques (vos fichiers, DACE avec une clé).',
   },
   outdir: {
     en: 'Where the report goes: the PDF, the text report, the summary (JSON), every figure as its own PDF, and what was fetched for it (DACE, CARMENES, VizieR). Empty: reports/<star>, as the command line shows. A relative path starts from the folder koloa runs from.',

@@ -39,6 +39,7 @@ exactly. That is what makes the outlier-aware FIP affordable.
 | `koloa.analyze` | all of the above on one series, with a report and figures |
 | `koloa.detailed` | `detailed_analysis`: everything koloa can say about a star from one file, with its known planets (archive), more data (DACE, the velocities published with its planets on VizieR, and any given), the FIP in two passes, the known planets tested at their periods, a GP of the activity, the activity indicators and why each outlier is one, as a LaTeX/PDF report |
 | `koloa.literature` | published velocities: a VizieR .dat or csv file read (times to BJD - 2400000, km/s to m/s), and the tables of the papers of a star's planets found on VizieR from their bibcodes |
+| `koloa.kit` | the analysis kit of a star (the GUI's Analysis script): a commented script of the analysis calling koloa's routines, its settings from the page, with the velocities, the archives and the star (YAML) in one .tar.gz that runs offline |
 | `koloa.published` | the velocities published for one star on VizieR: the surveys (Keck HIRES to 2023, Teklu et al. 2025, and Tal-Or et al. 2019; the California Legacy Survey's HIRES, APF and Lick Hamilton, Rosenthal et al. 2021; the Lick Hamilton of Fischer et al. 2014; HARPS by SERVAL, Trifonov et al. 2020), the star found by its position in their lists of stars (kept on this machine), then the tables of the papers SIMBAD lists for it; each source its own offset, a spectrum published twice kept once |
 | `koloa.gpcheck` | the signals against a GP of the activity (its prior the rotation period of the archive): the likelihood each adds, periodograms whitened by the GP with false-alarm levels from simulations of its noise, and the whole series with the GP |
 | `koloa.latex` | the detailed analysis as a LaTeX report, compiled to PDF by pdflatex |
@@ -165,6 +166,17 @@ sliders on both axes, and under them a quick FIP of exactly what is shown
 overplotted, no GP, in the two passes of the report, about a minute), the
 window (a day, a synodic month, a year) dotted and the known planets
 dashed; its PDF button writes both, as they are shown.
+
+The report's card has an Analysis script button: a kit (a .tar.gz) to run
+the analysis yourself, offline, and change it. Its `analysis.py` calls
+koloa's routines step by step (the velocities read and put together, a fit
+of their noise, the FIP in two passes, the Keplerian orbits of the signals
+with their errors and minimum masses, the acceleration of the star, the
+folds, the FIP of the residuals), each step explained at length in its
+comments (in English or in French, the page's language), its figures saved
+as PDF; beside it, the files of velocities, the archives gathered for the
+star, and `star.yaml` (and `star.json`), what SIMBAD, the NASA Exoplanet
+Archive and TESS say of the star. Its settings are those of the card.
 
 From Python:
 
