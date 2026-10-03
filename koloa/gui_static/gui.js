@@ -300,6 +300,7 @@ async function drawVelocities(res, extra) {
     return { ...inst, zero: offsets[inst.name], rv: inst.rv.map((v) => Math.round((v + shift) * 1000) / 1000) };
   }) };
   if (aligned) note.textContent += ` \u00b7 ${t('zero_fit_note')}`;
+  seriesAligned = aligned;
   document.querySelectorAll('[data-zero]').forEach((b) => b.classList.toggle('on', b.dataset.zero === zeroMode));
   // the points by instrument, or by their BERV (on one scale for all; an
   //   instrument without it grey)
@@ -392,6 +393,8 @@ let rvRight = PLOT_MARGIN.r;   // the right margin of the series (its colour bar
 let lastRes = null;            // the velocities drawn, to draw them again
 let seriesColour = 'inst';     // the series by instrument or by BERV
 let zeroMode = 'fit';          // each instrument about its fitted offset or its median
+let seriesAligned = false;     // the series drawn about the fit of the quick look
+const MODEL_CYCLES = 60;       // the fitted model drawn when this few cycles are shown
 try { zeroMode = localStorage.getItem('koloa-zero') || 'fit'; } catch (err) { /* no storage */ }
 
 // the series drawn again (its zero points, its colours), its ranges kept
@@ -1079,20 +1082,46 @@ function modelAt(f, name, tt) {
 let modelTimer = null;
 function scheduleModel() {
   clearTimeout(modelTimer);
-  if ($('foldoverlay').checked) modelTimer = setTimeout(showModel, 150);
+  if ($('foldoverlay').checked || seriesAligned) modelTimer = setTimeout(showModel, 150);
 }
+// the model of the fit of the quick look (the trend and the signals it
+//   fitted), when the series is drawn about it: over the time shown
+function fitModelTrace(xr) {
+  const tm = quick && quick.result && quick.result.trend_model;
+  if (!seriesAligned || !tm || !(tm.signals || []).length || !lastRV || !lastRV.length) return null;
+  const times = lastRV.flatMap((inst) => inst.time);
+  let lo = Math.min(...times), hi = Math.max(...times);
+  if (xr) { lo = Math.max(lo, xr[0]); hi = Math.min(hi, xr[1]); }
+  if (!(hi > lo)) return null;
+  // only where its signals are resolved (a few tens of cycles shown at
+  //   most): beyond, a band that would hide the points, the trend alone
+  const shortest = Math.min(...tm.signals.map((s) => s.period));
+  if ((hi - lo) / shortest > MODEL_CYCLES) return null;
+  const n = Math.round(Math.min(4000, Math.max(300, 30 * (hi - lo) / shortest)));
+  const x = [], y = [];
+  for (let k = 0; k < n; k++) {
+    const tt = lo + (hi - lo) * k / (n - 1), sp = (tt - tm.tref) / tm.tscale;
+    x.push(tt);
+    y.push(tm.coefs.reduce((acc, c, d) => acc + c * sp ** (d + 1), 0)
+      + tm.signals.reduce((acc, s) => acc + keplerRV(tt, s, s.period), 0));
+  }
+  return { x, y, type: 'scatter', mode: 'lines', uid: 'model-fit', name: t('fitted_model'), hoverinfo: 'skip',
+    line: { color: '#a8b4ca', width: 1 }, opacity: 0.7 };
+}
+
 function showModel() {
   const div = $('rvplot');
   if (!window.Plotly || !div.data) return;
   const old = div.data.map((d, k) => (String(d.uid || '').startsWith('model') ? k : -1)).filter((k) => k >= 0);
   if (old.length) Plotly.deleteTraces(div, old);
-  const f = $('foldoverlay').checked ? currentFold() : null;
-  if (!f || !f.model) return;
   // over the time shown (drawn again on a zoom: the sinusoid resolved)
   const xr = view && view.x ? view.x : null;
+  const fitLine = fitModelTrace(xr);
+  const f = $('foldoverlay').checked ? currentFold() : null;
+  if (!f || !f.model) { if (fitLine) Plotly.addTraces(div, [fitLine]); return; }
   const draws = f.draws || [];
   const pub = f.published && f.published.model;
-  const traces = [];
+  const traces = fitLine ? [fitLine] : [];
   let legend = true;
   (lastRV || []).forEach((inst, i) => {
     if (!(inst.name in f.model.offsets) || inst.zero === undefined) return;

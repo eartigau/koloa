@@ -699,3 +699,36 @@ def test_a_batch_fip(tmp_path, monkeypatch):
     assert state['status'] == 'stopped'
     assert all(item['status'] in ('stopped', 'failed')
                for item in state['items'])
+
+
+def test_the_zero_of_an_instrument_on_the_series():
+    """an instrument with a few discrepant nights and a few nights of many
+    exposures: its fitted offset lies between the two (the fit weighs
+    nights), its zero on the plot puts its exposures about the model"""
+    import numpy as np
+    from koloa.data import RVData
+    from koloa.fit import RVModel
+    rng = np.random.default_rng(31)
+    ta = np.sort(rng.uniform(60000, 61000, 60))
+    tb = np.concatenate([60300.1 + np.arange(4),
+                         np.concatenate([60700.0 + night + np.linspace(
+                             0, 0.25, 30) for night in range(4)])])
+    slope = 3.0 / 365.25
+    rva = 10.0 + slope * (ta - 60500) + rng.normal(0, 1.0, len(ta))
+    rvb = -20.0 + slope * (tb - 60500) + rng.normal(0, 1.0, len(tb))
+    rvb[:4] -= 15.0   # four discrepant nights
+    data = RVData(np.concatenate([ta, tb]), np.concatenate([rva, rvb]),
+                  np.ones(len(ta) + len(tb)),
+                  inst=np.array(['A'] * len(ta) + ['B'] * len(tb)))
+    nights = data.nightly()
+    fit = RVModel(nights, [], likelihood='mixture', unit='both', trend=1,
+                  seq_jitter='instrument').fit(nstart=2, quiet=True)
+    got = gui._levels(fit, data)
+    model = got['trend_model']
+    sel = data.inst == 'B'
+    drift = model['coefs'][0] * (data.time[sel] - model['tref']) / \
+        model['tscale']
+    about_zero = np.median(data.rv[sel] - got['offsets']['B'] - drift)
+    about_fit = np.median(data.rv[sel] - got['fit_offsets']['B'] - drift)
+    assert abs(about_zero) < 0.5 < abs(about_fit)
+    assert got['trend_model']['signals'] == []

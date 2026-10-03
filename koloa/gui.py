@@ -1058,19 +1058,54 @@ def trend_order(opts: Dict[str, Any]) -> int:
     return 0 if opts.get('trend') is False else 1
 
 
-def _levels(fit) -> Dict[str, Any]:
-    """the offset of each instrument and the trend of the fit of the
-    quick look: the series drawn about them shows one trend across the
-    instruments, not each about its own median"""
+def _levels(fit, data=None) -> Dict[str, Any]:
+    """
+    The zero of each instrument on the plot of the series, and the trend
+    of the fit of the quick look: the series drawn about them shows one
+    trend across the instruments, not each about its own median
+
+    The fit weighs nights (its nightly means, each with the jitter of its
+    instrument), the plot shows exposures: an instrument with a few
+    discrepant nights and a few nights of many exposures has its fitted
+    offset between the two, its exposures off the trend. Its zero is its
+    fitted offset moved by the median of the residuals of its exposures to
+    the fitted model (the trend and the signals): its exposures about the
+    model.
+
+    :param fit: FitResult, the fit of the quick look
+    :param data: RVData or None, the exposures (the series shown)
+
+    :return: dict, offsets (the zeros of the plot), fit_offsets (as
+             fitted), trend_model (tref, tscale, coefs)
+    """
     model = fit.model
     offsets = {str(inst): float(fit.theta[model.index[f'offset_{inst}']])
                for inst in model.data.instruments
                if f'offset_{inst}' in model.index}
     trend = [float(fit.theta[model.index[f'trend_{deg}']])
              for deg in range(1, model.trend + 1)]
-    return dict(offsets=offsets, trend_model=dict(
-        tref=float(model.tref), tscale=float(max(model.data.baseline, 1e-9)),
-        coefs=trend))
+    tscale = float(max(model.data.baseline, 1e-9))
+    zeros = dict(offsets)
+    if data is not None:
+        span = (data.time - model.tref) / tscale
+        rest = sum((val * span ** (deg + 1) for deg, val in enumerate(trend)),
+                   np.zeros(data.n))
+        for ip in range(len(model.planets)):
+            rest = rest + model.planet_rv(fit.theta, ip, data.time)
+        for inst in data.instruments:
+            sel = data.inst == inst
+            if str(inst) in offsets and np.any(sel):
+                zeros[str(inst)] = offsets[str(inst)] + float(np.median(
+                    data.rv[sel] - offsets[str(inst)] - rest[sel]))
+    # the signals of the fit (its second pass: those found and the known
+    #   planets), for the model drawn with the trend
+    signals = []
+    for ip in range(len(model.planets)):
+        per, tperi, ecc, omega, amp = model.orbit(fit.theta, ip)
+        signals.append(dict(kind='kepler', period=float(per), tp=float(tperi),
+                            e=float(ecc), omega=float(omega), K=float(amp)))
+    return dict(offsets=zeros, fit_offsets=offsets, trend_model=dict(
+        tref=float(model.tref), tscale=tscale, coefs=trend, signals=signals))
 
 
 def _quick_acceleration(fit, trend: int) -> Optional[Dict[str, Any]]:
@@ -1210,7 +1245,7 @@ def _run_quick(qid: str, data, target: str, trend: int = 1,
                 subtracted=job.get('subtracted') or [],
                 acceleration=_quick_acceleration(fit if pers else noise,
                                                  trend),
-                **_levels(fit if pers else noise))
+                **_levels(fit if pers else noise, data))
             # the FIP of each instrument on its own (its jitter sampled in
             #   the FIP, no inflation needed), when there are several
             insts = list(nights.instruments)
@@ -1788,12 +1823,26 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
     ax.axhline(0, color='0.6', lw=0.6, ls=':')
     # the trend the quick look fitted, the instruments about their offsets
     trend_model = (quick or {}).get('trend_model') or {}
-    if offsets and trend_model.get('coefs'):
-        grid = np.linspace(data.time.min(), data.time.max(), 400)
+    if offsets and (trend_model.get('coefs') or trend_model.get('signals')):
+        from koloa import kepler
+        lo, hi = xr if xr else (data.time.min(), data.time.max())
+        shortest = min([sig['period'] for sig in
+                        trend_model.get('signals') or []] + [hi - lo])
+        grid = np.linspace(lo, hi, int(min(20000, max(
+            400, 30 * (hi - lo) / max(shortest, 1e-3)))))
         span = (grid - trend_model['tref']) / trend_model['tscale']
-        ax.plot(grid, sum(val * span ** (deg + 1) for deg, val in
-                          enumerate(trend_model['coefs'])),
-                color='0.35', lw=0.8, ls='--', zorder=1)
+        drift = sum((val * span ** (deg + 1) for deg, val in
+                     enumerate(trend_model.get('coefs') or [])),
+                    np.zeros(len(grid)))
+        if trend_model.get('coefs'):
+            ax.plot(grid, drift, color='0.35', lw=0.8, ls='--', zorder=1)
+        # the model with its signals, where they are resolved (a few tens
+        #   of cycles at most: beyond, a band that would hide the points)
+        if trend_model.get('signals') and (hi - lo) / shortest <= 60:
+            full = drift + sum(kepler.rv_keplerian(
+                grid, sig['period'], sig['tp'], sig['e'], sig['omega'],
+                sig['K']) for sig in trend_model['signals'])
+            ax.plot(grid, full, color='0.55', lw=0.5, zorder=1)
     # the folds as the page shows them: their sinusoid, or their Keplerian
     #   orbit when it was fitted
     if quick and fold_model == 'kepler':
