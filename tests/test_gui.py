@@ -516,6 +516,18 @@ def test_a_fold_asked_its_keplerian_and_the_residuals(tmp_path, monkeypatch):
         got['curve']['lo'], got['curve']['rv'], got['curve']['hi']))
     assert len(got['draws']) == gui.NDRAW and len(orbit['draws']) > 30
     assert len(orbit['curve']['lo']) == len(orbit['curve']['rv'])
+    # the envelope of the orbit: about the best one (the spread of draws
+    #   of its full covariance), the best one always in it
+    assert all(lo <= mid + 1e-9 <= hi + 2e-9 for lo, mid, hi in zip(
+        orbit['curve']['lo'], orbit['curve']['rv'], orbit['curve']['hi']))
+    grid = np.linspace(sim.time.min(), sim.time.max(), 500)
+    inst = str(sim.instruments[0])
+    best = gui.model_at(orbit, inst, grid, orbit['period'])
+    many = np.array([gui.model_at(dict(model=draw), inst, grid,
+                                  orbit['period']) for draw in orbit['draws']])
+    low, high = gui.envelope(best, many)
+    assert np.all((low <= best + 1e-9) & (best <= high + 1e-9))
+    assert 0 < np.median(high - low) < 5
     # a known planet: at its published period, whatever the FIP says, with
     #   its published orbit
     gui.QUICKS[qid]['result']['known'] = [dict(

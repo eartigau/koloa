@@ -1101,23 +1101,29 @@ function showModel() {
     lo -= pad; hi += pad;
     if (xr) { lo = Math.max(lo, xr[0]); hi = Math.min(hi, xr[1]); }
     if (!(hi > lo)) return;
-    const n = Math.round(Math.min(4000, Math.max(300, 30 * (hi - lo) / f.period)));
+    const n = Math.round(Math.min(3000, Math.max(300, 30 * (hi - lo) / f.period)));
     const x = [], y = [], ylo = [], yhi = [], yp = [];
     for (let k = 0; k < n; k++) {
       const tt = lo + (hi - lo) * k / (n - 1);
+      const best = modelAt(f, inst.name, tt);
       x.push(tt);
-      y.push(modelAt(f, inst.name, tt) - inst.zero);
+      y.push(best - inst.zero);
+      // the 1-sigma envelope: the spread of the draws (the full covariance
+      //   of the fit: orbit, offsets and trend together) about the best
+      //   model, not their median (the draws of a sharp eccentric peak
+      //   have their peaks at different times)
       if (draws.length > 5) {
         const vals = draws.map((d) => modelAt({ model: d, period: d.period || f.period }, inst.name, tt)).sort((a, b) => a - b);
-        ylo.push(percentile(vals, 15.87) - inst.zero);
-        yhi.push(percentile(vals, 84.13) - inst.zero);
+        const mid = percentile(vals, 50);
+        ylo.push(best - (mid - percentile(vals, 15.87)) - inst.zero);
+        yhi.push(best + (percentile(vals, 84.13) - mid) - inst.zero);
       }
       if (pub) yp.push(modelAt({ model: pub, period: pub.period }, inst.name, tt) - inst.zero);
     }
     if (ylo.length) {
       traces.push({ x, y: ylo, type: 'scatter', mode: 'lines', uid: `model-lo-${inst.name}`, line: { width: 0 }, showlegend: false, hoverinfo: 'skip' },
         { x, y: yhi, type: 'scatter', mode: 'lines', uid: `model-hi-${inst.name}`, line: { width: 0 }, fill: 'tonexty',
-          fillcolor: 'rgba(215,222,235,0.16)', showlegend: false, hoverinfo: 'skip' });
+          fillcolor: 'rgba(215,222,235,0.22)', showlegend: false, hoverinfo: 'skip' });
     }
     traces.push({ x, y, type: 'scatter', mode: 'lines', uid: `model-${inst.name}`, name: `#${f.id} \u00b7 ${f.period.toFixed(4)} d`,
       legendgroup: 'model', showlegend: legend, line: { color: COLOURS[i % 8], width: 1.2 }, opacity: 0.9, hoverinfo: 'skip' });

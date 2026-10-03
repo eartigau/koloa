@@ -42,7 +42,7 @@ import urllib.parse
 import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -902,7 +902,27 @@ def _distinct_peaks(res, width: float, nmax: int = 8
 
 
 #: draws of a fold's solution kept for its 1-sigma envelope on the series
-NDRAW = 60
+#: (from the full covariance of its fit: the orbit, the offsets and the
+#: trend together)
+NDRAW = 200
+
+
+def envelope(best: np.ndarray, many: np.ndarray) -> Tuple[np.ndarray,
+                                                            np.ndarray]:
+    """
+    The 1-sigma envelope of a model from draws of its parameters (their
+    full covariance): the spread of the draws at each point, its 16th and
+    84th percentiles about their median, set about the best model (a
+    sharp, eccentric orbit's draws, their peaks at different times, have a
+    median below its peak: the envelope is the spread, not that median)
+
+    :param best: np.ndarray, the best model
+    :param many: np.ndarray, (ndraw, len(best)), the model of each draw
+
+    :return: tuple, the low and high sides of the envelope
+    """
+    low, mid, high = np.percentile(many, [15.87, 50.0, 84.13], axis=0)
+    return best - (mid - low), best + (high - mid)
 #: the names of the BERV column of a series (LBL: BERV; DACE: cal_berv)
 BERV_NAMES = ('BERV', 'berv', 'cal_berv')
 
@@ -1632,7 +1652,7 @@ def fold_kepler(data, period: float, trend: int = 1,
     best = kepler.rv_keplerian(times, per, tperi, ecc, omega, amp)
     if orbits is not None:
         many = np.array([kepler.rv_keplerian(times, *orb) for orb in orbits])
-        low, high = np.percentile(many, [15.87, 84.13], axis=0)
+        low, high = envelope(best, many)
     else:
         low = high = best
     out = dict(kind='kepler', period=float(per), P_err=errs['P'],
@@ -1800,7 +1820,7 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
                     for draw in shown.get('draws') or []]
             many = np.array([val for val in many if val is not None])
             if len(many) > 5:
-                low, high = np.percentile(many, [15.87, 84.13], axis=0)
+                low, high = envelope(mod, many)
                 ax.fill_between(grid, low - zero, high - zero, lw=0,
                                 color='0.85', zorder=0)
             ax.plot(grid, mod - zero, lw=0.6, alpha=0.8, color=colour[inst],
