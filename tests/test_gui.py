@@ -391,6 +391,9 @@ def test_the_quick_look_measures_the_acceleration(tmp_path, monkeypatch):
         out[curv] = state['result']
     acc = out[True]['acceleration']
     assert out[True]['settings']['trend'] == 2
+    # the offset of each instrument and the trend, for the series
+    assert set(out[True]['offsets']) == {'inst'}
+    assert len(out[True]['trend_model']['coefs']) == 2
     # d2v/dt2 = 2 x 0.5 m/s/yr^2; dv/dt = 3 m/s/yr at the middle
     assert abs(acc['jerk'][0] - 1.0) < 4 * acc['jerk'][1]
     assert abs(acc['accel'][0] - (3.0 + 1.0 * (acc['tref'] - sim.time.mean())

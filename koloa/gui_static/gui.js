@@ -289,6 +289,18 @@ async function drawVelocities(res, extra) {
     return false;
   }
   lastRes = { res, extra };
+  // each instrument about the offset the quick look fitted (one trend
+  //   across the instruments), or about its median
+  const offsets = zeroMode === 'fit' && quick && quick.result && quick.result.offsets ? quick.result.offsets : null;
+  let aligned = false;
+  res = { ...res, instruments: res.instruments.map((inst) => {
+    if (inst.median === undefined || !offsets || offsets[inst.name] === undefined) return { ...inst, zero: inst.median };
+    aligned = true;
+    const shift = inst.median - offsets[inst.name];
+    return { ...inst, zero: offsets[inst.name], rv: inst.rv.map((v) => Math.round((v + shift) * 1000) / 1000) };
+  }) };
+  if (aligned) note.textContent += ` \u00b7 ${t('zero_fit_note')}`;
+  document.querySelectorAll('[data-zero]').forEach((b) => b.classList.toggle('on', b.dataset.zero === zeroMode));
   // the points by instrument, or by their BERV (on one scale for all; an
   //   instrument without it grey)
   const hasBerv = res.instruments.some((inst) => inst.berv);
@@ -319,6 +331,18 @@ async function drawVelocities(res, extra) {
   traces.push({ x: [Math.min(...times), Math.max(...times)], y: [null, null], xaxis: 'x2', type: 'scatter', mode: 'markers',
     showlegend: false, hoverinfo: 'skip', marker: { opacity: 0 } });
   traces.push(offscaleTrace());
+  // the trend the quick look fitted, dashed, when the instruments are about
+  //   its offsets
+  const tm = quick && quick.result && quick.result.trend_model;
+  if (aligned && tm && tm.coefs && tm.coefs.length) {
+    const lo = Math.min(...times), hi = Math.max(...times), xs = [], ys = [];
+    for (let k = 0; k <= 300; k++) {
+      const tt = lo + (hi - lo) * k / 300, sp = (tt - tm.tref) / tm.tscale;
+      xs.push(tt); ys.push(tm.coefs.reduce((acc, c, d) => acc + c * sp ** (d + 1), 0));
+    }
+    traces.push({ x: xs, y: ys, type: 'scatter', mode: 'lines', uid: 'trendline', name: t('fitted_trend'), hoverinfo: 'skip',
+      line: { color: '#a8b4ca', width: 1.2, dash: 'dash' } });
+  }
   $('plotcard').classList.add('on');
   div.classList.add('on');
   const axis = { gridcolor: 'rgba(200,220,255,0.10)', zerolinecolor: 'rgba(200,220,255,0.25)', color: '#7a8597' };
@@ -367,6 +391,19 @@ const PLOT_MARGIN = { l: 62, r: 12, t: 60, b: 48 };
 let rvRight = PLOT_MARGIN.r;   // the right margin of the series (its colour bar)
 let lastRes = null;            // the velocities drawn, to draw them again
 let seriesColour = 'inst';     // the series by instrument or by BERV
+let zeroMode = 'fit';          // each instrument about its fitted offset or its median
+try { zeroMode = localStorage.getItem('koloa-zero') || 'fit'; } catch (err) { /* no storage */ }
+
+// the series drawn again (its zero points, its colours), its ranges kept
+async function redrawSeries() {
+  if (!lastRes) return;
+  const keep = view ? { x: view.x.slice(), y: view.y.slice() } : null;
+  const zeroBefore = (lastRV || []).map((inst) => inst.zero);
+  await drawVelocities(lastRes.res, lastRes.extra);
+  // the y range moved with the zero points: kept only when they did not
+  const same = zeroBefore.length === (lastRV || []).length && (lastRV || []).every((inst, i) => inst.zero === zeroBefore[i]);
+  if (keep && view) { view.x = keep.x; if (same) view.y = keep.y; applyView(); }
+}
 try { seriesColour = localStorage.getItem('koloa-seriescolour') || 'inst'; } catch (err) { /* no storage */ }
 const STEPS = 1000;
 let view = null;   // x and y shown, their domains, the scale of the y slider
@@ -617,7 +654,12 @@ async function pollQuick(id) {
   // the joint FIP as soon as it is there, each instrument's as it comes
   const each = state.each || [];
   const drawn = `${state.result ? 1 : 0}/${each.length}`;
-  if (state.result && quick.drawn !== drawn) { drawFip(state.result, each); quick.drawn = drawn; }
+  if (state.result && quick.drawn !== drawn) {
+    const first = !quick.drawn;
+    drawFip(state.result, each);
+    quick.drawn = drawn;
+    if (first && zeroMode === 'fit' && state.result.offsets) redrawSeries();
+  }
   $('fipstatus').innerHTML = (state.result ? fipSummary(state.result, state.elapsed) : '') + quickRunning(state)
     + (state.status === 'stopped' ? `<p class="hint"><span class="bad">\u25a0</span> ${esc(t('fip_stopped'))} \u00b7 ${clock(state.elapsed)} `
       + `<button type="button" class="small startfip">${esc(t('start_fip'))}</button></p>` : '');
@@ -1053,7 +1095,7 @@ function showModel() {
   const traces = [];
   let legend = true;
   (lastRV || []).forEach((inst, i) => {
-    if (!(inst.name in f.model.offsets) || inst.median === undefined) return;
+    if (!(inst.name in f.model.offsets) || inst.zero === undefined) return;
     let lo = Math.min(...inst.time), hi = Math.max(...inst.time);
     const pad = 0.01 * (hi - lo + 1);
     lo -= pad; hi += pad;
@@ -1064,13 +1106,13 @@ function showModel() {
     for (let k = 0; k < n; k++) {
       const tt = lo + (hi - lo) * k / (n - 1);
       x.push(tt);
-      y.push(modelAt(f, inst.name, tt) - inst.median);
+      y.push(modelAt(f, inst.name, tt) - inst.zero);
       if (draws.length > 5) {
         const vals = draws.map((d) => modelAt({ model: d, period: d.period || f.period }, inst.name, tt)).sort((a, b) => a - b);
-        ylo.push(percentile(vals, 15.87) - inst.median);
-        yhi.push(percentile(vals, 84.13) - inst.median);
+        ylo.push(percentile(vals, 15.87) - inst.zero);
+        yhi.push(percentile(vals, 84.13) - inst.zero);
       }
-      if (pub) yp.push(modelAt({ model: pub, period: pub.period }, inst.name, tt) - inst.median);
+      if (pub) yp.push(modelAt({ model: pub, period: pub.period }, inst.name, tt) - inst.zero);
     }
     if (ylo.length) {
       traces.push({ x, y: ylo, type: 'scatter', mode: 'lines', uid: `model-lo-${inst.name}`, line: { width: 0 }, showlegend: false, hoverinfo: 'skip' },
@@ -1121,7 +1163,7 @@ async function quicklookPdf() {
         quick: quick && quick.result ? quick.id : '', command: $('cmd-detailed').textContent,
         fold_colour: foldColour, overlay: $('foldoverlay').checked && foldShown !== null ? foldShown : null,
         fold_model: foldModel, series_colour: seriesColour, fip_view: fipView,
-        mstar: +$('mstar').value || null, mstar_err: +$('mstar_err').value || 0 }) });
+        mstar: +$('mstar').value || null, mstar_err: +$('mstar_err').value || 0, series_zero: zeroMode }) });
     if (!resp.ok) throw new Error((await resp.json()).error || resp.statusText);
     const link = document.createElement('a');
     link.href = URL.createObjectURL(await resp.blob());
@@ -1285,6 +1327,7 @@ async function recallResult(id) {
   drawFip(quick.result, quick.each || []);
   quick.drawn = `1/${(quick.each || []).length}`;
   $('fipstatus').innerHTML = fipSummary(quick.result, quick.elapsed);
+  if (zeroMode === 'fit' && quick.result.offsets) await redrawSeries();
   if (pview && page.periods) {
     pview.p = page.periods;
     Plotly.relayout('fipplot', { 'xaxis.range': [Math.log10(pview.p[0]), Math.log10(pview.p[1])] });
@@ -1346,10 +1389,15 @@ document.addEventListener('click', async (e) => {
   seriesColour = b.dataset.scol;
   try { localStorage.setItem('koloa-seriescolour', seriesColour); } catch (err) { /* no storage */ }
   document.querySelectorAll('[data-scol]').forEach((x) => x.classList.toggle('on', x.dataset.scol === seriesColour));
-  if (!lastRes) return;
-  const keep = view ? { x: view.x.slice(), y: view.y.slice() } : null;
-  await drawVelocities(lastRes.res, lastRes.extra);
-  if (keep && view) { view.x = keep.x; view.y = keep.y; applyView(); }
+  redrawSeries();
+});
+// each instrument about its fitted offset, or about its median
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-zero]');
+  if (!b) return;
+  zeroMode = b.dataset.zero;
+  try { localStorage.setItem('koloa-zero', zeroMode); } catch (err) { /* no storage */ }
+  redrawSeries();
 });
 // the quick FIP asked for, or stopped (while it waits for its turn too)
 document.addEventListener('click', (e) => {

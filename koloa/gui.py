@@ -988,6 +988,21 @@ def trend_order(opts: Dict[str, Any]) -> int:
     return 0 if opts.get('trend') is False else 1
 
 
+def _levels(fit) -> Dict[str, Any]:
+    """the offset of each instrument and the trend of the fit of the
+    quick look: the series drawn about them shows one trend across the
+    instruments, not each about its own median"""
+    model = fit.model
+    offsets = {str(inst): float(fit.theta[model.index[f'offset_{inst}']])
+               for inst in model.data.instruments
+               if f'offset_{inst}' in model.index}
+    trend = [float(fit.theta[model.index[f'trend_{deg}']])
+             for deg in range(1, model.trend + 1)]
+    return dict(offsets=offsets, trend_model=dict(
+        tref=float(model.tref), tscale=float(max(model.data.baseline, 1e-9)),
+        coefs=trend))
+
+
 def _quick_acceleration(fit, trend: int) -> Optional[Dict[str, Any]]:
     """the acceleration of the star (dv/dt) the fit of the quick look
     measured, and its change when fitted: (value, minus, plus) from the
@@ -1123,7 +1138,8 @@ def _run_quick(qid: str, data, target: str, trend: int = 1):
                 settings=dict(QUICK, gp='none', trend=trend),
                 subtracted=job.get('subtracted') or [],
                 acceleration=_quick_acceleration(fit if pers else noise,
-                                                 trend))
+                                                 trend),
+                **_levels(fit if pers else noise))
             # the FIP of each instrument on its own (its jitter sampled in
             #   the FIP, no inflation needed), when there are several
             insts = list(nights.instruments)
@@ -1517,7 +1533,7 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
                        overlay: Optional[int] = None,
                        fold_model: str = 'sine',
                        series_colour: str = 'inst',
-                       fip_view: str = 'each'):
+                       fip_view: str = 'each', series_zero: str = 'fit'):
     """the figures of the quick look: the velocities shown (with the
     solution of a fold on them when asked), the quick FIP with its peaks
     named, the folds at them (coloured by instrument, date or BERV)"""
@@ -1538,10 +1554,16 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
     if berv is not None and np.any(np.isfinite(berv)):
         top = max(float(np.nanmax(np.abs(berv))), 1e-3)
         bnorm = matplotlib.colors.Normalize(-top, top)
+    # each instrument about the offset the quick look fitted (one trend
+    #   across them), or about its median
+    offsets = ((quick or {}).get('offsets') or {}) if series_zero == 'fit' \
+        else {}
+    zeros = {inst: offsets.get(str(inst), np.median(data.rv[data.inst == inst]))
+             for inst in data.instruments}
     for inst in data.instruments:
         sel = data.inst == inst
         label = f'{inst} ({source.get(inst, "")}, {int(sel.sum())})'
-        rel = data.rv[sel] - np.median(data.rv[sel])
+        rel = data.rv[sel] - zeros[inst]
         if bnorm is None:
             ax.errorbar(data.time[sel], rel, data.err[sel], fmt=marker[inst],
                         ms=3.5, lw=0.6, color=colour[inst], label=label)
@@ -1562,6 +1584,14 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
                            ax=ax, pad=0.01, fraction=0.03)
         bar.set_label('BERV [km s$^{-1}$]')
     ax.axhline(0, color='0.6', lw=0.6, ls=':')
+    # the trend the quick look fitted, the instruments about their offsets
+    trend_model = (quick or {}).get('trend_model') or {}
+    if offsets and trend_model.get('coefs'):
+        grid = np.linspace(data.time.min(), data.time.max(), 400)
+        span = (grid - trend_model['tref']) / trend_model['tscale']
+        ax.plot(grid, sum(val * span ** (deg + 1) for deg, val in
+                          enumerate(trend_model['coefs'])),
+                color='0.35', lw=0.8, ls='--', zorder=1)
     # the folds as the page shows them: their sinusoid, or their Keplerian
     #   orbit when it was fitted
     if quick and fold_model == 'kepler':
@@ -1581,7 +1611,7 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
             mod = model_at(shown, str(inst), grid, shown['period'])
             if mod is None:
                 continue
-            zero = np.median(data.rv[sel])
+            zero = zeros[inst]
             # its 1-sigma envelope, from the draws of the solution
             many = [model_at(dict(model=draw), str(inst), grid,
                              shown['period'])
@@ -1605,8 +1635,7 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
         ax.set_xlim(*xr)
     if yr:
         ax.set_ylim(*yr)
-        rel = np.concatenate([data.rv[data.inst == inst]
-                              - np.median(data.rv[data.inst == inst])
+        rel = np.concatenate([data.rv[data.inst == inst] - zeros[inst]
                               for inst in data.instruments])
         times = np.concatenate([data.time[data.inst == inst]
                                 for inst in data.instruments])
@@ -1818,8 +1847,10 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
            f'the velocities shown, the quick FIP of what is shown (no GP), '
            f'and the folds at its strongest peaks.\n']
     captions = dict(
-        series='The velocities shown, each instrument about its median, in '
-               'the ranges of the page (the calendar dates on top), with the '
+        series='The velocities shown, each instrument about the offset the '
+               'quick look fitted (one trend across them, dashed) or about '
+               'its median, as on the page, in its ranges (the calendar '
+               'dates on top), with the '
                'solution of a fold when the page shows it; a red triangle '
                'at an edge points to a velocity beyond the range.',
         fip='The quick FIP of the series shown: of the period or any of its '
@@ -2081,7 +2112,7 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
                   overlay: Optional[int] = None,
                   fold_model: str = 'sine',
                   series_colour: str = 'inst',
-                  fip_view: str = 'each') -> bytes:
+                  fip_view: str = 'each', series_zero: str = 'fit') -> bytes:
     """
     The quick look as a PDF, a LaTeX document: the velocities shown (the
     ranges of the page), the quick FIP with its peaks named, the folds at
@@ -2105,7 +2136,7 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
     title = (opts.get('target') or '').strip() or 'the series'
     figs = _quicklook_figures(data, source, quick, xr, yr, pr, title, each,
                               fold_colour, overlay, fold_model,
-                              series_colour, fip_view)
+                              series_colour, fip_view, series_zero)
     tmp = tempfile.mkdtemp(prefix='koloa_quicklook_')
     try:
         for name, fig in figs:
@@ -2554,7 +2585,8 @@ class Handler(BaseHTTPRequestHandler):
                                     body.get('overlay'),
                                     body.get('fold_model') or 'sine',
                                     body.get('series_colour') or 'inst',
-                                    body.get('fip_view') or 'each')
+                                    body.get('fip_view') or 'each',
+                                    body.get('series_zero') or 'fit')
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/pdf')
                 self.send_header('Content-Length', str(len(pdf)))
