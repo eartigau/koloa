@@ -562,6 +562,10 @@ QUICK_MIN_NIGHTS = 10
 QUICKS: Dict[str, Dict[str, Any]] = {}
 #: one quick FIP at a time (they share the progress hook of koloa.fip)
 _QUICK_LOCK = threading.Lock()
+#: what each quick FIP ran on, for the folds asked later: its nightly means,
+#: the probability of each night to be valid, the order of its trend, the
+#: FIP itself
+_QUICK_DATA: Dict[str, Dict[str, Any]] = {}
 
 
 def selection(opts: Dict[str, Any]):
@@ -726,10 +730,12 @@ def fold(data, period: float, valid: Optional[np.ndarray] = None,
                                       4).tolist()), instruments=[],
                # v(t) = offset + sum_k trend_k ((t - tref) / yr)^k
                #        + cos cos(2 pi (t - tref) / P) + sin sin(...)
-               model=dict(tref=tref, offsets={str(inst): float(coef[it])
-                                              for it, inst in enumerate(insts)},
+               model=dict(kind='sine', period=float(period), tref=tref,
+                          offsets={str(inst): float(coef[it])
+                                   for it, inst in enumerate(insts)},
                           trend=[float(val) for val in
                                  coef[len(insts):len(insts) + trend]],
+                          ttrend=tref, tscale=365.25,
                           cos=float(acos), sin=float(asin)))
     berv = _berv(data)
     for inst in insts:
@@ -842,6 +848,8 @@ def _run_quick(qid: str, data, target: str, trend: int = 1):
             valid = res.reliability
             if valid is not None and len(valid) != nights.n:
                 valid = None
+            _QUICK_DATA[qid] = dict(nights=nights, valid=valid, trend=trend,
+                                    res=res)
             folds = [dict(fold(nights, pk['period'], valid, trend),
                           id=pk['id'])
                      for pk in named]
@@ -859,6 +867,7 @@ def _run_quick(qid: str, data, target: str, trend: int = 1):
                 inflation={str(key): float(val) for key, val in
                            info.get('inflation', {}).items()},
                 settings=dict(QUICK, gp='none', trend=trend),
+                subtracted=job.get('subtracted') or [],
                 acceleration=_quick_acceleration(fit if pers else noise,
                                                  trend))
             # the FIP of each instrument on its own (its jitter sampled in
@@ -898,14 +907,93 @@ def _run_quick(qid: str, data, target: str, trend: int = 1):
             job['end'] = time.time()
 
 
+def subtracted(data, opts: Dict[str, Any]):
+    """the series without the signals the page subtracted (the solution
+    of a fold each: its sinusoid or Keplerian orbit, not its offsets and
+    trend, which the FIP fits again)"""
+    for mod in opts.get('subtract') or []:
+        data.rv = data.rv - signal_at(mod, data.time)
+    return data
+
+
+def _quick_series(qid: str, opts: Dict[str, Any]) -> Dict[str, Any]:
+    """what a quick FIP ran on (or, for one recalled, the series of the
+    page again, without the probabilities of its nights)"""
+    if qid not in _QUICK_DATA:
+        data, _, _ = selection(opts)
+        if data is None:
+            raise ValueError('no velocities to fold')
+        _QUICK_DATA[qid] = dict(nights=subtracted(data, opts).nightly(),
+                                valid=None, trend=trend_order(opts), res=None)
+    return _QUICK_DATA[qid]
+
+
+def _snap(res, period: float, baseline: float) -> float:
+    """the period of the deepest dip of the FIP of the period alone near
+    a period clicked, within a peak's width in frequency (1 / the
+    baseline) each side: a click anywhere on a peak folds at its top"""
+    freq = np.asarray(res.freq)
+    near = np.abs(freq - 1.0 / period) <= 1.0 / max(baseline, 1.0)
+    if not np.any(near):
+        return period
+    idx = np.flatnonzero(near)
+    return float(1.0 / freq[idx[np.argmin(np.asarray(res.fip)[idx])]])
+
+
+def fold_request(qid: str, opts: Dict[str, Any], period: Optional[float] = None,
+                 fid: Optional[int] = None, kind: str = 'sine',
+                 snap: bool = False) -> Dict[str, Any]:
+    """
+    A fold the page asks for: at a period of its own (clicked on the FIP,
+    then moved to the dip nearest; or typed, as it is), or the Keplerian
+    orbit of a fold already there; kept with the quick FIP (its PDF has it)
+
+    :return: dict, fold (with its Keplerian, when asked)
+    """
+    job = QUICKS.get(qid)
+    if not job or not job.get('result'):
+        raise ValueError('no quick FIP to fold')
+    series = _quick_series(qid, opts)
+    nights = series['nights']
+    folds = job['result'].setdefault('folds', [])
+    if fid is not None:
+        item = next((item for item in folds if item['id'] == int(fid)), None)
+        if item is None:
+            raise ValueError(f'no fold #{fid}')
+    else:
+        period = float(period)
+        if not 0.05 < period < 1e6:
+            raise ValueError(f'not a period to fold at: {period}')
+        if snap and series['res'] is not None:
+            period = _snap(series['res'], period, nights.baseline)
+        # a period already folded: that fold
+        item = next((item for item in folds
+                     if abs(item['period'] / period - 1) < 1e-7), None)
+        if item is None:
+            item = dict(fold(nights, period, series['valid'],
+                             series['trend']),
+                        id=max([item['id'] for item in folds] + [0]) + 1,
+                        forced=True)
+            folds.append(item)
+    if kind == 'kepler' and 'kepler' not in item:
+        item['kepler'] = fold_kepler(nights, item['period'], series['trend'])
+    return dict(fold=item)
+
+
 def quick_fip(opts: Dict[str, Any]) -> Dict[str, Any]:
-    """a quick FIP of what the page shows, started in a thread"""
+    """a quick FIP of what the page shows (without the signals it
+    subtracted), started in a thread"""
     data, _, _ = selection(opts)
     if data is None:
         raise ValueError('no velocities to look at')
+    data = subtracted(data, opts)
     qid = uuid.uuid4().hex[:8]
     QUICKS[qid] = dict(id=qid, status='running', step='waiting',
                        step_detail='', each=[],
+                       subtracted=[dict(kind=mod.get('kind', 'sine'),
+                                        period=mod.get('period'),
+                                        label=mod.get('label', ''))
+                                   for mod in opts.get('subtract') or []],
                        progress=None, result=None, error=None,
                        start=time.time(), end=None,
                        instruments=list(data.instruments))
@@ -932,6 +1020,7 @@ def forget() -> Dict[str, Any]:
         del JOBS[jid]
     # a quick FIP that runs ends on its own, unseen
     QUICKS.clear()
+    _QUICK_DATA.clear()
     karchive._TABLES = None
     return dict(kept=[job.id for job in JOBS.values()])
 
@@ -942,19 +1031,118 @@ def quick_state(qid: str) -> Dict[str, Any]:
     return dict(job, elapsed=(job['end'] or time.time()) - job['start'])
 
 
+def signal_at(mod: Dict[str, Any], time: np.ndarray,
+              period: Optional[float] = None) -> np.ndarray:
+    """the signal of a fold's solution alone (its sinusoid, or its
+    Keplerian orbit) at some times [m/s]"""
+    from koloa import kepler
+    time = np.asarray(time, dtype=float)
+    period = float(mod.get('period') or period)
+    if mod.get('kind') == 'kepler':
+        return kepler.rv_keplerian(time, period, mod['tp'], mod['e'],
+                                   mod['omega'], mod['K'])
+    arg = 2 * np.pi * (time - mod['tref']) / period
+    return mod['cos'] * np.cos(arg) + mod['sin'] * np.sin(arg)
+
+
 def model_at(item: Dict[str, Any], inst: str, time: np.ndarray,
              period: float) -> Optional[np.ndarray]:
     """the solution of a fold (its offset for the instrument, its trend,
-    its sinusoid) at some times [m/s], None for an instrument it lacks"""
+    its sinusoid or Keplerian orbit) at some times [m/s], None for an
+    instrument it lacks"""
     mod = item.get('model') or {}
     if inst not in mod.get('offsets', {}):
         return None
-    span = (np.asarray(time, dtype=float) - mod['tref']) / 365.25
-    arg = 2 * np.pi * (np.asarray(time, dtype=float) - mod['tref']) / period
-    out = mod['offsets'][inst] + mod['cos'] * np.cos(arg) + \
-        mod['sin'] * np.sin(arg)
+    time = np.asarray(time, dtype=float)
+    span = (time - mod.get('ttrend', mod.get('tref', 0.0))) / \
+        mod.get('tscale', 365.25)
+    out = mod['offsets'][inst] + signal_at(mod, time, period)
     for order, val in enumerate(mod.get('trend', []), start=1):
         out = out + val * span ** order
+    return out
+
+
+def fold_kepler(data, period: float, trend: int = 1,
+                width: Optional[float] = None) -> Dict[str, Any]:
+    """
+    The series folded on a Keplerian orbit, its eccentricity free: koloa's
+    fit (RVModel: outliers, a jitter per instrument, the trend), its period
+    free within the peak (half its width in frequency each side), phase 0
+    at the conjunction; errors from draws of the Laplace covariance
+
+    :param data: RVData, the nightly means
+    :param period: float, the period of the peak [days]
+    :param trend: int, the order of the trend
+    :param width: float or None, the width of a peak in frequency [1/days]
+                  (1 / the baseline)
+
+    :return: dict, as fold() gives, with kind='kepler', the orbit (P, e,
+             omega, tp) and the errors of P, K and e
+    """
+    from koloa import kepler
+    from koloa.fit import RVModel
+    width = width or 1.0 / max(data.baseline, 1.0)
+    freq = 1.0 / period
+    plo = max(1.0 / (freq + 0.5 * width), 0.9 * period)
+    phi = min(1.0 / max(freq - 0.5 * width, 1e-9), 1.1 * period)
+    seq_jitter = ('instrument' if len(data.instruments) > 1
+                  and data.nseq < data.n else None)
+    model = RVModel(data, [dict(period=period, eccentric=True,
+                                period_range=(plo, phi))],
+                    likelihood='mixture', unit='both', trend=trend,
+                    seq_jitter=seq_jitter)
+    res = model.fit(nstart=4, quiet=True)
+    per, tperi, ecc, omega, amp = model.orbit(res.theta, 0)
+    # the errors: the orbit of draws of the Laplace covariance
+    errs = dict(P=np.nan, K=np.nan, e=np.nan)
+    if res.cov is not None and np.all(np.isfinite(res.cov)):
+        rng = np.random.default_rng(11)
+        try:
+            draws = rng.multivariate_normal(res.theta, res.cov, 400)
+            orbits = np.array([model.orbit(theta, 0) for theta in draws])
+            for key, col in (('P', 0), ('e', 2), ('K', 4)):
+                low, high = np.percentile(orbits[:, col], [15.87, 84.13])
+                errs[key] = float(0.5 * (high - low))
+        except (ValueError, np.linalg.LinAlgError):
+            pass
+    shown = data.rv - model.systematics(res.theta)
+    tconj = kepler.tp_to_tc(tperi, per, ecc, omega)
+    phase = ((data.time - tconj) / per) % 1.0
+    valid = res.reliability
+    sig = kepler.rv_keplerian(data.time, per, tperi, ecc, omega, amp)
+    resid = shown - sig
+    good = valid >= 0.5
+    grid = np.linspace(0, 1, 401)
+    insts = list(data.instruments)
+    out = dict(kind='kepler', period=float(per), P_err=errs['P'],
+               K=float(amp), K_err=errs['K'], e=float(ecc),
+               e_err=errs['e'], omega=float(np.degrees(omega) % 360),
+               tp=float(tperi), tc=float(tconj),
+               rms=float(np.std(resid[good] if good.any() else resid)),
+               curve=dict(phase=grid.tolist(), rv=np.round(
+                   kepler.rv_keplerian(tconj + grid * per, per, tperi, ecc,
+                                       omega, amp), 4).tolist()),
+               instruments=[],
+               model=dict(kind='kepler', period=float(per), tp=float(tperi),
+                          e=float(ecc), omega=float(omega), K=float(amp),
+                          offsets={str(inst): float(res.theta[
+                              model.index[f'offset_{inst}']])
+                              for inst in insts},
+                          trend=[float(res.theta[model.index[f'trend_{deg}']])
+                                 for deg in range(1, trend + 1)],
+                          ttrend=float(model.tref),
+                          tscale=float(max(data.baseline, 1e-9))))
+    berv = _berv(data)
+    for inst in insts:
+        sel = data.inst == inst
+        out['instruments'].append(dict(
+            name=str(inst), phase=np.round(phase[sel], 5).tolist(),
+            rv=np.round(shown[sel], 3).tolist(),
+            err=np.round(data.err[sel], 3).tolist(),
+            time=np.round(data.time[sel], 5).tolist(),
+            valid=np.round(valid[sel], 4).tolist(),
+            berv=(_listed(berv[sel], 3) if berv is not None
+                  and np.any(np.isfinite(berv[sel])) else None)))
     return out
 
 
@@ -987,7 +1175,8 @@ def _date_ticks(t0: float, t1: float, most: int = 6):
 
 def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
                        fold_colour: str = 'inst',
-                       overlay: Optional[int] = None):
+                       overlay: Optional[int] = None,
+                       fold_model: str = 'sine'):
     """the figures of the quick look: the velocities shown (with the
     solution of a fold on them when asked), the quick FIP with its peaks
     named, the folds at them (coloured by instrument, date or BERV)"""
@@ -1009,6 +1198,12 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
                     color=colour[inst],
                     label=f'{inst} ({source.get(inst, "")}, {int(sel.sum())})')
     ax.axhline(0, color='0.6', lw=0.6, ls=':')
+    # the folds as the page shows them: their sinusoid, or their Keplerian
+    #   orbit when it was fitted
+    if quick and fold_model == 'kepler':
+        quick = dict(quick, folds=[dict(item['kepler'], id=item['id'])
+                                   if 'kepler' in item else item
+                                   for item in quick.get('folds') or []])
     # the solution of a fold on the series, each instrument about its median
     shown = next((item for item in (quick or {}).get('folds') or []
                   if overlay is not None and item['id'] == overlay), None)
@@ -1186,7 +1381,10 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
                     lw=1.0)
             ax.set_title(f'#{item["id"]}: P = {item["period"]:.4f} d, '
                          f'K = {item["K"]:.2f} $\\pm$ {item["K_err"]:.2f} '
-                         f'm/s', fontsize=8.5)
+                         f'm/s' + (f', e = {item["e"]:.2f} $\\pm$ '
+                                   f'{item["e_err"]:.2f}'
+                                   if item.get('kind') == 'kepler' else ''),
+                         fontsize=8.5)
             ax.set_xlabel('phase (0 = conjunction)')
             ax.set_ylabel('RV [m s$^{-1}$]')
             # the velocities shown as the series is
@@ -1330,6 +1528,13 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
                       + ', '.join(f'{per:.4f}' for per in quick["planets"])
                       + '\\,d)' if quick['passes'] > 1 else '')
                    + f'. {pkk}.\n')
+        if quick.get('subtracted'):
+            out.append('The FIP of the residuals: the series without '
+                       + '; '.join(escape(item.get('label') or
+                                          f'{item["period"]:.4f} d')
+                                   for item in quick['subtracted'])
+                       + ' (each fold\'s signal subtracted; its offsets '
+                       'and trend fitted again).\n')
         acc = quick.get('acceleration')
         if acc:
             for key, what, unit in (('accel', 'Acceleration of the star, '
@@ -1359,6 +1564,31 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
                        + (f'{item["rms"]:.2f} & {item["tc"]:.4f}' if item
                           else '-- & --') + ' \\\\')
         out.append('\\bottomrule\n\\end{tabular}}\n')
+        # the folds at a period of the page's own, and the Keplerian orbits
+        forced = [item for item in quick.get('folds') or []
+                  if item.get('forced')]
+        if forced:
+            out.append('Folded at a period asked: ' + '; '.join(
+                f'\\#{item["id"]} {item["period"]:.4f}\\,d (K = '
+                f'${item["K"]:.2f} \\pm {item["K_err"]:.2f}$\\,m/s)'
+                for item in forced) + '.\n')
+        keps = [dict(item['kepler'], id=item['id'])
+                for item in quick.get('folds') or [] if 'kepler' in item]
+        if keps:
+            out.append('{\\small\\begin{tabular}{@{}rrrrrr@{}}\n\\toprule\n'
+                       'Keplerian & P [d] & K [m/s] & $e$ & $\\omega$ [deg] '
+                       '& rms [m/s] \\\\\n\\midrule')
+            for item in keps:
+                out.append(f'\\#{item["id"]} & ${item["period"]:.4f} \\pm '
+                           f'{item["P_err"]:.4f}$ & ${item["K"]:.2f} \\pm '
+                           f'{item["K_err"]:.2f}$ & ${item["e"]:.2f} \\pm '
+                           f'{item["e_err"]:.2f}$ & {item["omega"]:.0f} & '
+                           f'{item["rms"]:.2f} \\\\')
+            out.append('\\bottomrule\n\\end{tabular}}\n\n'
+                       'Keplerian orbits: koloa\'s fit (outliers, a jitter '
+                       'per instrument, the trend), the eccentricity free, '
+                       'the period free within the peak; errors from the '
+                       'Laplace covariance.\n')
         if quick['known']:
             from koloa.aliases import same_family
             width = 1.0 / max(data.baseline, 1.0)
@@ -1403,7 +1633,8 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
 def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
                   qid: str = '', command_line: str = '',
                   fold_colour: str = 'inst',
-                  overlay: Optional[int] = None) -> bytes:
+                  overlay: Optional[int] = None,
+                  fold_model: str = 'sine') -> bytes:
     """
     The quick look as a PDF, a LaTeX document: the velocities shown (the
     ranges of the page), the quick FIP with its peaks named, the folds at
@@ -1426,7 +1657,7 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
     quick, each = job.get('result'), job.get('each') or []
     title = (opts.get('target') or '').strip() or 'the series'
     figs = _quicklook_figures(data, source, quick, xr, yr, pr, title, each,
-                              fold_colour, overlay)
+                              fold_colour, overlay, fold_model)
     tmp = tempfile.mkdtemp(prefix='koloa_quicklook_')
     try:
         for name, fig in figs:
@@ -1795,7 +2026,8 @@ class Handler(BaseHTTPRequestHandler):
                                     body.get('quick', ''),
                                     body.get('command', ''),
                                     body.get('fold_colour') or 'inst',
-                                    body.get('overlay'))
+                                    body.get('overlay'),
+                                    body.get('fold_model') or 'sine')
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/pdf')
                 self.send_header('Content-Length', str(len(pdf)))
@@ -1806,6 +2038,11 @@ class Handler(BaseHTTPRequestHandler):
                 return None
             if path == '/api/forget':
                 return self._json(forget())
+            if path == '/api/fold':
+                return self._json(fold_request(
+                    body.get('quick', ''), body.get('options', {}),
+                    body.get('period'), body.get('id'),
+                    body.get('kind') or 'sine', bool(body.get('snap'))))
             if path == '/api/remember':
                 return self._json(remember(body.get('page', {}),
                                            body.get('quick', ''),

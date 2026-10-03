@@ -441,3 +441,58 @@ def test_the_fold_carries_its_solution_dates_and_berv(tmp_path):
                                 yr=[-5.0, 5.0], qid=qid, fold_colour=colour,
                                 overlay=1)
         assert pdf[:4] == b'%PDF'
+
+
+def test_a_fold_asked_its_keplerian_and_the_residuals(tmp_path, monkeypatch):
+    """a fold at a period clicked (moved to the dip nearest), its Keplerian
+    orbit, and the FIP of the residuals once its signal is subtracted: the
+    second planet comes first"""
+    import time
+    from koloa.simulate import simulate
+    from koloa.gather import write_rv
+    sim = simulate(planets=[dict(P=5.3, K=9.0, e=0.0, tp=60000.0),
+                            dict(P=13.7, K=4.0, e=0.0, tp=60003.0)],
+                   err=1.2, seed=11, nvisits=90, per_visit=1,
+                   baseline=400)['data']
+    write_rv(sim, str(tmp_path / 'two.csv'))
+    # two signals: the second planet is in the FIP too
+    monkeypatch.setattr(gui, 'QUICK', dict(kmax=2, nsweep=200, nburn=100))
+    opts = dict(files=[dict(path=str(tmp_path / 'two.csv'))])
+
+    def done(state):
+        for _ in range(400):
+            state = gui.quick_state(state['id'])
+            if state['status'] != 'running':
+                break
+            time.sleep(0.5)
+        assert state['status'] == 'done', state['error']
+        return state
+    state = done(gui.quick_fip(opts))
+    qid = state['id']
+    ids = [item['id'] for item in state['result']['folds']]
+    # a click near the first peak: the fold already there (#1)
+    near = gui.fold_request(qid, opts, period=5.32, snap=True)['fold']
+    assert near['id'] == 1 and abs(near['period'] / 5.3 - 1) < 0.003
+    # a period typed: a fold of its own, numbered next
+    got = gui.fold_request(qid, opts, period=5.3)['fold']
+    assert got['forced'] and got['id'] == max(ids) + 1
+    assert got['period'] == 5.3
+    # the Keplerian orbit of that fold, kept with it
+    kep = gui.fold_request(qid, opts, fid=got['id'], kind='kepler')['fold']
+    orbit = kep['kepler']
+    assert orbit['kind'] == 'kepler' and orbit['e'] < 0.3
+    assert abs(orbit['K'] - 9.0) < 4 * orbit['K_err']
+    assert abs(orbit['period'] - 5.3) < 0.01
+    # a click on the side of a peak folds at its top; again, the same fold
+    side = gui.fold_request(qid, opts, period=13.45, snap=True)['fold']
+    assert abs(side['period'] / 13.7 - 1) < 0.003
+    again = gui.fold_request(qid, opts, period=13.47, snap=True)['fold']
+    assert again['id'] in (side['id'], 2)
+    # a quick FIP recalled has no series kept: the page's is read again
+    gui._QUICK_DATA.pop(qid)
+    assert gui.fold_request(qid, opts, period=13.7)['fold']['period'] == 13.7
+    # the residuals: the 5.3 d signal out, the 13.7 d one first
+    res = done(gui.quick_fip(dict(opts, subtract=[dict(got['model'],
+                                                       label='#x')])))
+    assert res['result']['subtracted'][0]['label'] == '#x'
+    assert abs(res['result']['peaks'][0]['period'] / 13.7 - 1) < 0.01

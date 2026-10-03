@@ -94,6 +94,12 @@
       <div id="fipplot" class="plot"></div>
       <div class="dual" id="pdual"><div class="track"></div><div class="sel" id="psel"></div>
         <input type="range" id="plo" min="0" max="1000" value="0" aria-label="period min"><input type="range" id="phi" min="0" max="1000" value="1000" aria-label="period max"></div>
+      <div class="row foldat">
+        <span class="check"><label for="foldp" data-i18n="fold_at">Fold at P =</label> <input id="foldp" type="number" step="any" min="0" autocomplete="off"> d
+          <button type="button" id="foldgo" class="small" data-i18n="fold_go">Fold</button>
+          <span class="hint" data-i18n="or_click">or click the periodogram</span>
+          <button type="button" class="info" data-help="force_fold" aria-label="?">i</button></span>
+      </div>
       <div id="fipeach"></div>
       <div class="row"><button type="button" id="refip" class="small" data-i18n="refip">Recompute the FIP</button><span class="hint" id="fipstale"></span></div>
       <div class="row remrow">
@@ -107,7 +113,10 @@
         <span class="check"><span class="hint" data-i18n="colour_by">Colour by</span>
           <span class="seg"><button type="button" class="small on" data-fcol="inst" data-i18n="fcol_inst">instrument</button><button type="button" class="small" data-fcol="date" data-i18n="fcol_date">date</button><button type="button" class="small" data-fcol="berv" id="fcol-berv">BERV</button></span>
           <button type="button" class="info" data-help="fold_colour" aria-label="?">i</button></span>
+        <span class="check"><span class="seg"><button type="button" class="small on" data-fmodel="sine" data-i18n="fmodel_sine">sinusoid</button><button type="button" class="small" data-fmodel="kepler" data-i18n="fmodel_kepler">Keplerian (e free)</button></span>
+          <button type="button" class="info" data-help="fold_model" aria-label="?">i</button></span>
         <span class="check"><label><input type="checkbox" id="foldoverlay"> <span data-i18n="overlay">the solution on the time series</span></label><button type="button" class="info" data-help="overlay" aria-label="?">i</button></span>
+        <span class="check"><button type="button" id="subtract" class="small" data-i18n="subtract">Subtract this solution, FIP of the residuals</button><button type="button" class="info" data-help="subtract" aria-label="?">i</button></span>
       </div>
       <p class="hint" id="foldnote"></p>
       <div id="foldplot" class="plot"></div>

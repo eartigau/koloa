@@ -304,9 +304,10 @@ function percentile(sorted, q) {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
 }
 
-// the domains of the sliders: every time, and the velocities kept
+// the domains of the sliders: the times and the velocities of the
+//   instruments kept (every one when none is)
 function domains() {
-  const all = lastRV || [];
+  const all = kept().length ? kept() : (lastRV || []);
   const times = all.flatMap((inst) => inst.time);
   const vals = kept().flatMap((inst) => inst.rv).sort((a, b) => a - b);
   if (!times.length || !vals.length) return null;
@@ -476,6 +477,8 @@ function styleExcluded() {
     row.classList.toggle('off', off[i]);
     row.querySelector('input').checked = !off[i];
   });
+  // the time of the instruments kept, from end to end
+  if (view) view.x = null;
   refitY();
 }
 
@@ -489,7 +492,7 @@ function shownOptions() {
   const asked = readOptions('detailed');
   return { files: filesNow(), target: $('target').value.trim(), root: $('root').value.trim(),
     dace: !!asked.dace, carmenes: !!asked.carmenes, exclude: $('exclude').value,
-    trend: !!asked.trend, curvature: !!asked.curvature };
+    trend: !!asked.trend, curvature: !!asked.curvature, subtract: subtractList };
 }
 
 async function startQuick() {
@@ -547,7 +550,9 @@ function fipSummary(r, elapsed) {
   return `<p class="hint">${r.n} ${esc(t('nights'))} (${esc(insts)}); ${esc(t('no_gp'))}, ${r.settings.kmax} ${esc(t('signals_word'))}, `
     + `${r.settings.nsweep} ${esc(t('sweeps_word'))}, ${r.passes} ${esc(t('passes'))} \u00b7 ${clock(elapsed)}`
     + (best ? ` \u00b7 ${esc(t('strongest'))}: <b>${best.period.toFixed(4)} d</b>, FIP ${best.family.toExponential(1)}` : '') + '</p>'
-    + `<p class="hint accel">${accelText(r)}</p>`;
+    + `<p class="hint accel">${accelText(r)}</p>`
+    + ((r.subtracted || []).length ? `<p class="resid"><b>${esc(t('residuals_of'))}</b> ${r.subtracted.map((s) => esc(s.label)).join(' ; ')}`
+      + ` <button type="button" id="unsubtract" class="small">${esc(t('back_series'))}</button></p>` : '');
 }
 
 // the acceleration of the star the quick look measured (and its change)
@@ -616,6 +621,12 @@ function drawFip(r, each) {
     margin: { ...PLOT_MARGIN, t: 40 }, legend: { orientation: 'h', x: 0, y: 1.08, yanchor: 'bottom' }, shapes: lines, annotations: notes,
     xaxis, yaxis: { ...axis, title: t('fip_axis'), rangemode: 'tozero' },
   }, { responsive: true, displaylogo: false }).then(() => {
+    div.removeAllListeners && div.removeAllListeners('plotly_click');
+    // a click on the FIP: a fold at the dip of the period nearest
+    div.on('plotly_click', (ev) => {
+      const pt = ev.points && ev.points[0];
+      if (pt && pt.x > 0) forceFold(+pt.x, true);
+    });
     div.removeAllListeners && div.removeAllListeners('plotly_relayout');
     div.on('plotly_relayout', (ev) => {
       if (!pview) return;
@@ -630,8 +641,61 @@ function drawFip(r, each) {
   drawEach(each);
   if (keepView) return;
   // the folds at the numbered peaks
-  $('foldbuttons').innerHTML = (r.folds || []).map((f) => `<button type="button" class="small" data-fold="${f.id}">#${f.id} \u00b7 ${f.period.toFixed(4)} d</button>`).join('');
+  renderFoldButtons();
   if (r.folds && r.folds.length) showFold(r.folds[0].id);
+}
+
+// a button per fold: the numbered peaks, then the periods asked
+function renderFoldButtons() {
+  const folds = (quick && quick.result && quick.result.folds) || [];
+  $('foldbuttons').innerHTML = folds.map((f) => `<button type="button" class="small${f.forced ? ' forced' : ''}" data-fold="${f.id}"`
+    + `${f.forced ? ` title="${esc(t('asked'))}"` : ''}>#${f.id} \u00b7 ${f.period.toFixed(4)} d</button>`).join('');
+  document.querySelectorAll('[data-fold]').forEach((b) => b.classList.toggle('on', +b.dataset.fold === foldShown));
+}
+
+// a fold at a period of one's own: clicked on the FIP (then at the dip of
+//   the period nearest) or typed (as it is)
+async function forceFold(period, snap) {
+  if (!quick || !quick.result || !(period > 0)) return;
+  $('foldnote').innerHTML = `<span class="spin"></span> ${esc(t('folding'))}`;
+  try {
+    const res = await api('/api/fold', { quick: quick.id, period, snap: !!snap, kind: foldModel, options: shownOptions() });
+    const folds = quick.result.folds = quick.result.folds || [];
+    const old = folds.findIndex((x) => x.id === res.fold.id);
+    if (old >= 0) folds[old] = res.fold; else folds.push(res.fold);
+    $('foldp').value = res.fold.period.toFixed(4);
+    renderFoldButtons();
+    showFold(res.fold.id);
+  } catch (err) {
+    $('foldnote').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
+  }
+}
+
+// the Keplerian orbit of a fold, fitted when first asked
+let keplerBusy = null;
+async function keplerOf(base) {
+  if (keplerBusy === base.id) return;
+  keplerBusy = base.id;
+  $('foldnote').innerHTML = `<span class="spin"></span> ${esc(t('fitting_kepler'))}`;
+  try {
+    const res = await api('/api/fold', { quick: quick.id, id: base.id, kind: 'kepler', options: shownOptions() });
+    base.kepler = res.fold.kepler;
+    if (foldShown === base.id || foldShown === null) showFold(base.id);
+  } catch (err) {
+    $('foldnote').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
+  } finally {
+    keplerBusy = null;
+  }
+}
+
+// the signal of the fold shown taken out of the series, and the FIP again
+function subtractFold() {
+  const f = currentFold();
+  if (!f || !f.model) return;
+  const kind = f.kind === 'kepler' ? `${t('fmodel_kepler_short')}, e ${f.e.toFixed(2)}` : t('fmodel_sine');
+  subtractList = subtractList.concat([{ ...f.model, period: f.period,
+    label: `#${f.id} ${f.period.toFixed(4)} d (${kind}, K ${f.K.toFixed(2)} m/s)` }]);
+  startQuick();
 }
 
 // each instrument's nights and best peaks, under the FIP
@@ -650,17 +714,31 @@ try { foldColour = localStorage.getItem('koloa-foldcolour') || 'inst'; } catch (
 const RED = '#ff3b3b';
 const dateText = (r) => rjdDate(r).toISOString().slice(0, 10);
 
+let foldModel = 'sine';  // the fold's sinusoid, or its Keplerian orbit
+try { foldModel = localStorage.getItem('koloa-foldmodel') || 'sine'; } catch (err) { /* no storage */ }
+let subtractList = [];   // the solutions taken out of the series
+let foldShownObj = null; // the fold shown, as shown (sinusoid or Keplerian)
+
 function currentFold() {
-  return ((quick && quick.result && quick.result.folds) || []).find((x) => x.id === foldShown) || null;
+  return foldShownObj;
 }
 
+const pm = (v, e, d) => `${v.toFixed(d)}${Number.isFinite(e) ? ` \u00b1 ${e.toFixed(d)}` : ''}`;
+
 function showFold(id) {
-  const f = ((quick && quick.result && quick.result.folds) || []).find((x) => x.id === +id);
-  if (!f) return;
-  foldShown = f.id;
-  document.querySelectorAll('[data-fold]').forEach((b) => b.classList.toggle('on', +b.dataset.fold === f.id));
-  $('foldnote').innerHTML = `<b>#${f.id}</b>: P = ${f.period.toFixed(4)} d, K = ${f.K.toFixed(2)} ± ${f.K_err.toFixed(2)} m/s, `
-    + `rms ${f.rms.toFixed(2)} m/s · ${esc(t('fold_note'))}`;
+  const base = ((quick && quick.result && quick.result.folds) || []).find((x) => x.id === +id);
+  if (!base) return;
+  foldShown = base.id;
+  document.querySelectorAll('[data-fold]').forEach((b) => b.classList.toggle('on', +b.dataset.fold === base.id));
+  document.querySelectorAll('[data-fmodel]').forEach((b) => b.classList.toggle('on', b.dataset.fmodel === foldModel));
+  if (foldModel === 'kepler' && !base.kepler) { keplerOf(base); return; }
+  const f = foldModel === 'kepler' ? { ...base.kepler, id: base.id, forced: base.forced } : base;
+  foldShownObj = f;
+  $('foldnote').innerHTML = f.kind === 'kepler'
+    ? `<b>#${f.id}</b> ${esc(t('fmodel_kepler_short'))}: P = ${pm(f.period, f.P_err, 4)} d, K = ${pm(f.K, f.K_err, 2)} m/s, `
+      + `e = ${pm(f.e, f.e_err, 2)}, \u03c9 = ${f.omega.toFixed(0)}\u00b0, rms ${f.rms.toFixed(2)} m/s \u00b7 ${esc(t('fold_note_kep'))}`
+    : `<b>#${f.id}</b>: P = ${f.period.toFixed(4)} d, K = ${f.K.toFixed(2)} \u00b1 ${f.K_err.toFixed(2)} m/s, `
+      + `rms ${f.rms.toFixed(2)} m/s \u00b7 ${esc(t('fold_note'))}`;
   // the colour of the points: their instrument, their date, or their BERV
   //   (when the series has it), on one scale for all
   const hasBerv = f.instruments.some((inst) => inst.berv);
@@ -768,9 +846,27 @@ function foldOffscale() {
 
 // the solution of the fold shown on the time series, each instrument about
 //   its median as its points are (its offset, the trend, the sinusoid)
+function keplerRV(tt, m, period) {
+  const M = 2 * Math.PI * (tt - m.tp) / period;
+  if (!m.e) return m.K * Math.cos(M + m.omega);
+  let E = M + m.e * Math.sin(M);
+  for (let k = 0; k < 50; k++) {
+    const d = (E - m.e * Math.sin(E) - M) / (1 - m.e * Math.cos(E));
+    E -= d;
+    if (Math.abs(d) < 1e-12) break;
+  }
+  const nu = 2 * Math.atan2(Math.sqrt(1 + m.e) * Math.sin(E / 2), Math.sqrt(1 - m.e) * Math.cos(E / 2));
+  return m.K * (Math.cos(nu + m.omega) + m.e * Math.cos(m.omega));
+}
 function modelAt(f, name, tt) {
-  const m = f.model, span = (tt - m.tref) / 365.25, arg = 2 * Math.PI * (tt - m.tref) / f.period;
-  let v = m.offsets[name] + m.cos * Math.cos(arg) + m.sin * Math.sin(arg);
+  const m = f.model, period = m.period || f.period;
+  const span = (tt - (m.ttrend !== undefined ? m.ttrend : m.tref)) / (m.tscale || 365.25);
+  let v = m.offsets[name];
+  if (m.kind === 'kepler') v += keplerRV(tt, m, period);
+  else {
+    const arg = 2 * Math.PI * (tt - m.tref) / period;
+    v += m.cos * Math.cos(arg) + m.sin * Math.sin(arg);
+  }
   m.trend.forEach((c, k) => { v += c * span ** (k + 1); });
   return v;
 }
@@ -828,7 +924,8 @@ async function quicklookPdf() {
     const resp = await fetch('/api/quicklook_pdf', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ options: opts, x: view ? view.x : null, y: view ? view.y : null, p: pview ? pview.p : null,
         quick: quick && quick.result ? quick.id : '', command: $('cmd-detailed').textContent,
-        fold_colour: foldColour, overlay: $('foldoverlay').checked && foldShown !== null ? foldShown : null }) });
+        fold_colour: foldColour, overlay: $('foldoverlay').checked && foldShown !== null ? foldShown : null,
+        fold_model: foldModel }) });
     if (!resp.ok) throw new Error((await resp.json()).error || resp.statusText);
     const link = document.createElement('a');
     link.href = URL.createObjectURL(await resp.blob());
@@ -871,6 +968,8 @@ function resetPage() {
   lastRV = null;
   onDisk = null;
   foldShown = null;
+  foldShownObj = null;
+  subtractList = [];
   showDiskPoints();
 }
 
@@ -903,7 +1002,7 @@ function showTab(name) {
 // the page as it is: what a recall puts back
 function pageState() {
   return { target: $('target').value.trim(), files: filesNow(), root: $('root').value.trim(), outdir: $('outdir').value.trim(),
-    detailed: readOptions('detailed'), clip: $('clip').checked,
+    detailed: readOptions('detailed'), clip: $('clip').checked, subtract: subtractList,
     view: view ? { x: view.x.slice(), y: view.y.slice() } : null, periods: pview ? pview.p.slice() : null };
 }
 
@@ -973,6 +1072,7 @@ async function recallResult(id) {
   }
   syncMirrors();
   $('clip').checked = !!page.clip;
+  subtractList = page.subtract || [];
   if (page.target) resolveStar();
   checkArchives();
   updateCommands();
@@ -1051,6 +1151,19 @@ document.addEventListener('click', (e) => {
   else document.querySelectorAll('[data-fcol]').forEach((x) => x.classList.toggle('on', x.dataset.fcol === foldColour));
 });
 $('foldoverlay').addEventListener('change', showModel);
+// the fold's sinusoid or its Keplerian orbit
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-fmodel]');
+  if (!b) return;
+  foldModel = b.dataset.fmodel;
+  try { localStorage.setItem('koloa-foldmodel', foldModel); } catch (err) { /* no storage */ }
+  document.querySelectorAll('[data-fmodel]').forEach((x) => x.classList.toggle('on', x.dataset.fmodel === foldModel));
+  if (foldShown !== null) showFold(foldShown);
+});
+$('foldgo').addEventListener('click', () => forceFold(+$('foldp').value, false));
+$('foldp').addEventListener('keydown', (e) => { if (e.key === 'Enter') forceFold(+$('foldp').value, false); });
+$('subtract').addEventListener('click', subtractFold);
+document.addEventListener('click', (e) => { if (e.target.id === 'unsubtract') { subtractList = []; startQuick(); } });
 $('fullrange').addEventListener('click', () => { $('clip').checked = false; view = null; refitY(); });
 window.addEventListener('resize', () => { if (view) setTimeout(() => { syncSliders(); dateAxis(); }, 100); });
 $('run-gather').addEventListener('click', () => run('gather', options('gather')));

@@ -199,3 +199,11 @@ main[hidden] { display: none !important; }
 .seg button:first-child { border-radius: 999px 0 0 999px; margin-left: 0; }
 .seg button:last-child { border-radius: 0 999px 999px 0; }
 [data-fcol].on { background: rgba(98, 194, 255, 0.35); border-color: var(--accent); color: #fff; position: relative; }
+
+/* a fold at a period of one's own, the residuals */
+.foldat input { width: 9em; }
+.foldat .check { gap: 6px; flex-wrap: wrap; }
+[data-fmodel].on { background: rgba(98, 194, 255, 0.35); border-color: var(--accent); color: #fff; position: relative; }
+[data-fold].forced { border-style: dashed; }
+#fipstatus p.resid { color: #ffc66d; font-size: 0.88rem; }
+#fipplot { cursor: crosshair; }
