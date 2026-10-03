@@ -239,6 +239,11 @@ async function drawVelocities(res, extra) {
     marker: { color: COLOURS[i % 8], symbol: SYMBOLS[i % 8], size: 7, line: { color: '#08111f', width: 1 } },
     hovertemplate: `${inst.name}<br>rjd %{x:.4f}<br>%{y:.2f} m/s<extra></extra>`,
   }));
+  const ninst = traces.length;
+  // nothing to see on the axis of the dates: Plotly draws an axis a trace uses
+  const times = res.instruments.flatMap((inst) => inst.time);
+  traces.push({ x: [Math.min(...times), Math.max(...times)], y: [null, null], xaxis: 'x2', type: 'scatter', mode: 'markers',
+    showlegend: false, hoverinfo: 'skip', marker: { opacity: 0 } });
   $('plotcard').classList.add('on');
   div.classList.add('on');
   const axis = { gridcolor: 'rgba(200,220,255,0.10)', zerolinecolor: 'rgba(200,220,255,0.25)', color: '#7a8597' };
@@ -247,9 +252,13 @@ async function drawVelocities(res, extra) {
     await Plotly.newPlot(div, traces, {
       paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(4,8,16,0.35)',
       font: { family: 'Space Grotesk, sans-serif', color: '#e8eef8' },
-      margin: PLOT_MARGIN, showlegend: traces.length > 1,
-      legend: { orientation: 'h', x: 0, y: 1.0, yanchor: 'bottom' },
+      margin: PLOT_MARGIN, showlegend: ninst > 1,
+      // the legend at the top of the figure, the dates under it
+      legend: { orientation: 'h', x: 0, y: 1, yref: 'container', yanchor: 'top' },
       xaxis: { ...axis, title: 'BJD - 2400000', tickformat: '.0f', exponentformat: 'none' }, yaxis: { ...axis, title: 'RV - median [m/s]' },
+      // the calendar dates of the same times, on top
+      xaxis2: { ...axis, overlaying: 'x', matches: 'x', side: 'top', showgrid: false, zeroline: false,
+        tickmode: 'array', tickvals: [], ticktext: [], ticks: 'outside', ticklen: 4 },
     }, { responsive: true, displaylogo: false });
     div.removeAllListeners && div.removeAllListeners('plotly_relayout');
     div.on('plotly_relayout', fromZoom);
@@ -277,7 +286,7 @@ async function drawVelocities(res, extra) {
 //   fine around the bulk of the points, coarse toward the outliers), twice
 //   the 3 to 97 percentile range, and the instruments kept
 // -----------------------------------------------------------------------------
-const PLOT_MARGIN = { l: 62, r: 12, t: 34, b: 48 };
+const PLOT_MARGIN = { l: 62, r: 12, t: 60, b: 48 };
 const STEPS = 1000;
 let view = null;   // x and y shown, their domains, the scale of the y slider
 
@@ -341,6 +350,45 @@ function applyView() {
   Plotly.relayout('rvplot', { 'xaxis.range': view.x.slice(), 'yaxis.range': view.y.slice() });
   syncSliders();
   foldY();
+  dateAxis();
+}
+
+// the calendar dates on top of the time series: rjd (JD - 2400000) is
+//   40587.5 at 1970-01-01 0h; years, months or days by the span shown
+const RJD_UNIX = 40587.5;
+const rjdDate = (r) => new Date((r - RJD_UNIX) * 86400000);
+const dateRjd = (d) => d.getTime() / 86400000 + RJD_UNIX;
+function dateTicks(x0, x1, width) {
+  const span = x1 - x0, most = Math.max(2, Math.floor(width / 105));
+  const locale = lang === 'fr' ? 'fr-CA' : 'en-GB';
+  const vals = [], text = [];
+  if (span > 75) {
+    const step = [1, 2, 3, 6, 12, 24, 60, 120, 240].find((k) => span / (30.44 * k) <= most) || 240;
+    const first = rjdDate(x0);
+    for (let k = Math.ceil((first.getUTCFullYear() * 12 + first.getUTCMonth()) / step) * step; ; k += step) {
+      const d = new Date(Date.UTC(Math.floor(k / 12), k % 12, 1));
+      const r = dateRjd(d);
+      if (r > x1) break;
+      if (r < x0) continue;
+      vals.push(r);
+      text.push(step >= 12 ? String(d.getUTCFullYear())
+        : d.toLocaleDateString(locale, { month: 'short', year: 'numeric', timeZone: 'UTC' }));
+    }
+  } else {
+    const step = [1, 2, 5, 10, 15].find((k) => span / k <= most) || 30;
+    for (let r = Math.ceil((x0 - RJD_UNIX) / step) * step + RJD_UNIX; r <= x1; r += step) {
+      vals.push(r);
+      text.push(rjdDate(r).toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }));
+    }
+  }
+  return { vals, text };
+}
+function dateAxis() {
+  const div = $('rvplot');
+  if (!window.Plotly || !div.data || !div.layout || !div.layout.xaxis || !div.layout.xaxis.range) return;
+  const [x0, x1] = div.layout.xaxis.range.map(Number);
+  const tk = dateTicks(x0, x1, div.clientWidth - PLOT_MARGIN.l - PLOT_MARGIN.r);
+  Plotly.relayout(div, { 'xaxis2.tickvals': tk.vals, 'xaxis2.ticktext': tk.text });
 }
 
 function syncSliders() {
@@ -389,6 +437,7 @@ function fromZoom(ev) {
   if (ev['xaxis.autorange']) view.x = view.xdom.slice();
   if (ev['yaxis.autorange']) view.y = view.ydom.slice();
   syncSliders();
+  if (ev['xaxis.range[0]'] !== undefined || ev['xaxis.autorange']) dateAxis();
   if (ev['yaxis.range[0]'] !== undefined || ev['yaxis.autorange']) foldY();
 }
 
@@ -412,7 +461,7 @@ function styleExcluded() {
   if (!lastRV) return;
   const ex = excludedSet();
   const off = lastRV.map((inst) => ex.has(inst.name.toUpperCase()));
-  if (window.Plotly && $('rvplot').data) Plotly.restyle('rvplot', { opacity: off.map((o) => (o ? 0.12 : 1)) });
+  if (window.Plotly && $('rvplot').data) Plotly.restyle('rvplot', { opacity: off.map((o) => (o ? 0.12 : 1)) }, off.map((_, i) => i));
   lastRV.forEach((inst, i) => {
     const row = document.querySelector(`tr[data-row="${CSS.escape(inst.name)}"]`);
     if (!row) return;
@@ -874,7 +923,7 @@ $('refip').addEventListener('click', startQuick);
 $('pdf').addEventListener('click', quicklookPdf);
 document.addEventListener('click', (e) => { const b = e.target.closest('[data-fold]'); if (b) showFold(b.dataset.fold); });
 $('fullrange').addEventListener('click', () => { $('clip').checked = false; view = null; refitY(); });
-window.addEventListener('resize', () => { if (view) setTimeout(syncSliders, 100); });
+window.addEventListener('resize', () => { if (view) setTimeout(() => { syncSliders(); dateAxis(); }, 100); });
 $('run-gather').addEventListener('click', () => run('gather', options('gather')));
 $('run-detailed').addEventListener('click', () => run('detailed', options('detailed')));
 $('run-archive').addEventListener('click', () => run('archive', options('archive')));
@@ -934,7 +983,7 @@ $('remember').addEventListener('click', rememberResult);
 
 (async () => {
   $('detailed-options').innerHTML = renderOptions('detailed');
-  langHooks.push(showCwd, renderJobs, renderFiles, checkArchives, renderRemembered,
+  langHooks.push(showCwd, renderJobs, renderFiles, checkArchives, renderRemembered, dateAxis,
     () => { if (quick && quick.each) drawEach(quick.each); });
   loadRemembered();
   jobDoneHooks.push(async (job) => {

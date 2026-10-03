@@ -932,7 +932,16 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=()):
     ax.set_xlabel('BJD - 2400000')
     ax.set_ylabel('RV - median [m s$^{-1}$]')
     ax.legend(fontsize=7, ncol=3, frameon=False, loc='upper left')
-    ax.set_title(f'{title}: the velocities shown', fontsize=10)
+    # the calendar dates on top (rjd = JD - 2400000 is 40587.5 at
+    #   1970-01-01 0h, matplotlib's date 0)
+    import matplotlib.dates as mdates
+    top = ax.secondary_xaxis('top', functions=(lambda rjd: rjd - 40587.5,
+                                               lambda day: day + 40587.5))
+    locator = mdates.AutoDateLocator(minticks=3, maxticks=9)
+    top.xaxis.set_major_locator(locator)
+    top.xaxis.set_major_formatter(mdates.AutoDateFormatter(locator))
+    top.tick_params(labelsize=8)
+    ax.set_title(f'{title}: the velocities shown', fontsize=10, pad=20)
     fig.tight_layout()
     figs.append(('series', fig))
     if not quick:
