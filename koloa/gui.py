@@ -781,6 +781,22 @@ def _quick_acceleration(fit, trend: int) -> Optional[Dict[str, Any]]:
     return out
 
 
+def _go_on(job: Dict[str, Any]) -> None:
+    """between the steps of a quick FIP: on, unless it was stopped"""
+    if job.get('cancel'):
+        from koloa.fip import FIPCancelled
+        raise FIPCancelled('the quick FIP was stopped')
+
+
+def stop_quick(qid: str) -> Dict[str, Any]:
+    """a quick FIP stopped: while it waits for its turn, or as it runs
+    (its chains ended at once, the step it is at left)"""
+    job = QUICKS[qid]
+    if job['status'] == 'running':
+        job['cancel'] = True
+    return quick_state(qid)
+
+
 def _run_quick(qid: str, data, target: str, trend: int = 1):
     """the quick FIP, in a thread, in the two passes of the report without
     its GP: the errors of each instrument inflated to the noise of a fit
@@ -791,8 +807,14 @@ def _run_quick(qid: str, data, target: str, trend: int = 1):
     from koloa.detailed import _fip
     from koloa.fit import RVModel
     job = QUICKS[qid]
-    with _QUICK_LOCK:
+    # its turn (one at a time), unless it is stopped while it waits
+    while not _QUICK_LOCK.acquire(timeout=0.5):
+        if job.get('cancel'):
+            job['status'], job['end'] = 'stopped', time.time()
+            return
+    try:
         try:
+            _go_on(job)
             nights = data.nightly()
             seq_jitter = ('instrument' if len(nights.instruments) > 1
                           and nights.nseq < nights.n else None)
@@ -806,6 +828,8 @@ def _run_quick(qid: str, data, target: str, trend: int = 1):
                 job['progress'] = dict(done=done, total=total,
                                        seconds=seconds)
             kfip.PROGRESS_HOOK = hook
+            # a stop ends the chains of the FIP running at once
+            kfip.CANCEL_HOOK = lambda: bool(job.get('cancel'))
             job['step'] = 'fip1'
             res, info = _fip(nights, noise, QUICK['kmax'], QUICK['nsweep'],
                              QUICK['nburn'], 1, 'quick FIP, first pass',
@@ -824,11 +848,13 @@ def _run_quick(qid: str, data, target: str, trend: int = 1):
                     pers.append(per)
             passes = 1
             if pers:
+                _go_on(job)
                 job['step'] = 'planets'
                 fit = RVModel(nights, [dict(period=per, period_range=(
                     0.98 * per, 1.02 * per)) for per in pers],
                     likelihood='mixture', unit='both', trend=trend,
                     seq_jitter=seq_jitter).fit(nstart=2, quiet=True)
+                _go_on(job)
                 job['step'] = 'fip2'
                 job['progress'] = None
                 res, info = _fip(nights, fit, QUICK['kmax'], QUICK['nsweep'],
@@ -883,6 +909,7 @@ def _run_quick(qid: str, data, target: str, trend: int = 1):
                         job['each'].append(dict(name=str(inst), n=int(sub.n),
                                                 skipped=True))
                         continue
+                    _go_on(job)
                     job['step'] = 'inst'
                     job['step_detail'] = f'{rank + 1}/{len(insts)}: {inst}'
                     job['progress'] = None
@@ -899,12 +926,17 @@ def _run_quick(qid: str, data, target: str, trend: int = 1):
                         peaks=_distinct_peaks(one, 1.0 / max(sub.baseline,
                                                              1.0), nmax=3)))
             job['status'] = 'done'
+        except kfip.FIPCancelled:
+            job['status'] = 'stopped'
         except Exception as err:
             job['status'] = 'failed'
             job['error'] = f'{type(err).__name__}: {err}'
         finally:
             kfip.PROGRESS_HOOK = None
+            kfip.CANCEL_HOOK = None
             job['end'] = time.time()
+    finally:
+        _QUICK_LOCK.release()
 
 
 def subtracted(data, opts: Dict[str, Any]):
@@ -987,6 +1019,10 @@ def quick_fip(opts: Dict[str, Any]) -> Dict[str, Any]:
     if data is None:
         raise ValueError('no velocities to look at')
     data = subtracted(data, opts)
+    # the quick FIPs before it are out of date: stopped, not waited for
+    for other in QUICKS.values():
+        if other.get('status') == 'running':
+            other['cancel'] = True
     qid = uuid.uuid4().hex[:8]
     QUICKS[qid] = dict(id=qid, status='running', step='waiting',
                        step_detail='', each=[],
@@ -1018,7 +1054,10 @@ def forget() -> Dict[str, Any]:
     for jid in [jid for jid, job in JOBS.items()
                 if job.returncode is not None]:
         del JOBS[jid]
-    # a quick FIP that runs ends on its own, unseen
+    # a quick FIP that runs is stopped, and forgotten
+    for job in QUICKS.values():
+        if job.get('status') == 'running':
+            job['cancel'] = True
     QUICKS.clear()
     _QUICK_DATA.clear()
     karchive._TABLES = None
@@ -2092,6 +2131,8 @@ class Handler(BaseHTTPRequestHandler):
                 return None
             if path == '/api/forget':
                 return self._json(forget())
+            if path == '/api/quickstop':
+                return self._json(stop_quick(body.get('id', '')))
             if path == '/api/fold':
                 return self._json(fold_request(
                     body.get('quick', ''), body.get('options', {}),
@@ -2150,6 +2191,13 @@ def serve(port: int = 8765, browser: bool = True):
         for job in JOBS.values():
             if job.returncode is None:
                 job.proc.terminate()
+        # a quick FIP running: its chains ended, not left behind
+        running = [job for job in QUICKS.values()
+                   if job.get('status') == 'running']
+        for job in running:
+            job['cancel'] = True
+        if running:
+            time.sleep(1.5)
         server.server_close()
 
 

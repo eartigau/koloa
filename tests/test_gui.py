@@ -516,3 +516,36 @@ def test_a_fold_asked_its_keplerian_and_the_residuals(tmp_path, monkeypatch):
                                                        label='#x')])))
     assert res['result']['subtracted'][0]['label'] == '#x'
     assert abs(res['result']['peaks'][0]['period'] / 13.7 - 1) < 0.01
+
+
+def test_a_quick_fip_is_stopped(tmp_path, monkeypatch):
+    """a long quick FIP stopped by the next one (out of date), and that one
+    stopped as it runs: its chains ended, within seconds"""
+    import time
+    from koloa.simulate import simulate
+    from koloa.gather import write_rv
+    sim = simulate(planets=[dict(P=5.3, K=8.0, e=0.0)], err=1.5, seed=3,
+                   nvisits=60, per_visit=1, baseline=300)['data']
+    write_rv(sim, str(tmp_path / 'long.csv'))
+    monkeypatch.setattr(gui, 'QUICK', dict(kmax=2, nsweep=50000, nburn=200))
+    opts = dict(files=[dict(path=str(tmp_path / 'long.csv'))])
+
+    def until(qid, status, wait=30.0):
+        start = time.time()
+        while time.time() - start < wait:
+            state = gui.quick_state(qid)
+            if status(state):
+                return state
+            time.sleep(0.25)
+        raise AssertionError(gui.quick_state(qid))
+    first = gui.quick_fip(opts)
+    until(first['id'], lambda st: st['step'] == 'fip1')
+    second = gui.quick_fip(opts)
+    start = time.time()
+    assert until(first['id'], lambda st: st['status'] != 'running'
+                 )['status'] == 'stopped'
+    until(second['id'], lambda st: st['step'] == 'fip1')
+    gui.stop_quick(second['id'])
+    assert until(second['id'], lambda st: st['status'] != 'running'
+                 )['status'] == 'stopped'
+    assert time.time() - start < 30

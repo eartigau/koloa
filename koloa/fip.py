@@ -993,6 +993,14 @@ class _Chain:
 #: a function told the progress of every FIP (label, done, total, seconds),
 #: when a program runs FIPs in its own process (koloa's GUI)
 PROGRESS_HOOK = None
+#: a function that says (True) when the FIP running should stop, asked
+#: every second while its chains run in processes (koloa's GUI): they are
+#: ended at once and FIPCancelled raised
+CANCEL_HOOK = None
+
+
+class FIPCancelled(RuntimeError):
+    """A FIP stopped from outside (CANCEL_HOOK)"""
 #: the sweeps done by each chain of the FIP that runs, shared with the
 #: processes of the chains (set by _share_counter in each of them)
 _COUNTER = None
@@ -1342,6 +1350,13 @@ def _run_chains(jobs: List[tuple], label: Optional[str], total: int
                                return_when=FIRST_COMPLETED)
             if progress is not None:
                 progress.update(sum(counter))
+            if CANCEL_HOOK is not None and CANCEL_HOOK():
+                # the chains ended now, not when they are done
+                for proc in list((getattr(pool, '_processes', None)
+                                  or {}).values()):
+                    proc.terminate()
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise FIPCancelled('the FIP was stopped')
         outs = [fut.result() for fut in futures]
     if progress is not None:
         progress.close(sum(counter))

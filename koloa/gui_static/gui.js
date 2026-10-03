@@ -217,7 +217,11 @@ async function plotVelocities() {
     dace: asked.dace ? '1' : '', carmenes: asked.carmenes ? '1' : '' });
   try {
     const res = await api(`/api/rv?${q}`);
-    if (await drawVelocities(res, auto ? [t('arch_auto')] : [])) startQuick();
+    // the quick FIP on its own for one instrument; for several, once those
+    //   to leave out are unticked (it can take minutes)
+    if (await drawVelocities(res, auto ? [t('arch_auto')] : [])) {
+      if (res.instruments.length === 1) startQuick(); else quickPrompt();
+    }
   } catch (err) {
     note.innerHTML = `<span class="bad">${esc(err.message)}</span>`;
   }
@@ -497,6 +501,21 @@ function shownOptions() {
     trend: !!asked.trend, curvature: !!asked.curvature, subtract: subtractList };
 }
 
+// several instruments: the quick FIP waits to be asked for
+function quickPrompt() {
+  if (quick && quick.status === 'running') api('/api/quickstop', { id: quick.id }).catch(() => {});
+  quick = null;
+  pview = null;
+  foldShown = null; foldShownObj = null;
+  $('fipcard').classList.add('on');
+  if (window.Plotly) { Plotly.purge($('fipplot')); Plotly.purge($('foldplot')); }
+  $('fipplot').classList.remove('on'); $('foldplot').classList.remove('on');
+  $('foldbuttons').innerHTML = ''; $('foldnote').textContent = ''; $('fipeach').innerHTML = ''; $('fipstale').textContent = '';
+  $('remember').disabled = true; $('remstate').textContent = '';
+  $('fipstatus').innerHTML = `<p class="hint">${esc(t('fip_prompt'))}</p>`
+    + `<button type="button" class="go startfip">${esc(t('start_fip'))}</button>`;
+}
+
 async function startQuick() {
   $('fipcard').classList.add('on');
   $('fipstale').textContent = '';
@@ -526,7 +545,9 @@ async function pollQuick(id) {
   const each = state.each || [];
   const drawn = `${state.result ? 1 : 0}/${each.length}`;
   if (state.result && quick.drawn !== drawn) { drawFip(state.result, each); quick.drawn = drawn; }
-  $('fipstatus').innerHTML = (state.result ? fipSummary(state.result, state.elapsed) : '') + quickRunning(state);
+  $('fipstatus').innerHTML = (state.result ? fipSummary(state.result, state.elapsed) : '') + quickRunning(state)
+    + (state.status === 'stopped' ? `<p class="hint"><span class="bad">\u25a0</span> ${esc(t('fip_stopped'))} \u00b7 ${clock(state.elapsed)} `
+      + `<button type="button" class="small startfip">${esc(t('start_fip'))}</button></p>` : '');
   $('remember').disabled = state.status !== 'done';
   if (state.status === 'running') setTimeout(() => pollQuick(id), 1000);
 }
@@ -543,7 +564,8 @@ function quickRunning(state) {
     bar = `<span class="pbar"><span style="width:${Math.round(100 * frac)}%"></span></span><span class="ptext">${Math.round(100 * frac)} %${left}</span>`;
   }
   const detail = state.step === 'inst' && state.step_detail ? ` (${esc(state.step_detail)})` : '';
-  return `<p class="hint"><span class="hourglass">\u23f3</span> ${esc(t(step))}${detail} \u00b7 ${clock(state.elapsed)}</p><div class="steps-bar">${bar}</div>`;
+  return `<p class="hint"><span class="hourglass">\u23f3</span> ${esc(t(step))}${detail} \u00b7 ${clock(state.elapsed)}`
+    + ` <button type="button" class="small stop stopfip">${esc(t('stop_fip'))}</button></p><div class="steps-bar">${bar}</div>`;
 }
 
 function fipSummary(r, elapsed) {
@@ -1145,6 +1167,11 @@ $('clip').addEventListener('change', refitY);
 $('plo').addEventListener('input', periodsFromSliders);
 $('phi').addEventListener('input', periodsFromSliders);
 $('refip').addEventListener('click', startQuick);
+// the quick FIP asked for, or stopped (while it waits for its turn too)
+document.addEventListener('click', (e) => {
+  if (e.target.closest('.startfip')) startQuick();
+  if (e.target.closest('.stopfip') && quick) api('/api/quickstop', { id: quick.id }).catch(() => {});
+});
 $('pdf').addEventListener('click', quicklookPdf);
 document.addEventListener('click', (e) => { const b = e.target.closest('[data-fold]'); if (b) showFold(b.dataset.fold); });
 // the colour of the fold: by instrument, date or BERV
