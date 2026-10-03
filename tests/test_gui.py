@@ -761,6 +761,21 @@ def test_a_batch_fip_with_every_archive(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, 'known_periods', lambda target: [])
     monkeypatch.setattr(gui, 'transits_of', lambda target, known: [])
     monkeypatch.setattr(gui, 'QUICK', dict(kmax=1, nsweep=150, nburn=80))
+    # its TESS light curve (not asked of MAST): a transit at the
+    #   conjunction of the signal (9 sin(2 pi t / 5.3): falling through zero
+    #   at t = 2.65 + 5.3 n)
+    rng = np.random.default_rng(6)
+    ltime = np.arange(60100.0, 60127.0, 2.0 / 1440)
+    lflux = rng.normal(0, 0.5, len(ltime))
+    phase = ((ltime - 2.65) / 5.3 + 0.5) % 1.0 - 0.5
+    lflux[np.abs(phase * 5.3 * 24) < 0.8] -= 1.5
+    light = dict(time=ltime, flux=lflux, err=np.full(len(ltime), 0.5),
+                 sector=np.full(len(ltime), 40.0))
+    monkeypatch.setattr(gui, 'tess_light', lambda target, root='',
+                        fetch=False: (light, 'a test'))
+    monkeypatch.setattr(gui, 'resolve_star', lambda target, root='',
+                        refresh=False: dict(star=dict(
+                            mass=0.4, radius=0.4, radius_source='a test')))
     paths = [str(tmp_path / 'gl1.csv'), str(tmp_path / 'other.csv')]
 
     def run():
@@ -784,6 +799,11 @@ def test_a_batch_fip_with_every_archive(tmp_path, monkeypatch):
     assert [first['summary']['sources'][name] for name in insts
             if name != 'HARPS15'] == ['file: gl1.csv']
     assert abs(first['summary']['period'] / 5.3 - 1) < 0.01
+    # the transit in TESS at the best peak: flagged
+    assert first['summary']['transit']['plausible'], \
+        first['summary']['transit']['why']
+    assert first['summary']['transit']['depth'] == pytest.approx(1.5,
+                                                                 abs=0.4)
     # a file with no star: alone, and why
     assert other['status'] == 'done' and other['star']['apero'] is None
     assert 'HARPS15' not in other['summary']['instruments']

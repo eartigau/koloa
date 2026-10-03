@@ -676,6 +676,9 @@ function quickPrompt() {
   if (window.Plotly) { Plotly.purge($('fipplot')); Plotly.purge($('foldplot')); }
   $('fipplot').classList.remove('on'); $('foldplot').classList.remove('on');
   $('foldbuttons').innerHTML = ''; $('foldnote').textContent = ''; $('fipeach').innerHTML = ''; $('fipstale').textContent = '';
+  $('tsbuttons').innerHTML = ''; $('tsnote').textContent = ''; tsShown = null; tsOf = null;
+  if (window.Plotly) Plotly.purge($('tsplot'));
+  $('tsplot').classList.remove('on');
   $('remember').disabled = true; $('remstate').textContent = '';
   $('fipstatus').innerHTML = `<p class="hint">${esc(t('fip_prompt'))}</p>`
     + `<button type="button" class="go startfip">${esc(t('start_fip'))}</button>`;
@@ -841,6 +844,127 @@ function drawFip(r, each) {
   // the folds at the numbered peaks
   renderFoldButtons();
   if (r.folds && r.folds.length) showFold(r.folds[0].id);
+  // a transit in TESS at the peaks below a FIP of 1 %, and at the TOIs
+  renderTransits(true);
+}
+
+// -----------------------------------------------------------------------------
+// a transit in TESS: at each peak with a FIP (of the period or any alias)
+//   below 1 %, about the conjunction of its fold, and at the ephemeris of
+//   each transiting planet and TOI of the star; the light curve high-passed
+//   and folded, its points and their medians in bins, the depths of a
+//   1 Earth-radius and a 1 Jupiter-radius planet
+// -----------------------------------------------------------------------------
+let tsShown = null;            // the candidate shown
+let tsOf = null;               // the quick FIP its candidates are of
+function transitCandidates() {
+  const r = quick && quick.result;
+  if (!r) return [];
+  const times = (lastRV || []).flatMap((inst) => inst.time);
+  const span = times.length ? Math.max(1, Math.max(...times) - Math.min(...times)) : 1000;
+  const out = [];
+  (r.peak_list || []).filter((pk) => pk.family < 0.01).forEach((pk) => {
+    const f = (r.folds || []).find((x) => x.id === pk.id) || {};
+    out.push({ key: `p${pk.id}`, label: `#${pk.id} \u00b7 ${pk.period.toFixed(4)} d`, period: pk.period, tc: f.tc, tc_err: f.tc_err,
+      p_err: pk.period ** 2 / (4 * span), name: `#${pk.id}`, kind: 'rv' });
+  });
+  (r.transits || []).forEach((tr, i) => {
+    if (tr.P && tr.tc !== null && tr.tc !== undefined) {
+      out.push({ key: `t${i}`, label: `\u25d0 ${tr.name} \u00b7 ${(+tr.P).toFixed(4)} d`, period: +tr.P, tc: tr.tc, tc_err: tr.tc_err,
+        p_err: tr.P_err, name: tr.name, kind: 'toi' });
+    }
+  });
+  return out;
+}
+function renderTransits(auto) {
+  const cands = transitCandidates();
+  const box = $('tsbuttons');
+  if (!cands.length) {
+    box.innerHTML = ''; $('tsnote').textContent = quick && quick.result ? t('ts_none') : '';
+    $('tsplot').classList.remove('on'); if (window.Plotly) Plotly.purge($('tsplot'));
+    return;
+  }
+  box.innerHTML = cands.map((c) => `<button type="button" class="small${c.kind === 'toi' ? ' transit' : ''}" data-tsearch="${esc(c.key)}">${esc(c.label)}</button>`).join('');
+  if (auto && tsOf !== quick.id) { tsOf = quick.id; showTransit(cands[0].key, true); }
+  document.querySelectorAll('[data-tsearch]').forEach((b) => b.classList.toggle('on', b.dataset.tsearch === tsShown));
+}
+async function showTransit(key, fetch) {
+  const c = transitCandidates().find((x) => x.key === key);
+  if (!c) return;
+  tsShown = key;
+  document.querySelectorAll('[data-tsearch]').forEach((b) => b.classList.toggle('on', b.dataset.tsearch === key));
+  const note = $('tsnote');
+  note.innerHTML = `<span class="spin"></span> ${esc(t(fetch ? 'ts_fetching' : 'ts_searching'))}`;
+  try {
+    const res = await api('/api/transit', { options: { target: $('target').value.trim(), root: $('root').value.trim(), period: c.period,
+      tc: c.tc, tc_err: c.tc_err, p_err: c.p_err, name: c.name, fetch: !!fetch, mstar: +$('mstar').value || null } });
+    if (tsShown !== key) return;
+    if (res.missing) {
+      note.innerHTML = `${esc(t('ts_missing'))} (${esc(res.lc || '')}) <button type="button" class="small" id="tsfetch">${esc(t('ts_fetch'))}</button>`;
+      $('tsplot').classList.remove('on');
+      return;
+    }
+    drawTransit(res, c);
+  } catch (err) {
+    note.innerHTML = `<span class="bad">${esc(err.message)}</span>`;
+  }
+}
+function drawTransit(res, c) {
+  const b = res.best;
+  const fmt = (v, d) => (v === null || v === undefined ? '?' : (+v).toFixed(d));
+  const verdict = res.plausible ? `<span class="ok">\u2691 ${esc(t('ts_plausible'))}</span>` : `<span class="hint">${esc(t('ts_not'))}</span>`;
+  $('tsnote').innerHTML = `${verdict}: ${esc(res.why)}.`
+    + (b ? ` ${esc(t('ts_box'))} ${fmt(b.depth, 3)} \u00b1 ${fmt(b.depth_err, 3)} ppt, ${fmt(b.duration, 1)} h, Rp \u2248 ${fmt(b.radius, 2)} R\u2295` : '')
+    + ` \u00b7 R\u2605 ${fmt(res.star.radius, 3)} R\u2609 (${esc(res.star.radius_source)}), ${t('ts_expected')} ${fmt(res.duration, 1)} h`
+    + ` \u00b7 TESS ${esc((res.sectors || []).join(', '))} (${esc(res.lc)})`
+    + (res.window ? ` \u00b7 ${t('ts_window')} \u00b1${fmt(res.window, 1)} h` : ` \u00b7 ${t('ts_whole')}`);
+  const div = $('tsplot');
+  div.classList.add('on');
+  if (!window.Plotly) return;
+  const traces = [{ x: res.hours, y: res.flux, type: 'scattergl', mode: 'markers', name: t('ts_points'),
+    marker: { size: 3, color: 'rgba(170,185,210,0.35)' }, hoverinfo: 'skip' }];
+  const bins = res.bins || [];
+  traces.push({ x: bins.map((v) => v[0]), y: bins.map((v) => v[1]), type: 'scatter', mode: 'markers+lines', name: t('ts_bins'),
+    error_y: { type: 'data', array: bins.map((v) => v[2]), visible: true, thickness: 1, width: 0, color: '#62c2ff' },
+    marker: { size: 6, color: '#62c2ff' }, line: { color: '#62c2ff', width: 1 },
+    hovertemplate: '%{x:.2f} h<br>%{y:.3f} ppt<extra></extra>' });
+  // the box found, about the centre shown
+  if (b) {
+    const off = (((b.centre - res.shown_centre) / res.period + 0.5) % 1 + 1) % 1 * res.period * 24 - 0.5 * res.period * 24;
+    const h = b.duration / 2;
+    traces.push({ x: [off - 3 * h, off - h, off - h, off + h, off + h, off + 3 * h], y: [0, 0, -b.depth, -b.depth, 0, 0], type: 'scatter',
+      mode: 'lines', name: t('ts_boxname'), line: { color: '#f5a524', width: 1.6 }, hoverinfo: 'skip' });
+  }
+  // the depths of a 1 Earth-radius and a 1 Jupiter-radius planet
+  const span = Math.max(4 * res.duration, res.window ? 1.2 * res.window : 0, 6);
+  const xr = [-Math.min(span, res.period * 12), Math.min(span, res.period * 12)];
+  const vis = bins.filter((v) => v[0] >= xr[0] && v[0] <= xr[1]);
+  const err = vis.length ? vis.map((v) => v[2]).sort((p, q) => p - q)[Math.floor(vis.length / 2)] : 0.1;
+  let lo = Math.min(...vis.map((v) => v[1]), -(b ? b.depth : 0)) - 4 * err, hi = Math.max(...vis.map((v) => v[1]), 0) + 4 * err;
+  lo = Math.min(lo, -1.25 * res.depth_earth);
+  const lines = [[res.depth_earth, '1 R\u2295'], [res.depth_jupiter, '1 R\u2643']];
+  const shapes = [], notes = [];
+  lines.forEach(([d, name]) => {
+    if (-d >= lo) {
+      shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: -d, y1: -d, line: { color: '#e66767', width: 1, dash: 'dash' } });
+      notes.push({ xref: 'paper', x: 1, y: -d, text: `${name}: ${fmt(d, d < 1 ? 3 : 1)} ppt`, showarrow: false, xanchor: 'right', yanchor: 'bottom', font: { size: 10, color: '#e66767' } });
+    } else {
+      notes.push({ xref: 'paper', yref: 'paper', x: 1, y: 0, text: `${name}: ${fmt(d, 1)} ppt \u2193`, showarrow: false, xanchor: 'right', yanchor: 'bottom', font: { size: 10, color: '#e66767' } });
+    }
+  });
+  // where the transit is expected (the ephemeris carried to TESS), shaded
+  if (res.window && res.t0 !== null && res.t0 !== undefined) {
+    const at = (((res.t0 - res.shown_centre) / res.period + 0.5) % 1 + 1) % 1 * res.period * 24 - 0.5 * res.period * 24;
+    shapes.push({ type: 'rect', xref: 'x', yref: 'paper', x0: at - res.window, x1: at + res.window, y0: 0, y1: 1,
+      fillcolor: 'rgba(98,194,255,0.06)', line: { width: 0 } });
+  }
+  const axis = { gridcolor: 'rgba(200,220,255,0.10)', zerolinecolor: 'rgba(200,220,255,0.25)', color: '#7a8597' };
+  Plotly.newPlot(div, traces, {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(4,8,16,0.35)', font: { family: 'Space Grotesk, sans-serif', color: '#e8eef8' },
+    margin: { ...PLOT_MARGIN, t: 30 }, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, shapes, annotations: notes,
+    xaxis: { ...axis, title: t(res.plausible ? 'ts_axis_found' : 'ts_axis'), range: xr },
+    yaxis: { ...axis, title: t('ts_flux'), range: [lo, hi] },
+  }, { responsive: true, displaylogo: false });
 }
 
 // the FIP: the period alone and with its aliases, or each instrument too
@@ -1309,6 +1433,9 @@ function resetPage() {
   $('fipcard').classList.remove('on');
   if (window.Plotly) { Plotly.purge($('fipplot')); Plotly.purge($('foldplot')); }
   $('foldbuttons').innerHTML = ''; $('foldnote').textContent = '';
+  $('tsbuttons').innerHTML = ''; $('tsnote').textContent = ''; tsShown = null; tsOf = null;
+  if (window.Plotly) Plotly.purge($('tsplot'));
+  $('tsplot').classList.remove('on');
   $('fipeach').innerHTML = ''; $('fipstatus').innerHTML = '';
   $('fipstale').textContent = ''; $('remstate').textContent = ''; $('remember').disabled = true;
   syncMirrors();
@@ -1499,7 +1626,10 @@ async function pollBatch(id) {
 const fipCell = (v) => (v === null || v === undefined ? ''
   : `<span class="${v < 0.01 ? 'ok' : ''}">${v > 0 ? v.toExponential(1) : '&lt; 1e-300'}</span>`);
 function batchRows() {
-  const rows = batch.items.map((item, i) => ({ ...item, i, ...(item.summary || {}), object: objectName(item) }));
+  const rows = batch.items.map((item, i) => ({ ...item, i, ...(item.summary || {}), object: objectName(item),
+    // a plausible transit first, then by its signal-to-noise ratio
+    transit_snr: item.summary && item.summary.transit && item.summary.transit.snr !== undefined && item.summary.transit.snr !== null
+      ? -(item.summary.transit.snr + (item.summary.transit.plausible ? 1000 : 0)) : null }));
   const { key, dir } = batchSort;
   const val = (r) => (r[key] === null || r[key] === undefined ? Infinity * dir : r[key]);
   if (key === 'name' || key === 'object') return rows.sort((a, b) => dir * String(a[key]).localeCompare(String(b[key])));
@@ -1515,6 +1645,17 @@ function objectCell(item) {
     : `${from} (${t('not_apero')})`;
   return `<span title="${esc(tip)}">${esc(objectName(item))}</span>${s.spt ? ` <span class="hint">${esc(s.spt)}</span>` : ''}`;
 }
+// the transit in TESS of a line (its best peak, when its FIP is below 1 %):
+//   flagged when plausible, its depth, radius and signal-to-noise ratio
+function transitCell(tr) {
+  if (!tr) return '';
+  const tip = esc(tr.why || '');
+  if (tr.status === 'plausible') {
+    return `<span class="ok" title="${tip}">\u2691 ${tr.depth.toFixed(2)} ppt \u00b7 ${tr.radius.toFixed(1)} R\u2295 \u00b7 ${tr.snr.toFixed(1)}\u03c3</span>`;
+  }
+  if (tr.status === 'none') return `<span class="hint" title="${tip}">${tr.snr !== null && tr.snr !== undefined ? `${tr.snr.toFixed(1)}\u03c3` : '-'}</span>`;
+  return `<span class="hint" title="${tip}">${esc(tr.status === 'no TESS' ? t('ts_no_tess') : tr.status)}</span>`;
+}
 // the instruments of a line (nights of each), their sources in the tip
 function instCell(r) {
   if (!r.instruments) return '';
@@ -1529,7 +1670,8 @@ function renderBatch() {
     + (running ? ` <button type="button" class="small stop" id="batchstop">${esc(t('stop_fip'))}</button>` : '')
     + (done ? ` <button type="button" class="small" id="batchcsv">CSV</button>` : '');
   const cols = [['name', t('col_file')], ['object', t('col_object')]].concat(batch.archives ? [['n', t('col_insts')]] : [['n', t('col_nights')]]).concat([['baseline', t('col_span')], ['period', 'P [d]'],
-    ['fip', t('col_fip')], ['fip_alone', t('col_fip_alone')], ['K', 'K [m/s]'], ['rms', 'rms [m/s]'], ['accel', 'dv/dt [m/s/yr]'], ['accel_sigma', '\u03c3']]);
+    ['fip', t('col_fip')], ['fip_alone', t('col_fip_alone')], ['K', 'K [m/s]'], ['rms', 'rms [m/s]'], ['accel', 'dv/dt [m/s/yr]'], ['accel_sigma', '\u03c3'],
+    ['transit_snr', t('col_transit')]]);
   const head = cols.map(([k, label]) => `<th data-bsort="${k}" class="sortable${batchSort.key === k ? ' sorted' : ''}">${esc(label)}`
     + `${batchSort.key === k ? (batchSort.dir > 0 ? ' \u25b2' : ' \u25bc') : ''}</th>`).join('');
   const num = (v, d) => (v === null || v === undefined ? '' : v.toFixed(d));
@@ -1537,6 +1679,7 @@ function renderBatch() {
     + batchRows().map((r) => {
       let state = '';
       if (r.status === 'running' && r.stage === 'gather') state = `<span class="hourglass">\u23f3</span> ${esc(t('batch_gather'))}`;
+      else if (r.stage === 'tess') state = `<span class="hourglass">\u23f3</span> ${esc(t('batch_tess'))}`;
       else if (r.status === 'running') {
         const p = r.progress;
         state = `<span class="hourglass">\u23f3</span> ${esc(t({ noise: 'quick_noise', fip1: 'quick_fip1', planets: 'quick_planets', fip2: 'quick_fip2' }[r.step] || 'quick_noise'))}`
@@ -1549,16 +1692,19 @@ function renderBatch() {
       return `<tr><td class="bname" title="${esc(r.path)}">${esc(r.name).replace(/_/g, '_<wbr>')}</td><td>${objectCell(r)}</td>${nights}<td class="num">${num(r.baseline, 0)}</td>`
         + `<td class="num">${num(r.period, 4)}</td><td class="num">${fipCell(r.fip)}</td><td class="num">${fipCell(r.fip_alone)}</td>`
         + `<td class="num">${r.K !== null && r.K !== undefined ? `${r.K.toFixed(2)} \u00b1 ${r.K_err.toFixed(2)}` : ''}</td><td class="num">${num(r.rms, 2)}</td>`
-        + `<td class="num">${acc}</td><td class="num">${num(r.accel_sigma, 1)}</td>`
+        + `<td class="num">${acc}</td><td class="num">${num(r.accel_sigma, 1)}</td><td>${transitCell(r.transit)}</td>`
         + `<td>${state}${r.status === 'done' ? `<button type="button" class="small go" data-bopen="${r.i}">${esc(t('open'))}</button>` : ''}</td></tr>`;
     }).join('') + '</table></div>';
 }
 function batchCsv() {
-  const head = ['file', 'path', 'object', 'apero_name', 'simbad_name', 'nights', 'instruments', 'baseline_d', 'period_d', 'fip', 'fip_alone', 'K_ms', 'K_err_ms', 'rms_ms', 'dvdt_msyr', 'dvdt_err_msyr', 'dvdt_sigma', 'status'];
+  const head = ['file', 'path', 'object', 'apero_name', 'simbad_name', 'nights', 'instruments', 'baseline_d', 'period_d', 'fip', 'fip_alone', 'K_ms', 'K_err_ms', 'rms_ms', 'dvdt_msyr', 'dvdt_err_msyr', 'dvdt_sigma',
+    'transit_plausible', 'transit_snr', 'transit_depth_ppt', 'transit_radius_earth', 'transit_note', 'status'];
+  const tr = (r, key) => (r.transit ? r.transit[key] : null);
   const insts = (r) => (r.instruments ? Object.entries(r.instruments).map(([k, n]) => `${k} ${n}`).join('; ') : '');
   const lines = [head.join(',')].concat(batchRows().map((r) => [r.name, r.path, r.star ? r.star.raw : '', r.star ? r.star.apero : '', r.star ? r.star.target : '',
     r.n, insts(r), r.baseline, r.period, r.fip, r.fip_alone, r.K, r.K_err,
-    r.rms, r.accel, r.accel_err, r.accel_sigma, r.status].map((v) => (v === null || v === undefined ? '' : `"${String(v).replace(/"/g, '""')}"`)).join(',')));
+    r.rms, r.accel, r.accel_err, r.accel_sigma, tr(r, 'plausible'), tr(r, 'snr'), tr(r, 'depth'), tr(r, 'radius'), tr(r, 'why'),
+    r.status].map((v) => (v === null || v === undefined ? '' : `"${String(v).replace(/"/g, '""')}"`)).join(',')));
   const link = document.createElement('a');
   link.href = URL.createObjectURL(new Blob([lines.join('\n') + '\n'], { type: 'text/csv' }));
   link.download = 'koloa_batch_fip.csv';
@@ -1789,6 +1935,9 @@ document.addEventListener('click', async (e) => {
     renderBatch();
   }
   if (e.target.id === 'batchstop' && batch) api('/api/batchstop', { id: batch.id }).catch(() => {});
+  const ts = e.target.closest('[data-tsearch]');
+  if (ts) showTransit(ts.dataset.tsearch, true);
+  if (e.target.id === 'tsfetch' && tsShown) showTransit(tsShown, true);
   if (e.target.id === 'batchcsv') batchCsv();
   const open = e.target.closest('[data-bopen]');
   if (open && batch) {

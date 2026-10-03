@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-The star: its spectral type and a rough mass, for the minimum mass of a
-companion
+The star: its spectral type, a rough mass (for the minimum mass of a
+companion) and a best-guess radius (for the depth of a transit)
 
 The mass of a main-sequence star from its spectral type is that of the
 table of Pecaut & Mamajek (2013, ApJS 208, 9), as Mamajek keeps it
@@ -13,10 +13,17 @@ there is one. The masses of the Earth and Jupiter are the IAU 2015 nominal
 values; Neptune's, its GM from JPL Horizons (6835099.97 km^3/s^2, the planet
 without Triton).
 
+The radius, best guess first: the NASA Exoplanet Archive's for a planet
+host, the TESS Input Catalog's (v8, MAST: Gaia, and the relations of Mann
+et al. for the cool dwarfs), APERO's (Mann et al. 2015 from M_Ks), the
+same table's by spectral type (its R_Rsun), or the mass's (R ~ M^0.9).
+
 Created on 2026-10-03
 
 @author: artigau
 """
+import json
+import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -122,6 +129,36 @@ SPT_MASS: List[Tuple[str, float]] = [
     ('L2V', 0.075)]
 #: the rough relative error of a mass from a spectral type
 SPT_MASS_ERR = 0.10
+#: the radius of a dwarf by spectral type [solar radii]: the same table
+#: (its R_Rsun), for the same types
+SPT_RADIUS: List[Tuple[str, float]] = [
+    ('O3V', 13.43), ('O4V', 12.13), ('O5V', 11.45), ('O5.5V', 10.71),
+    ('O6V', 10.27), ('O6.5V', 9.82), ('O7V', 9.42), ('O7.5V', 8.95),
+    ('O8V', 8.47), ('O8.5V', 8.06), ('O9V', 7.72), ('O9.5V', 7.5),
+    ('B0V', 7.16), ('B0.5V', 6.48), ('B1V', 5.71), ('B1.5V', 5.02),
+    ('B2V', 4.06), ('B2.5V', 3.89), ('B3V', 3.61), ('B4V', 3.46),
+    ('B5V', 3.36), ('B6V', 3.27), ('B7V', 2.94), ('B8V', 2.86),
+    ('B9V', 2.49), ('B9.5V', 2.45), ('A0V', 2.193), ('A1V', 2.136),
+    ('A2V', 2.117), ('A3V', 1.861), ('A4V', 1.794), ('A5V', 1.785),
+    ('A6V', 1.775), ('A7V', 1.75), ('A8V', 1.747), ('A9V', 1.747),
+    ('F0V', 1.728), ('F1V', 1.679), ('F2V', 1.622), ('F3V', 1.578),
+    ('F4V', 1.533), ('F5V', 1.473), ('F6V', 1.359), ('F7V', 1.324),
+    ('F8V', 1.221), ('F9V', 1.167), ('F9.5V', 1.142), ('G0V', 1.1),
+    ('G1V', 1.06), ('G2V', 1.012), ('G3V', 1.002), ('G4V', 0.991),
+    ('G5V', 0.977), ('G6V', 0.949), ('G7V', 0.927), ('G8V', 0.914),
+    ('G9V', 0.853), ('K0V', 0.813), ('K1V', 0.797), ('K2V', 0.783),
+    ('K3V', 0.755), ('K4V', 0.713), ('K5V', 0.701), ('K6V', 0.669),
+    ('K7V', 0.63), ('K8V', 0.615), ('K9V', 0.608), ('M0V', 0.588),
+    ('M0.5V', 0.544), ('M1V', 0.501), ('M1.5V', 0.482), ('M2V', 0.446),
+    ('M2.5V', 0.421), ('M3V', 0.361), ('M3.5V', 0.3), ('M4V', 0.274),
+    ('M4.5V', 0.217), ('M5V', 0.196), ('M5.5V', 0.156), ('M6V', 0.137),
+    ('M6.5V', 0.126), ('M7V', 0.12), ('M7.5V', 0.116), ('M8V', 0.114),
+    ('M8.5V', 0.104), ('M9V', 0.102), ('M9.5V', 0.101), ('L0V', 0.102),
+    ('L1V', 0.0995), ('L2V', 0.097)]
+#: the rough relative error of a radius from a spectral type
+SPT_RADIUS_ERR = 0.10
+#: where the TIC's answers are kept
+TIC_CACHE = os.path.join(os.path.expanduser('~'), '.cache', 'koloa', 'tic')
 #: the masses of Neptune and Jupiter in Earth masses (GM ratios: Neptune's
 #: from JPL Horizons, Jupiter's and the Earth's the IAU 2015 nominal values)
 MNEP_MEARTH = 6835099.97e9 / 3.986004e14
@@ -202,6 +239,110 @@ def stellar(ident: Dict[str, Any], archive_star: Optional[Dict[str, Any]]
     if found is not None:
         out.update(mass=found[0], mass_err=found[1],
                    source=f'its spectral type (Pecaut & Mamajek 2013)')
+    return out
+
+
+def radius_from_spectral_type(sptype: Any
+                              ) -> Optional[Tuple[float, float]]:
+    """
+    The rough radius of a dwarf from its spectral type (Pecaut & Mamajek
+    2013), interpolated in the subclass
+
+    :param sptype: str, the spectral type
+
+    :return: tuple, the radius and its rough error [solar radii], or None
+    """
+    code = spectral_code(sptype)
+    if code is None:
+        return None
+    codes = np.array([spectral_code(spt) for spt, _ in SPT_RADIUS])
+    radii = np.array([rad for _, rad in SPT_RADIUS])
+    if code < codes.min() - 1 or code > codes.max() + 1:
+        return None
+    radius = float(np.interp(code, codes, radii))
+    return radius, SPT_RADIUS_ERR * radius
+
+
+def tic_star(tic: Any, timeout: float = 30.0) -> Dict[str, Any]:
+    """
+    What the TESS Input Catalog says of a star (version 8, MAST: its radius
+    and mass from Gaia and the relations of Mann et al. for the cool
+    dwarfs), kept on this machine
+
+    :param tic: str or int, its TIC number ('TIC 77612635' will do)
+
+    :return: dict, radius, radius_err [solar radii], mass, mass_err [solar
+             masses], teff [K]; empty when MAST does not answer
+    """
+    number = int(str(tic).replace('TIC', '').strip())
+    path = os.path.join(TIC_CACHE, f'{number}.json')
+    if os.path.exists(path):
+        with open(path) as handle:
+            return json.load(handle)
+    from koloa.tess import _mast
+    try:
+        rows = _mast('Mast.Catalogs.Filtered.Tic', dict(
+            columns='ID,rad,e_rad,mass,e_mass,Teff', filters=[dict(
+                paramName='ID', values=[str(number)])]), timeout=timeout)
+    except (OSError, ValueError):
+        return {}
+    row = next((row for row in rows if row.get('ID') == number), None)
+    if row is None:
+        return {}
+    out = dict(radius=row.get('rad'), radius_err=row.get('e_rad'),
+               mass=row.get('mass'), mass_err=row.get('e_mass'),
+               teff=row.get('Teff'))
+    os.makedirs(TIC_CACHE, exist_ok=True)
+    with open(path, 'w') as handle:
+        json.dump(out, handle)
+    return out
+
+
+def stellar_radius(ident: Dict[str, Any],
+                   archive_star: Optional[Dict[str, Any]] = None,
+                   apero: Optional[Dict[str, Any]] = None,
+                   tic: bool = True) -> Dict[str, Any]:
+    """
+    The best guess at the radius of a star: the NASA Exoplanet Archive's
+    when it hosts known planets, else the TESS Input Catalog's (Gaia, and
+    Mann et al. for the cool dwarfs), else APERO's (its R_STAR_MKS, Mann et
+    al. 2015 from M_Ks), else from its spectral type (Pecaut & Mamajek
+    2013), else from its mass (R ~ M on the lower main sequence)
+
+    :param ident: dict, the star (sptype, tic)
+    :param archive_star: dict or None, the archive's star (known_planets)
+    :param apero: dict or None, its entry in APERO's names (apero_names)
+    :param tic: bool, ask the TIC (MAST) when needed
+
+    :return: dict, radius, radius_err [solar radii] and source (None where
+             there is none)
+    """
+    out = dict(radius=None, radius_err=None, source=None)
+    archive_star = archive_star or {}
+    if archive_star.get('radius'):
+        rad = float(archive_star['radius'])
+        return dict(radius=rad, radius_err=SPT_RADIUS_ERR * rad,
+                    source='NASA Exoplanet Archive')
+    if tic and ident.get('tic'):
+        found = tic_star(ident['tic'])
+        if found.get('radius'):
+            rad = float(found['radius'])
+            return dict(radius=rad, radius_err=float(
+                found.get('radius_err') or SPT_RADIUS_ERR * rad),
+                source='TESS Input Catalog v8')
+    if apero and apero.get('radius_mann15'):
+        rad = float(apero['radius_mann15'])
+        return dict(radius=rad, radius_err=SPT_RADIUS_ERR * rad,
+                    source='APERO (Mann et al. 2015)')
+    found = radius_from_spectral_type(ident.get('sptype'))
+    if found is not None:
+        return dict(radius=found[0], radius_err=found[1],
+                    source='its spectral type (Pecaut & Mamajek 2013)')
+    star = ident.get('star') or {}
+    if star.get('mass'):
+        rad = float(star['mass']) ** 0.9
+        return dict(radius=rad, radius_err=0.2 * rad,
+                    source='its mass (R ~ M^0.9)')
     return out
 
 

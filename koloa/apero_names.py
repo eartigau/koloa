@@ -63,13 +63,16 @@ SERVER = 'http://206.12.93.77/ari/data/apero/assets/'
 SUBDIR = 'astrometrics'
 #: its tiers, the first one found wins
 TIERS = ('verified', 'pending', 'rejected')
-#: the index of names kept beside the copy
+#: the index of names kept beside the copy, and its version (a new one
+#: when what is kept of an entry changes)
 INDEX = 'koloa_index.json'
+INDEX_VERSION = 2
 #: what is kept of each entry
 KEEP = dict(apero='APERO_NAME', original='ORIGINAL_NAME',
             simbad='SIMBAD_NAME', status='STATUS', klass='APERO_CLASS',
             gaia='GAIA_SOURCE_ID', mass_mann15='MASS_STAR_MANN15',
-            mass_delfosse00='MASS_STAR_DELFOSSE00', teff_gaia='TEFF_GAIA')
+            mass_delfosse00='MASS_STAR_DELFOSSE00', teff_gaia='TEFF_GAIA',
+            radius_mann15='R_STAR_MKS')
 #: the values kept of the entries that have a value and its source
 VALUES = dict(ra='RA', dec='DEC', plx='PLX', spt='SPT', teff='TEFF',
               rv='RV', vsini='VSINI')
@@ -301,7 +304,8 @@ def load_index(path: Optional[str] = None) -> Dict[str, Any]:
     if os.path.exists(keep):
         with open(keep) as handle:
             index = json.load(handle)
-        if index.get('signature') == sig:
+        if index.get('signature') == sig and \
+                index.get('version') == INDEX_VERSION:
             _CACHE[path] = (sig, index)
             return index
     try:
@@ -332,7 +336,8 @@ def load_index(path: Optional[str] = None) -> Dict[str, Any]:
                       entry.get('SIMBAD_NAME')] + list(aliases):
             for variant in name_variants(value):
                 names.setdefault(variant, apero)
-    index = dict(signature=sig, names=names, entries=entries)
+    index = dict(signature=sig, version=INDEX_VERSION, names=names,
+                 entries=entries)
     try:
         with open(keep, 'w') as handle:
             json.dump(index, handle)

@@ -352,6 +352,20 @@ def resolve_star(name: str, root: str = '', refresh: bool = False
     except Exception as err:  # a help, not a need
         out['star'] = dict(sptype=None, mass=None, mass_err=None,
                            source=None, error=str(err))
+    # its radius, the best guess (the archive, the TIC, APERO, the type)
+    try:
+        from koloa import apero_names
+        from koloa.stars import stellar_radius
+        entry = None
+        try:
+            entry = apero_names.lookup(out.get('main') or name, fetch=False)
+        except (ImportError, OSError, ValueError):
+            entry = None
+        rad = stellar_radius(out, known.get('star'), entry)
+        out['star'].update(radius=rad['radius'], radius_err=rad['radius_err'],
+                           radius_source=rad['source'])
+    except Exception as err:  # a help, not a need
+        out['star'].update(radius=None, radius_error=str(err))
     return out
 
 
@@ -1547,6 +1561,78 @@ def apero_refresh() -> Dict[str, Any]:
     return apero_state()
 
 
+#: the TESS light curves read this session, by the folder of the star
+TESS_LC: Dict[str, Any] = {}
+
+
+def tess_light(target: str, root: str = '', fetch: bool = False):
+    """
+    The TESS light curve of a star: the one koloa.gather kept with its
+    archives (phot/tess.csv), else, when fetch, every sector at MAST
+    (koloa.tess, its files kept on this machine)
+
+    :return: tuple, the light curve (koloa.transit) or None, and where it
+             came from
+    """
+    from koloa import transit
+    from koloa.gather import folder_name
+    if not target.strip():
+        return None, 'no star'
+    folder = os.path.join(root or 'archives', folder_name(target))
+    path = os.path.join(folder, 'phot', 'tess.csv')
+    key = os.path.abspath(path)
+    if key in TESS_LC:
+        return TESS_LC[key]
+    if os.path.exists(path):
+        TESS_LC[key] = (transit.from_csv(path),
+                        f'the archives of the star ({path})')
+        return TESS_LC[key]
+    if not fetch:
+        return None, 'not gathered'
+    from koloa import tess
+    lc = transit.from_light_curves(tess.light_curves(target))
+    TESS_LC[key] = (lc, 'MAST (koloa.tess)' if lc is not None else
+                    'no light curve at MAST')
+    return TESS_LC[key]
+
+
+def transit_check(opts: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    A transit in TESS at a period (koloa.transit.search): the light curve
+    of the star high-passed and folded, a box searched where the transit
+    would be (about a conjunction of the velocities, or a TOI's
+    ephemeris), the transits of its other known planets left out; with
+    the star's mass and best-guess radius
+
+    :param opts: dict, target, root, name, period, tc, tc_err, p_err,
+                 fetch (ask MAST when the archives have no light curve),
+                 mstar (the page's)
+
+    :return: dict, the search, and lc (where the light curve came from),
+             star (mass, radius and their sources)
+    """
+    from koloa import transit
+    target = str(opts.get('target') or '').strip()
+    lc, where = tess_light(target, opts.get('root') or '',
+                           bool(opts.get('fetch')))
+    if lc is None:
+        return dict(lc=where, missing=True, name=opts.get('name'))
+    ident = resolve_star(target, opts.get('root') or '')
+    star = ident.get('star') or {}
+    mstar = _number(opts.get('mstar')) or star.get('mass') or 0.5
+    rstar = star.get('radius') or (float(mstar) ** 0.9)
+    period = float(opts['period'])
+    others = transits_of(target, known_periods(target))
+    res = transit.search(lc, period, _number(opts.get('tc')),
+                         _number(opts.get('tc_err')),
+                         _number(opts.get('p_err')), float(mstar),
+                         float(rstar), others=others)
+    res.update(lc=where, name=opts.get('name'), star=dict(
+        mass=float(mstar), radius=float(rstar),
+        radius_source=star.get('radius_source') or 'its mass (R ~ M^0.9)'))
+    return _finite(res)
+
+
 #: the batch FIPs of this session
 BATCHES: Dict[str, Dict[str, Any]] = {}
 
@@ -1647,6 +1733,48 @@ def _batch_archives(batch: Dict[str, Any], item: Dict[str, Any]):
     return data, source, target
 
 
+def _batch_transit(batch: Dict[str, Any], item: Dict[str, Any],
+                   result: Dict[str, Any], data) -> None:
+    """a transit in TESS at the best peak of a file of a batch, when its
+    FIP (of the period or any alias) is below 1 %: its light curve (the
+    archives of its star, else MAST), searched about the conjunction of
+    its fold (koloa.transit); its line says whether one is plausible"""
+    summ = item['summary']
+    if summ.get('fip') is None or summ['fip'] >= 0.01:
+        return
+    target = (item.get('star') or {}).get('target') or ''
+    if not target:
+        summ['transit'] = dict(status='no star', why='no star to ask TESS')
+        return
+    peak = (result.get('peak_list') or [None])[0]
+    shown = next((one for one in result.get('folds') or []
+                  if peak and one['id'] == peak['id']), None) or {}
+    item['stage'] = 'tess'
+    try:
+        res = transit_check(dict(
+            target=target, root=batch['root'], period=peak['period'],
+            tc=shown.get('tc'), tc_err=shown.get('tc_err'),
+            p_err=peak['period'] ** 2 / (4 * max(data.baseline, 1.0)),
+            fetch=True, name=f'#{peak["id"]}'))
+    except Exception as err:  # a transit not searched is no failure
+        summ['transit'] = dict(status='error',
+                               why=f'{type(err).__name__}: {err}')
+        return
+    finally:
+        item['stage'] = None
+    if res.get('missing'):
+        summ['transit'] = dict(status='no TESS', why=res.get('lc'))
+        return
+    best = res.get('best') or {}
+    summ['transit'] = dict(
+        status='plausible' if res['plausible'] else 'none',
+        plausible=bool(res['plausible']), why=res['why'],
+        snr=best.get('snr'), depth=best.get('depth'),
+        depth_err=best.get('depth_err'), radius=best.get('radius'),
+        ntransits=best.get('ntransits'), sectors=res.get('sectors'),
+        period=float(peak['period']))
+
+
 def _run_batch(bid: str) -> None:
     """the files of a batch: the star of each (its APERO name), then one
     quick FIP after the other (with the archives of its star when asked)"""
@@ -1686,6 +1814,7 @@ def _run_batch(bid: str) -> None:
             if job.get('result'):
                 item['summary'] = dict(_batch_summary(job['result'], data),
                                        sources=source)
+                _batch_transit(batch, item, job['result'], data)
         except Exception as err:
             item['status'] = 'failed'
             item['error'] = f'{type(err).__name__}: {err}'
@@ -3138,6 +3267,8 @@ class Handler(BaseHTTPRequestHandler):
                 return None
             if path == '/api/apero_refresh':
                 return self._json(apero_refresh())
+            if path == '/api/transit':
+                return self._json(transit_check(body.get('options', {})))
             if path == '/api/forget':
                 return self._json(forget())
             if path == '/api/quickstop':
