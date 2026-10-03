@@ -1135,13 +1135,26 @@ def _levels(fit, data=None) -> Dict[str, Any]:
                     data.rv[sel] - offsets[str(inst)] - rest[sel]))
     # the signals of the fit (its second pass: those found and the known
     #   planets), for the model drawn with the trend
-    signals = []
-    for ip in range(len(model.planets)):
-        per, tperi, ecc, omega, amp = model.orbit(fit.theta, ip)
-        signals.append(dict(kind='kepler', period=float(per), tp=float(tperi),
+    def orbits(theta):
+        out = []
+        for ip in range(len(model.planets)):
+            per, tperi, ecc, omega, amp = model.orbit(theta, ip)
+            out.append(dict(kind='kepler', period=float(per), tp=float(tperi),
                             e=float(ecc), omega=float(omega), K=float(amp)))
+        return out
+    # draws of the trend and the signals from the full covariance of the
+    #   fit, for their 1-sigma envelope on the series
+    draws = []
+    try:
+        for theta in fit.samples(NDRAW):
+            draws.append(dict(coefs=[float(theta[model.index[
+                f'trend_{deg}']]) for deg in range(1, model.trend + 1)],
+                signals=orbits(theta)))
+    except (ValueError, np.linalg.LinAlgError):
+        draws = []
     return dict(offsets=zeros, fit_offsets=offsets, trend_model=dict(
-        tref=float(model.tref), tscale=tscale, coefs=trend, signals=signals))
+        tref=float(model.tref), tscale=tscale, coefs=trend,
+        signals=orbits(fit.theta), draws=draws if len(draws) > 5 else []))
 
 
 def _quick_acceleration(fit, trend: int) -> Optional[Dict[str, Any]]:
@@ -1769,6 +1782,82 @@ def model_at(item: Dict[str, Any], inst: str, time: np.ndarray,
     return out
 
 
+def curve_at(mod: Dict[str, Any], time: np.ndarray, period: float,
+             signal: bool = True) -> np.ndarray:
+    """a fold's solution without the offsets of the instruments, the same
+    for all of them: its trend, and (signal) its sinusoid or Keplerian
+    orbit [m/s]"""
+    time = np.asarray(time, dtype=float)
+    span = (time - mod.get('ttrend', mod.get('tref', 0.0))) / \
+        mod.get('tscale', 365.25)
+    out = signal_at(mod, time, period) if signal else np.zeros(len(time))
+    for order, val in enumerate(mod.get('trend', []), start=1):
+        out = out + val * span ** order
+    return out
+
+
+def fit_curve_at(model: Dict[str, Any], time: np.ndarray,
+                 signal: bool = True) -> np.ndarray:
+    """the fit of the quick look (its trend_model, or a draw of it): its
+    trend, and (signal) the signals of its second pass [m/s]"""
+    from koloa import kepler
+    time = np.asarray(time, dtype=float)
+    span = (time - model['tref']) / model['tscale']
+    out = np.zeros(len(time))
+    for order, val in enumerate(model.get('coefs') or [], start=1):
+        out = out + val * span ** order
+    if signal:
+        for sig in model.get('signals') or []:
+            out = out + kepler.rv_keplerian(time, sig['period'], sig['tp'],
+                                            sig['e'], sig['omega'], sig['K'])
+    return out
+
+
+def series_curve(quick: Optional[Dict[str, Any]], overlay: Optional[int] = None
+                 ) -> Optional[Dict[str, Any]]:
+    """
+    The solution the series is drawn about, the same for every instrument
+    (no offsets): the fold shown on the series (its trend and its
+    sinusoid or Keplerian orbit), else the fit of the quick look (its trend
+    and the signals of its second pass); each instrument then sits about it
+    (the median of its velocities minus it, zero)
+
+    :param quick: dict or None, the result of the quick look (its folds as
+                  shown: sinusoids or Keplerian orbits)
+    :param overlay: int or None, the fold shown on the series
+
+    :return: dict or None: at (time, signal=True) -> m/s, draws (the same
+             for each draw of the fit), name, shortest (the shortest
+             period), published (time) -> m/s or None
+    """
+    quick = quick or {}
+    shown = next((item for item in quick.get('folds') or []
+                  if overlay is not None and item['id'] == overlay), None)
+    if shown and shown.get('model'):
+        mod, period = shown['model'], shown['period']
+        pub = (shown.get('published') or {}).get('model')
+        return dict(
+            at=lambda time, signal=True: curve_at(mod, time, period, signal),
+            draws=[(lambda time, signal=True, draw=draw: curve_at(
+                draw, time, draw.get('period') or period, signal))
+                for draw in shown.get('draws') or []],
+            name=f'the solution of #{shown["id"]} ({period:.4f} d)',
+            shortest=float(period),
+            published=(lambda time: curve_at(pub, time, pub['period']))
+            if pub else None)
+    model = quick.get('trend_model') or {}
+    if not (model.get('coefs') or model.get('signals')):
+        return None
+    return dict(
+        at=lambda time, signal=True: fit_curve_at(model, time, signal),
+        draws=[(lambda time, signal=True, draw=draw: fit_curve_at(
+            dict(model, **draw), time, signal))
+            for draw in model.get('draws') or []],
+        name='the fit of the quick look', published=None,
+        shortest=min([sig['period'] for sig in model.get('signals') or []]
+                     + [np.inf]))
+
+
 def fold_kepler(data, period: float, trend: int = 1,
                 width: Optional[float] = None,
                 transit: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -1917,6 +2006,133 @@ def _date_ticks(t0: float, t1: float, most: int = 6):
                    for tt in ticks]
 
 
+def _series_figure(data, source, quick, xr, yr, title, colour, marker,
+                   overlay: Optional[int] = None,
+                   series_colour: str = 'inst', series_zero: str = 'fit'):
+    """the velocities shown, as the page shows them: about one solution
+    for every instrument (series_curve), its 1-sigma envelope, each
+    instrument about it, the residuals under it; or each instrument about
+    its median"""
+    import matplotlib
+    import matplotlib.pyplot as plt
+    # the solution the series is drawn about, the same for every
+    #   instrument (the fold shown on it, else the fit of the quick look):
+    #   each instrument about it, the median of its velocities minus it
+    #   zero; under it, the residuals
+    curve = series_curve(quick, overlay)
+    aligned = curve is not None and (series_zero == 'fit'
+                                     or overlay is not None)
+    if aligned:
+        fig, (ax, rax) = plt.subplots(2, 1, figsize=(10, 5.0), sharex=True,
+                                      layout='constrained',
+                                      gridspec_kw=dict(height_ratios=[3, 1]))
+    else:
+        fig, ax = plt.subplots(figsize=(10, 3.6), layout='constrained')
+        rax = None
+    zeros = {}
+    for inst in data.instruments:
+        sel = data.inst == inst
+        rest = data.rv[sel] - (curve['at'](data.time[sel]) if aligned
+                               else 0.0)
+        zeros[inst] = float(np.median(rest))
+    # the points by instrument, or by their BERV (on one scale)
+    berv = _berv(data) if series_colour == 'berv' else None
+    bnorm = None
+    if berv is not None and np.any(np.isfinite(berv)):
+        top = max(float(np.nanmax(np.abs(berv))), 1e-3)
+        bnorm = matplotlib.colors.Normalize(-top, top)
+    for inst in data.instruments:
+        sel = data.inst == inst
+        label = f'{inst} ({source.get(inst, "")}, {int(sel.sum())})'
+        rel = data.rv[sel] - zeros[inst]
+        if rax is not None:
+            rax.errorbar(data.time[sel], rel - curve['at'](data.time[sel]),
+                         data.err[sel], fmt=marker[inst], ms=2.5, lw=0.5,
+                         color=colour[inst] if bnorm is None else '0.5')
+        if bnorm is None:
+            ax.errorbar(data.time[sel], rel, data.err[sel], fmt=marker[inst],
+                        ms=3.5, lw=0.6, color=colour[inst], label=label)
+            continue
+        ax.errorbar(data.time[sel], rel, data.err[sel], fmt='none', lw=0.5,
+                    color='0.7', zorder=1)
+        if np.any(np.isfinite(berv[sel])):
+            # a thin edge: a BERV near zero is near white
+            ax.scatter(data.time[sel], rel, c=berv[sel], cmap='RdBu_r',
+                       norm=bnorm, s=14, marker=marker[inst], zorder=2,
+                       edgecolors='0.35', linewidths=0.3, label=label,
+                       plotnonfinite=True)
+        else:
+            ax.plot(data.time[sel], rel, marker[inst], ms=3.5, color='0.6',
+                    zorder=2, label=label)
+    if bnorm is not None:
+        bar = fig.colorbar(matplotlib.cm.ScalarMappable(bnorm, 'RdBu_r'),
+                           ax=[ax] + ([rax] if rax is not None else []),
+                           pad=0.01, fraction=0.03)
+        bar.set_label('BERV [km s$^{-1}$]')
+    ax.axhline(0, color='0.6', lw=0.6, ls=':')
+    if aligned:
+        # the solution, one curve, and its 1-sigma envelope (draws from the
+        #   full covariance of its fit); its signal where it is resolved (a
+        #   few tens of cycles at most: beyond, a band that would hide the
+        #   points), else its trend alone
+        lo, hi = xr if xr else (data.time.min(), data.time.max())
+        resolved = (hi - lo) / curve['shortest'] <= 60
+        grid = np.linspace(lo, hi, int(min(20000, max(
+            400, 30 * (hi - lo) / curve['shortest']))) if resolved else 400)
+        best = curve['at'](grid, resolved)
+        if len(curve['draws']) > 5:
+            low, high = envelope(best, np.array(
+                [draw(grid, resolved) for draw in curve['draws']]))
+            ax.fill_between(grid, low, high, lw=0, color='0.85', zorder=0)
+        ax.plot(grid, best, color='0.25', lw=0.8, ls='-' if resolved
+                else '--', zorder=1)
+        if curve['published'] and resolved:
+            ax.plot(grid, curve['published'](grid), lw=0.7, ls='--',
+                    color='#d97706', zorder=1)
+        ax.text(0.99, 0.02, curve['name'] + ('' if resolved else
+                                             ': its trend (its signal not '
+                                             'resolved at this span)'),
+                transform=ax.transAxes, ha='right', fontsize=7, color='0.3')
+        rax.axhline(0, color='0.4', lw=0.6)
+        # their range: twice the 3 to 97 percentile range, an outlier beyond
+        rest = np.concatenate([data.rv[data.inst == inst] - zeros[inst]
+                               - curve['at'](data.time[data.inst == inst])
+                               for inst in data.instruments])
+        if len(rest) > 3:
+            low, high = np.percentile(rest, [3, 97])
+            half = max(high - low, 1.0)
+            rax.set_ylim(0.5 * (low + high) - half, 0.5 * (low + high) + half)
+        rax.set_ylabel('residuals [m s$^{-1}$]')
+        rax.set_xlabel('BJD - 2400000')
+    if xr:
+        ax.set_xlim(*xr)
+    if yr:
+        ax.set_ylim(*yr)
+        rel = np.concatenate([data.rv[data.inst == inst] - zeros[inst]
+                              for inst in data.instruments])
+        times = np.concatenate([data.time[data.inst == inst]
+                                for inst in data.instruments])
+        inside = ((times >= xr[0]) & (times <= xr[1]) if xr
+                  else np.ones(len(times), bool))
+        _mark_offscale(ax, times[inside], rel[inside], yr)
+    if rax is None:
+        ax.set_xlabel('BJD - 2400000')
+    ax.set_ylabel('RV - zero [m s$^{-1}$]' if aligned
+                  else 'RV - median [m s$^{-1}$]')
+    ax.legend(fontsize=7, ncol=3, frameon=False, loc='upper left')
+    # the calendar dates on top (rjd = JD - 2400000 is 40587.5 at
+    #   1970-01-01 0h, matplotlib's date 0)
+    import matplotlib.dates as mdates
+    top = ax.secondary_xaxis('top', functions=(lambda rjd: rjd - 40587.5,
+                                               lambda day: day + 40587.5))
+    locator = mdates.AutoDateLocator(minticks=3, maxticks=9)
+    top.xaxis.set_major_locator(locator)
+    top.xaxis.set_major_formatter(mdates.AutoDateFormatter(locator))
+    top.tick_params(labelsize=8)
+    ax.set_title(f'{title}: the velocities shown', fontsize=10, pad=20)
+    return fig
+
+
 def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
                        fold_colour: str = 'inst',
                        overlay: Optional[int] = None,
@@ -1936,129 +2152,14 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
     marker = {inst: kplot.INST_MARKERS[it % 8]
               for it, inst in enumerate(data.instruments)}
     figs = []
-    fig, ax = plt.subplots(figsize=(10, 3.6))
-    # the points by instrument, or by their BERV (on one scale)
-    berv = _berv(data) if series_colour == 'berv' else None
-    bnorm = None
-    if berv is not None and np.any(np.isfinite(berv)):
-        top = max(float(np.nanmax(np.abs(berv))), 1e-3)
-        bnorm = matplotlib.colors.Normalize(-top, top)
-    # each instrument about the offset the quick look fitted (one trend
-    #   across them), or about its median
-    offsets = ((quick or {}).get('offsets') or {}) if series_zero == 'fit' \
-        else {}
-    zeros = {inst: offsets.get(str(inst), np.median(data.rv[data.inst == inst]))
-             for inst in data.instruments}
-    for inst in data.instruments:
-        sel = data.inst == inst
-        label = f'{inst} ({source.get(inst, "")}, {int(sel.sum())})'
-        rel = data.rv[sel] - zeros[inst]
-        if bnorm is None:
-            ax.errorbar(data.time[sel], rel, data.err[sel], fmt=marker[inst],
-                        ms=3.5, lw=0.6, color=colour[inst], label=label)
-            continue
-        ax.errorbar(data.time[sel], rel, data.err[sel], fmt='none', lw=0.5,
-                    color='0.7', zorder=1)
-        if np.any(np.isfinite(berv[sel])):
-            # a thin edge: a BERV near zero is near white
-            ax.scatter(data.time[sel], rel, c=berv[sel], cmap='RdBu_r',
-                       norm=bnorm, s=14, marker=marker[inst], zorder=2,
-                       edgecolors='0.35', linewidths=0.3, label=label,
-                       plotnonfinite=True)
-        else:
-            ax.plot(data.time[sel], rel, marker[inst], ms=3.5, color='0.6',
-                    zorder=2, label=label)
-    if bnorm is not None:
-        bar = fig.colorbar(matplotlib.cm.ScalarMappable(bnorm, 'RdBu_r'),
-                           ax=ax, pad=0.01, fraction=0.03)
-        bar.set_label('BERV [km s$^{-1}$]')
-    ax.axhline(0, color='0.6', lw=0.6, ls=':')
-    # the trend the quick look fitted, the instruments about their offsets
-    trend_model = (quick or {}).get('trend_model') or {}
-    if offsets and (trend_model.get('coefs') or trend_model.get('signals')):
-        from koloa import kepler
-        lo, hi = xr if xr else (data.time.min(), data.time.max())
-        shortest = min([sig['period'] for sig in
-                        trend_model.get('signals') or []] + [hi - lo])
-        grid = np.linspace(lo, hi, int(min(20000, max(
-            400, 30 * (hi - lo) / max(shortest, 1e-3)))))
-        span = (grid - trend_model['tref']) / trend_model['tscale']
-        drift = sum((val * span ** (deg + 1) for deg, val in
-                     enumerate(trend_model.get('coefs') or [])),
-                    np.zeros(len(grid)))
-        if trend_model.get('coefs'):
-            ax.plot(grid, drift, color='0.35', lw=0.8, ls='--', zorder=1)
-        # the model with its signals, where they are resolved (a few tens
-        #   of cycles at most: beyond, a band that would hide the points)
-        if trend_model.get('signals') and (hi - lo) / shortest <= 60:
-            full = drift + sum(kepler.rv_keplerian(
-                grid, sig['period'], sig['tp'], sig['e'], sig['omega'],
-                sig['K']) for sig in trend_model['signals'])
-            ax.plot(grid, full, color='0.55', lw=0.5, zorder=1)
     # the folds as the page shows them: their sinusoid, or their Keplerian
     #   orbit when it was fitted
     if quick and fold_model == 'kepler':
         quick = dict(quick, folds=[dict(item['kepler'], id=item['id'])
                                    if 'kepler' in item else item
                                    for item in quick.get('folds') or []])
-    # the solution of a fold on the series, each instrument about its median
-    shown = next((item for item in (quick or {}).get('folds') or []
-                  if overlay is not None and item['id'] == overlay), None)
-    if shown:
-        for inst in data.instruments:
-            sel = data.inst == inst
-            lo, hi = data.time[sel].min(), data.time[sel].max()
-            npts = int(min(20000, max(400, 30 * (hi - lo) / shown['period'])))
-            grid = np.linspace(lo - 0.01 * (hi - lo + 1),
-                               hi + 0.01 * (hi - lo + 1), npts)
-            mod = model_at(shown, str(inst), grid, shown['period'])
-            if mod is None:
-                continue
-            zero = zeros[inst]
-            # its 1-sigma envelope, from the draws of the solution
-            many = [model_at(dict(model=draw), str(inst), grid,
-                             shown['period'])
-                    for draw in shown.get('draws') or []]
-            many = np.array([val for val in many if val is not None])
-            if len(many) > 5:
-                low, high = envelope(mod, many)
-                ax.fill_between(grid, low - zero, high - zero, lw=0,
-                                color='0.85', zorder=0)
-            ax.plot(grid, mod - zero, lw=0.6, alpha=0.8, color=colour[inst],
-                    zorder=1)
-            pub = (shown.get('published') or {}).get('model')
-            if pub:
-                ax.plot(grid, model_at(dict(model=pub), str(inst), grid,
-                                       pub['period']) - zero, lw=0.7,
-                        ls='--', color='#d97706', zorder=1)
-        ax.text(0.99, 0.02, f'the solution of #{shown["id"]} '
-                f'({shown["period"]:.4f} d)', transform=ax.transAxes,
-                ha='right', fontsize=7, color='0.3')
-    if xr:
-        ax.set_xlim(*xr)
-    if yr:
-        ax.set_ylim(*yr)
-        rel = np.concatenate([data.rv[data.inst == inst] - zeros[inst]
-                              for inst in data.instruments])
-        times = np.concatenate([data.time[data.inst == inst]
-                                for inst in data.instruments])
-        inside = ((times >= xr[0]) & (times <= xr[1]) if xr
-                  else np.ones(len(times), bool))
-        _mark_offscale(ax, times[inside], rel[inside], yr)
-    ax.set_xlabel('BJD - 2400000')
-    ax.set_ylabel('RV - median [m s$^{-1}$]')
-    ax.legend(fontsize=7, ncol=3, frameon=False, loc='upper left')
-    # the calendar dates on top (rjd = JD - 2400000 is 40587.5 at
-    #   1970-01-01 0h, matplotlib's date 0)
-    import matplotlib.dates as mdates
-    top = ax.secondary_xaxis('top', functions=(lambda rjd: rjd - 40587.5,
-                                               lambda day: day + 40587.5))
-    locator = mdates.AutoDateLocator(minticks=3, maxticks=9)
-    top.xaxis.set_major_locator(locator)
-    top.xaxis.set_major_formatter(mdates.AutoDateFormatter(locator))
-    top.tick_params(labelsize=8)
-    ax.set_title(f'{title}: the velocities shown', fontsize=10, pad=20)
-    fig.tight_layout()
+    fig = _series_figure(data, source, quick, xr, yr, title, colour, marker,
+                         overlay, series_colour, series_zero)
     figs.append(('series', fig))
     if not quick:
         return figs
@@ -2250,12 +2351,15 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
            f'the velocities shown, the quick FIP of what is shown (no GP), '
            f'and the folds at its strongest peaks.\n']
     captions = dict(
-        series='The velocities shown, each instrument about the offset the '
-               'quick look fitted (one trend across them, dashed) or about '
-               'its median, as on the page, in its ranges (the calendar '
-               'dates on top), with the '
-               'solution of a fold when the page shows it; a red triangle '
-               'at an edge points to a velocity beyond the range.',
+        series='The velocities shown, as on the page, in its ranges (the '
+               'calendar dates on top): about one solution for every '
+               'instrument (the fold shown on the series, else the fit of '
+               'the quick look: its trend and its signal; dashed, its trend '
+               'alone, where its signal has too many cycles to be seen), '
+               'its 1-sigma envelope grey, each instrument about it (the '
+               'median of its velocities minus it, zero), the residuals '
+               'under it; or each instrument about its median. A red '
+               'triangle at an edge points to a velocity beyond the range.',
         fip='The quick FIP of the series shown: of the period or any of its '
             'aliases (black, what decides on a planet) and of the period '
             'alone (grey); FIP = 1 \\% dotted, the window (a day, a synodic '

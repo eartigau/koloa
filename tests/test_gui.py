@@ -833,3 +833,62 @@ def test_the_zero_of_an_instrument_on_the_series():
     about_fit = np.median(data.rv[sel] - got['fit_offsets']['B'] - drift)
     assert abs(about_zero) < 0.5 < abs(about_fit)
     assert got['trend_model']['signals'] == []
+    # draws of the trend for its envelope; the solution the series is
+    #   drawn about, the same for both instruments, each about it
+    assert len(model['draws']) > 5
+    curve = gui.series_curve(dict(trend_model=model))
+    for inst in ('A', 'B'):
+        sel = data.inst == inst
+        rest = data.rv[sel] - curve['at'](data.time[sel])
+        assert abs(np.median(rest - np.median(rest))) < 1e-9
+    assert np.isinf(curve['shortest']) and len(curve['draws']) > 5
+    assert gui.series_curve(None) is None
+
+
+def test_the_series_about_one_solution(tmp_path):
+    """two instruments far apart, a trend and a planet: the series drawn
+    about one solution (the fold shown, else the fit of the quick look),
+    the same for both, each instrument about it (the median of its
+    velocities minus it, zero), the residuals under it, in the PDF too"""
+    import matplotlib.pyplot as plt
+    import numpy as np
+    rng = np.random.default_rng(9)
+
+    def write(name, t0, t1, offset):
+        tt = np.sort(rng.uniform(t0, t1, 50))
+        rv = offset + 3.0 * (tt - 60000) / 365.25 + 8.0 * np.sin(
+            2 * np.pi * tt / 7.3) + rng.normal(0, 1.5, len(tt))
+        (tmp_path / name).write_text('rjd,vrad,svrad\n' + ''.join(
+            f'{a!r},{b!r},1.5\n' for a, b in zip(tt, rv)))
+    write('a.csv', 59000, 60000, 120.0)
+    write('b.csv', 59700, 60900, -45.0)
+    opts = dict(files=[dict(path=str(tmp_path / 'a.csv'), label='A'),
+                       dict(path=str(tmp_path / 'b.csv'), label='B')])
+    data, _, _ = gui.selection(opts)
+    shown = gui.fold(data.nightly(), 7.3, None, 1)
+    quick = dict(folds=[dict(shown, id=1)])
+    curve = gui.series_curve(quick, overlay=1)
+    assert curve['shortest'] == pytest.approx(7.3, rel=1e-3)
+    rests = []
+    for inst in data.instruments:
+        sel = data.inst == inst
+        rest = data.rv[sel] - curve['at'](data.time[sel])
+        rests.append(rest - np.median(rest))
+    # one solution for both: their residuals about it are the noise
+    assert np.std(np.concatenate(rests)) < 2.5
+    # the trend alone (no signal) and the draws of the envelope
+    assert len(curve['draws']) > 5
+    flat = curve['at'](np.array([59000.0, 60900.0]), False)
+    assert flat[1] - flat[0] == pytest.approx(3.0 * 1900 / 365.25, abs=2.5)
+    colour = dict(A='C0', B='C1')
+    marker = dict(A='o', B='s')
+    fig = gui._series_figure(data, {}, quick, None, None, 'test', colour,
+                             marker, overlay=1)
+    assert len(fig.axes) == 2   # the series, the residuals
+    assert fig.axes[1].get_ylabel().startswith('residuals')
+    plt.close(fig)
+    # without the fold and without a fit: each about its median, alone
+    fig = gui._series_figure(data, {}, None, None, None, 'test', colour,
+                             marker)
+    assert len(fig.axes) == 1   # the series
+    plt.close(fig)

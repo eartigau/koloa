@@ -150,6 +150,8 @@ h2 .hint { font-weight: 400; font-size: 0.85rem; }
 .bleed.on { display: block; }
 .plotgrid { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 2px 4px; }
 #rvplot.plot.on { height: min(72vh, 680px); margin-top: 0; }
+/* the residuals under the series: taller, the series as tall as before */
+#rvplot.plot.on.withres { height: min(96vh, 920px); }
 .yslider { position: relative; box-sizing: content-box; }
 .dual { position: relative; height: 24px; }
 .dual.vert { position: absolute; left: 3px; top: 0; transform-origin: 0 0; }

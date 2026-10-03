@@ -320,17 +320,17 @@ async function drawVelocities(res, extra) {
     return false;
   }
   lastRes = { res, extra };
-  // each instrument about the offset the quick look fitted (one trend
-  //   across the instruments), or about its median
-  const offsets = zeroMode === 'fit' && quick && quick.result && quick.result.offsets ? quick.result.offsets : null;
-  let aligned = false;
+  // each instrument about the solution shown (the same for all: the trend
+  //   and the signals, no offsets), the median of its velocities minus it
+  //   zero; or about its median
+  const curve = seriesCurve();
+  const aligned = !!curve && (zeroMode === 'fit' || $('foldoverlay').checked);
   res = { ...res, instruments: res.instruments.map((inst) => {
-    if (inst.median === undefined || !offsets || offsets[inst.name] === undefined) return { ...inst, zero: inst.median };
-    aligned = true;
-    const shift = inst.median - offsets[inst.name];
-    return { ...inst, zero: offsets[inst.name], rv: inst.rv.map((v) => Math.round((v + shift) * 1000) / 1000) };
+    if (!aligned) return { ...inst, zero: inst.median };
+    const z = percentile(inst.time.map((tt, k) => inst.rv[k] - curve.at(tt)).sort((a, b) => a - b), 50);
+    return { ...inst, zero: (inst.median || 0) + z, rv: inst.rv.map((v) => Math.round((v - z) * 1000) / 1000) };
   }) };
-  if (aligned) note.textContent += ` \u00b7 ${t('zero_fit_note')}`;
+  if (aligned) note.textContent += ` \u00b7 ${t('zero_fit_note')}: ${curve.name}`;
   seriesAligned = aligned;
   document.querySelectorAll('[data-zero]').forEach((b) => b.classList.toggle('on', b.dataset.zero === zeroMode));
   // the points by instrument, or by their BERV (on one scale for all; an
@@ -363,20 +363,27 @@ async function drawVelocities(res, extra) {
   traces.push({ x: [Math.min(...times), Math.max(...times)], y: [null, null], xaxis: 'x2', type: 'scatter', mode: 'markers',
     showlegend: false, hoverinfo: 'skip', marker: { opacity: 0 } });
   traces.push(offscaleTrace());
-  // the trend the quick look fitted, dashed, when the instruments are about
-  //   its offsets
-  const tm = quick && quick.result && quick.result.trend_model;
-  if (aligned && tm && tm.coefs && tm.coefs.length) {
-    const lo = Math.min(...times), hi = Math.max(...times), xs = [], ys = [];
-    for (let k = 0; k <= 300; k++) {
-      const tt = lo + (hi - lo) * k / 300, sp = (tt - tm.tref) / tm.tscale;
-      xs.push(tt); ys.push(tm.coefs.reduce((acc, c, d) => acc + c * sp ** (d + 1), 0));
+  // under the series, the residuals to the solution, each instrument in
+  //   its colour
+  let residRange = null;
+  if (aligned) {
+    // their range: twice the 3 to 97 percentile range, an outlier beyond
+    const all = res.instruments.flatMap((inst) => inst.time.map((tt, k) => inst.rv[k] - curve.at(tt))).sort((a, b) => a - b);
+    if (all.length > 3) {
+      const p3 = percentile(all, 3), p97 = percentile(all, 97), mid = (p3 + p97) / 2, half = Math.max(p97 - p3, 1);
+      residRange = [mid - half, mid + half];
     }
-    traces.push({ x: xs, y: ys, type: 'scatter', mode: 'lines', uid: 'trendline', name: t('fitted_trend'), hoverinfo: 'skip',
-      line: { color: '#a8b4ca', width: 1.2, dash: 'dash' } });
+    res.instruments.forEach((inst, i) => {
+      traces.push({ x: inst.time, y: inst.time.map((tt, k) => Math.round((inst.rv[k] - curve.at(tt)) * 1000) / 1000),
+        xaxis: 'x', yaxis: 'y3', type: 'scatter', mode: 'markers', uid: `resid-${i}`, showlegend: false,
+        error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: COLOURS[i % 8] },
+        marker: { color: COLOURS[i % 8], symbol: SYMBOLS[i % 8], size: 5, line: { color: '#08111f', width: 0.5 } },
+        hovertemplate: `${inst.name}<br>rjd %{x:.4f}<br>${t('resid')} %{y:.2f} m/s<extra></extra>` });
+    });
   }
   $('plotcard').classList.add('on');
   div.classList.add('on');
+  div.classList.toggle('withres', aligned);
   const axis = { gridcolor: 'rgba(200,220,255,0.10)', zerolinecolor: 'rgba(200,220,255,0.25)', color: '#7a8597' };
   lastRV = res.instruments;
   if (window.Plotly) {
@@ -386,7 +393,11 @@ async function drawVelocities(res, extra) {
       margin: { ...PLOT_MARGIN, r: rvRight }, showlegend: ninst > 1,
       // the legend at the top of the figure, the dates under it
       legend: { orientation: 'h', x: 0, y: 1, yref: 'container', yanchor: 'top' },
-      xaxis: { ...axis, title: 'BJD - 2400000', tickformat: '.0f', exponentformat: 'none' }, yaxis: { ...axis, title: 'RV - median [m/s]' },
+      xaxis: { ...axis, title: 'BJD - 2400000', tickformat: '.0f', exponentformat: 'none', ...(aligned ? { anchor: 'y3' } : {}) },
+      yaxis: { ...axis, title: aligned ? t('rv_zero_axis') : 'RV - median [m/s]', ...(aligned ? { domain: [RES_TOP, 1] } : {}) },
+      ...(aligned ? { yaxis3: { ...axis, domain: [0, RES_TOP - 0.07], anchor: 'x', title: t('resid_axis'), zeroline: true,
+        ...(residRange ? { range: residRange } : {}),
+        zerolinecolor: 'rgba(200,220,255,0.45)' } } : {}),
       // the calendar dates of the same times, on top
       xaxis2: { ...axis, overlaying: 'x', matches: 'x', side: 'top', showgrid: false, zeroline: false,
         tickmode: 'array', tickvals: [], ticktext: [], ticks: 'outside', ticklen: 4 },
@@ -426,6 +437,7 @@ let seriesColour = 'inst';     // the series by instrument or by BERV
 let zeroMode = 'fit';          // each instrument about its fitted offset or its median
 let seriesAligned = false;     // the series drawn about the fit of the quick look
 const MODEL_CYCLES = 60;       // the fitted model drawn when this few cycles are shown
+const RES_TOP = 0.3;           // the residuals under the series: the bottom of the plot
 try { zeroMode = localStorage.getItem('koloa-zero') || 'fit'; } catch (err) { /* no storage */ }
 
 // the series drawn again (its zero points, its colours), its ranges kept
@@ -563,7 +575,8 @@ function syncSliders() {
 // the y slider as tall as the plotting area
 function sizeYSlider() {
   const div = $('rvplot');
-  const h = Math.max(60, div.clientHeight - PLOT_MARGIN.t - PLOT_MARGIN.b);
+  const area = div.clientHeight - PLOT_MARGIN.t - PLOT_MARGIN.b;
+  const h = Math.max(60, seriesAligned ? area * (1 - RES_TOP) : area);
   const box = $('yslider');
   box.style.paddingTop = `${PLOT_MARGIN.t}px`;
   box.style.height = `${h}px`;
@@ -623,7 +636,12 @@ function styleExcluded() {
   if (!lastRV) return;
   const ex = excludedSet();
   const off = lastRV.map((inst) => ex.has(inst.name.toUpperCase()));
-  if (window.Plotly && $('rvplot').data) Plotly.restyle('rvplot', { opacity: off.map((o) => (o ? 0.12 : 1)) }, off.map((_, i) => i));
+  if (window.Plotly && $('rvplot').data) {
+    Plotly.restyle('rvplot', { opacity: off.map((o) => (o ? 0.12 : 1)) }, off.map((_, i) => i));
+    // their residuals too
+    const resid = $('rvplot').data.map((d, k) => [String(d.uid || ''), k]).filter(([u]) => u.startsWith('resid-'));
+    if (resid.length) Plotly.restyle('rvplot', { opacity: resid.map(([u]) => (off[+u.slice(6)] ? 0.12 : 1)) }, resid.map(([, k]) => k));
+  }
   lastRV.forEach((inst, i) => {
     const row = document.querySelector(`tr[data-row="${CSS.escape(inst.name)}"]`);
     if (!row) return;
@@ -695,7 +713,7 @@ async function pollQuick(id) {
     const first = !quick.drawn;
     drawFip(state.result, each);
     quick.drawn = drawn;
-    if (first && zeroMode === 'fit' && state.result.offsets) redrawSeries();
+    if (first && zeroMode === 'fit' && state.result.trend_model) redrawSeries();
   }
   $('fipstatus').innerHTML = (state.result ? fipSummary(state.result, state.elapsed) : '') + quickRunning(state)
     + (state.status === 'stopped' ? `<p class="hint"><span class="bad">\u25a0</span> ${esc(t('fip_stopped'))} \u00b7 ${clock(state.elapsed)} `
@@ -1041,7 +1059,9 @@ function showFold(id) {
     // the velocities on the range of the series above
     yaxis: { ...axis, title: 'RV [m/s]', ...(view && view.y ? { range: view.y.slice() } : {}) },
   }, { responsive: true, displaylogo: false }).then(foldOffscale);
-  showModel();
+  // the solution on the series: the instruments about the fold's when it
+  //   is shown there
+  if ($('foldoverlay').checked) redrawSeries(); else showModel();
 }
 
 // the fold follows the y range of the series
@@ -1087,8 +1107,7 @@ function foldOffscale() {
   setOffscale('foldplot', f.instruments.flatMap((inst) => inst.phase), f.instruments.flatMap((inst) => inst.rv), view.y, null);
 }
 
-// the solution of the fold shown on the time series, each instrument about
-//   its median as its points are (its offset, the trend, the sinusoid)
+// the velocity of a Keplerian orbit (radvel's convention)
 function keplerRV(tt, m, period) {
   const M = 2 * Math.PI * (tt - m.tp) / period;
   if (!m.e) return m.K * Math.cos(M + m.omega);
@@ -1101,102 +1120,103 @@ function keplerRV(tt, m, period) {
   const nu = 2 * Math.atan2(Math.sqrt(1 + m.e) * Math.sin(E / 2), Math.sqrt(1 - m.e) * Math.cos(E / 2));
   return m.K * (Math.cos(nu + m.omega) + m.e * Math.cos(m.omega));
 }
-function modelAt(f, name, tt) {
-  const m = f.model, period = m.period || f.period;
-  const span = (tt - (m.ttrend !== undefined ? m.ttrend : m.tref)) / (m.tscale || 365.25);
-  let v = m.offsets[name];
-  if (m.kind === 'kepler') v += keplerRV(tt, m, period);
-  else {
-    const arg = 2 * Math.PI * (tt - m.tref) / period;
-    v += m.cos * Math.cos(arg) + m.sin * Math.sin(arg);
-  }
-  m.trend.forEach((c, k) => { v += c * span ** (k + 1); });
-  return v;
-}
 let modelTimer = null;
 function scheduleModel() {
   clearTimeout(modelTimer);
   if ($('foldoverlay').checked || seriesAligned) modelTimer = setTimeout(showModel, 150);
 }
-// the model of the fit of the quick look (the trend and the signals it
-//   fitted), when the series is drawn about it: over the time shown
-function fitModelTrace(xr) {
-  const tm = quick && quick.result && quick.result.trend_model;
-  if (!seriesAligned || !tm || !(tm.signals || []).length || !lastRV || !lastRV.length) return null;
-  const times = lastRV.flatMap((inst) => inst.time);
-  let lo = Math.min(...times), hi = Math.max(...times);
-  if (xr) { lo = Math.max(lo, xr[0]); hi = Math.min(hi, xr[1]); }
-  if (!(hi > lo)) return null;
-  // only where its signals are resolved (a few tens of cycles shown at
-  //   most): beyond, a band that would hide the points, the trend alone
-  const shortest = Math.min(...tm.signals.map((s) => s.period));
-  if ((hi - lo) / shortest > MODEL_CYCLES) return null;
-  const n = Math.round(Math.min(4000, Math.max(300, 30 * (hi - lo) / shortest)));
-  const x = [], y = [];
-  for (let k = 0; k < n; k++) {
-    const tt = lo + (hi - lo) * k / (n - 1), sp = (tt - tm.tref) / tm.tscale;
-    x.push(tt);
-    y.push(tm.coefs.reduce((acc, c, d) => acc + c * sp ** (d + 1), 0)
-      + tm.signals.reduce((acc, s) => acc + keplerRV(tt, s, s.period), 0));
+// a fold's solution without the offsets of the instruments, the same for
+//   all of them: its trend, and (sig) its sinusoid or Keplerian orbit
+function curveAt(m, period, tt, sig = true) {
+  const span = (tt - (m.ttrend !== undefined ? m.ttrend : m.tref)) / (m.tscale || 365.25);
+  let v = 0;
+  if (sig && m.kind === 'kepler') v += keplerRV(tt, m, period);
+  else if (sig) {
+    const arg = 2 * Math.PI * (tt - m.tref) / period;
+    v += m.cos * Math.cos(arg) + m.sin * Math.sin(arg);
   }
-  return { x, y, type: 'scatter', mode: 'lines', uid: 'model-fit', name: t('fitted_model'), hoverinfo: 'skip',
-    line: { color: '#a8b4ca', width: 1 }, opacity: 0.7 };
+  (m.trend || []).forEach((c, k) => { v += c * span ** (k + 1); });
+  return v;
+}
+// the fit of the quick look (or a draw of it): its trend, and (sig) the
+//   signals of its second pass
+function fitAt(tm, tt, sig = true) {
+  const sp = (tt - tm.tref) / tm.tscale;
+  let v = (tm.coefs || []).reduce((acc, c, d) => acc + c * sp ** (d + 1), 0);
+  if (sig) v += (tm.signals || []).reduce((acc, s) => acc + keplerRV(tt, s, s.period), 0);
+  return v;
+}
+// the solution the series is drawn about, the same for every instrument:
+//   the fold shown on the series (its trend and its signal), else the fit
+//   of the quick look (its trend and its signals); its draws (the full
+//   covariance of its fit) for the 1-sigma envelope
+function seriesCurve() {
+  const f = $('foldoverlay').checked ? currentFold() : null;
+  if (f && f.model) {
+    const m = f.model, p = m.period || f.period;
+    const pub = f.published && f.published.model;
+    return { name: `#${f.id} · ${f.period.toFixed(4)} d`, shortest: f.period,
+      at: (tt, sig = true) => curveAt(m, p, tt, sig),
+      draws: (f.draws || []).map((d) => (tt, sig = true) => curveAt(d, d.period || p, tt, sig)),
+      pub: pub ? { name: `★ ${f.published.name} (${t('published')})`, at: (tt) => curveAt(pub, pub.period, tt) } : null };
+  }
+  const tm = quick && quick.result && quick.result.trend_model;
+  if (!tm || !((tm.coefs || []).length || (tm.signals || []).length)) return null;
+  return { name: t('fitted_model'), shortest: (tm.signals || []).length ? Math.min(...tm.signals.map((s) => s.period)) : Infinity,
+    at: (tt, sig = true) => fitAt(tm, tt, sig),
+    draws: (tm.draws || []).map((d) => (tt, sig = true) => fitAt({ ...tm, coefs: d.coefs, signals: d.signals }, tt, sig)),
+    pub: null };
 }
 
+// the solution on the series: one curve for every instrument (each about
+//   it), its 1-sigma envelope; over the time shown, its signal where it is
+//   resolved (a few tens of cycles at most: beyond, a band that would hide
+//   the points), else its trend alone, dashed
 function showModel() {
   const div = $('rvplot');
   if (!window.Plotly || !div.data) return;
   const old = div.data.map((d, k) => (String(d.uid || '').startsWith('model') ? k : -1)).filter((k) => k >= 0);
   if (old.length) Plotly.deleteTraces(div, old);
-  // over the time shown (drawn again on a zoom: the sinusoid resolved)
+  const curve = seriesAligned ? seriesCurve() : null;
+  if (!curve || !lastRV || !lastRV.length) return;
+  const times = lastRV.flatMap((inst) => inst.time);
+  let lo = Math.min(...times), hi = Math.max(...times);
+  const pad = 0.01 * (hi - lo + 1);
+  lo -= pad; hi += pad;
   const xr = view && view.x ? view.x : null;
-  const fitLine = fitModelTrace(xr);
-  const f = $('foldoverlay').checked ? currentFold() : null;
-  if (!f || !f.model) { if (fitLine) Plotly.addTraces(div, [fitLine]); return; }
-  const draws = f.draws || [];
-  const pub = f.published && f.published.model;
-  const traces = fitLine ? [fitLine] : [];
-  let legend = true;
-  (lastRV || []).forEach((inst, i) => {
-    if (!(inst.name in f.model.offsets) || inst.zero === undefined) return;
-    let lo = Math.min(...inst.time), hi = Math.max(...inst.time);
-    const pad = 0.01 * (hi - lo + 1);
-    lo -= pad; hi += pad;
-    if (xr) { lo = Math.max(lo, xr[0]); hi = Math.min(hi, xr[1]); }
-    if (!(hi > lo)) return;
-    const n = Math.round(Math.min(3000, Math.max(300, 30 * (hi - lo) / f.period)));
-    const x = [], y = [], ylo = [], yhi = [], yp = [];
-    for (let k = 0; k < n; k++) {
-      const tt = lo + (hi - lo) * k / (n - 1);
-      const best = modelAt(f, inst.name, tt);
-      x.push(tt);
-      y.push(best - inst.zero);
-      // the 1-sigma envelope: the spread of the draws (the full covariance
-      //   of the fit: orbit, offsets and trend together) about the best
-      //   model, not their median (the draws of a sharp eccentric peak
-      //   have their peaks at different times)
-      if (draws.length > 5) {
-        const vals = draws.map((d) => modelAt({ model: d, period: d.period || f.period }, inst.name, tt)).sort((a, b) => a - b);
-        const mid = percentile(vals, 50);
-        ylo.push(best - (mid - percentile(vals, 15.87)) - inst.zero);
-        yhi.push(best + (percentile(vals, 84.13) - mid) - inst.zero);
-      }
-      if (pub) yp.push(modelAt({ model: pub, period: pub.period }, inst.name, tt) - inst.zero);
+  if (xr) { lo = Math.max(lo, xr[0]); hi = Math.min(hi, xr[1]); }
+  if (!(hi > lo)) return;
+  const sig = (hi - lo) / curve.shortest <= MODEL_CYCLES;
+  const n = sig ? Math.round(Math.min(2500, Math.max(300, 30 * (hi - lo) / curve.shortest))) : 300;
+  const draws = curve.draws.slice(0, 120);
+  const x = [], y = [], ylo = [], yhi = [], yp = [];
+  for (let k = 0; k < n; k++) {
+    const tt = lo + (hi - lo) * k / (n - 1);
+    const best = curve.at(tt, sig);
+    x.push(tt); y.push(best);
+    // the spread of the draws about the best model, not their median (the
+    //   draws of a sharp eccentric peak have their peaks at different times)
+    if (draws.length > 5) {
+      const vals = draws.map((d) => d(tt, sig)).sort((a, b) => a - b);
+      const mid = percentile(vals, 50);
+      ylo.push(best - (mid - percentile(vals, 15.87)));
+      yhi.push(best + (percentile(vals, 84.13) - mid));
     }
-    if (ylo.length) {
-      traces.push({ x, y: ylo, type: 'scatter', mode: 'lines', uid: `model-lo-${safeId(inst.name)}`, line: { width: 0 }, showlegend: false, hoverinfo: 'skip' },
-        { x, y: yhi, type: 'scatter', mode: 'lines', uid: `model-hi-${safeId(inst.name)}`, line: { width: 0 }, fill: 'tonexty',
-          fillcolor: 'rgba(215,222,235,0.22)', showlegend: false, hoverinfo: 'skip' });
-    }
-    traces.push({ x, y, type: 'scatter', mode: 'lines', uid: `model-${safeId(inst.name)}`, name: `#${f.id} \u00b7 ${f.period.toFixed(4)} d`,
-      legendgroup: 'model', showlegend: legend, line: { color: COLOURS[i % 8], width: 1.2 }, opacity: 0.9, hoverinfo: 'skip' });
-    if (pub) {
-      traces.push({ x, y: yp, type: 'scatter', mode: 'lines', uid: `model-pub-${safeId(inst.name)}`, legendgroup: 'pub', showlegend: legend,
-        name: `\u2605 ${f.published.name} (${t('published')})`, line: { color: '#f5a524', width: 1.2, dash: 'dash' }, hoverinfo: 'skip' });
-    }
-    legend = false;
-  });
-  if (traces.length) Plotly.addTraces(div, traces);
+    if (curve.pub && sig) yp.push(curve.pub.at(tt));
+  }
+  const traces = [];
+  if (ylo.length) {
+    traces.push({ x, y: ylo, type: 'scatter', mode: 'lines', uid: 'model-lo', line: { width: 0 }, showlegend: false, hoverinfo: 'skip' },
+      { x, y: yhi, type: 'scatter', mode: 'lines', uid: 'model-hi', line: { width: 0 }, fill: 'tonexty',
+        fillcolor: 'rgba(215,222,235,0.22)', name: t('envelope'), showlegend: false, hoverinfo: 'skip' });
+  }
+  traces.push({ x, y, type: 'scatter', mode: 'lines', uid: 'model-best', name: sig ? curve.name : `${curve.name} (${t('trend_only')})`,
+    line: { color: '#e8eef8', width: 1.4, dash: sig ? 'solid' : 'dash' }, opacity: 0.85, hoverinfo: 'skip' });
+  if (yp.length) {
+    traces.push({ x, y: yp, type: 'scatter', mode: 'lines', uid: 'model-pub', name: curve.pub.name,
+      line: { color: '#f5a524', width: 1.2, dash: 'dash' }, hoverinfo: 'skip' });
+  }
+  Plotly.addTraces(div, traces);
 }
 
 // the period slider, on a log scale
@@ -1427,7 +1447,7 @@ async function applyRecall(res) {
   drawFip(quick.result, quick.each || []);
   quick.drawn = `1/${(quick.each || []).length}`;
   $('fipstatus').innerHTML = fipSummary(quick.result, quick.elapsed);
-  if (zeroMode === 'fit' && quick.result.offsets) await redrawSeries();
+  if ((zeroMode === 'fit' || $('foldoverlay').checked) && quick.result.trend_model) await redrawSeries();
   if (pview && page.periods) {
     pview.p = page.periods;
     Plotly.relayout('fipplot', { 'xaxis.range': [Math.log10(pview.p[0]), Math.log10(pview.p[1])] });
@@ -1636,7 +1656,7 @@ document.addEventListener('click', (e) => {
   if (foldShown !== null) showFold(foldShown);
   else document.querySelectorAll('[data-fcol]').forEach((x) => x.classList.toggle('on', x.dataset.fcol === foldColour));
 });
-$('foldoverlay').addEventListener('change', showModel);
+$('foldoverlay').addEventListener('change', redrawSeries);
 // the mass of the star typed: kept (the resolver no longer fills it), and
 //   the masses of the fold shown again
 for (const id of ['mstar', 'mstar_err']) {
