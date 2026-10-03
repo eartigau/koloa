@@ -487,7 +487,8 @@ def series_of(files: Any = '', target: str = '', root: str = '',
     if target:
         folder = os.path.join(root or 'archives', folder_name(target))
         if os.path.exists(os.path.join(folder, 'rv', 'all_rv.csv')):
-            gathered = load(folder)['rv']
+            # the velocities only (the photometry is not plotted)
+            gathered = load(folder, photometry=False)['rv']
             # each archive set apart from the file, as the report does
             for arch, tag, sel, asked in (
                     ('DACE', 'DACE',
@@ -1350,6 +1351,19 @@ def remember(page: Dict[str, Any], qid: str, note: str = ''
            f'{time.strftime("%Y%m%d-%H%M%S")}')
     folder = os.path.join(REMEMBERED, rid)
     os.makedirs(os.path.join(folder, 'files'))
+    try:
+        return _remember_into(folder, rid, target, page, job, qid, note)
+    except BaseException:
+        # nothing half written: the list would not show it anyway
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+
+
+def _remember_into(folder: str, rid: str, target: str,
+                   page: Dict[str, Any], job: Dict[str, Any], qid: str,
+                   note: str) -> Dict[str, Any]:
+    """the copies and the files of a result remembered (remember)"""
+    from koloa.gather import folder_name
     files = []
     for rank, row in enumerate(page.get('files') or []):
         path = os.path.abspath(os.path.expanduser(row['path']))

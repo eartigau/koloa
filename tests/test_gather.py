@@ -114,3 +114,21 @@ def test_a_carmenes_star_found_in_the_list_kept(tmp_path, monkeypatch):
     monkeypatch.setattr(kg, '_tap', lambda *a, **k: 1 / 0)
     assert kg.carmenes_star(175.5463, 26.7065)['carmenes_id'] == 'J11421+267'
     assert kg.carmenes_star(10.0, 10.0) is None
+
+
+def test_the_velocities_alone_or_a_sector_gone(tmp_path):
+    """what gather put in a folder, read without its photometry, or with a
+    sector the manifest lists that the folder no longer has"""
+    import json
+    import numpy as np
+    from koloa.data import RVData
+    from koloa.gather import load, write_rv
+    write_rv(RVData(np.arange(5.0), np.zeros(5), np.ones(5),
+                    inst=np.array(['HARPS'] * 5)),
+             str(tmp_path / 'rv' / 'all_rv.csv'))
+    (tmp_path / 'manifest.json').write_text(json.dumps(dict(
+        target='X', archives=dict(tess=dict(sectors=[
+            dict(sector=1, pipeline='SPOC', file='phot/tess/s0001.csv')])))))
+    got = load(str(tmp_path), photometry=False)
+    assert got['rv'].n == 5 and got['tess'] == []
+    assert load(str(tmp_path))['tess'] == []   # the sector is gone

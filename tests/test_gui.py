@@ -281,6 +281,16 @@ def test_a_result_remembered_and_recalled(tmp_path, monkeypatch):
     write_rv(RVData(tarch, rng.normal(0, 3, 15), np.full(15, 1.0),
                     inst=np.array(['HARPS15'] * 15)),
              str(tmp_path / 'arch' / 'GJ_436' / 'rv' / 'all_rv.csv'))
+    # a TESS sector in the archives too (not copied: the report fetches its
+    #   own), listed in the manifest that is
+    star = tmp_path / 'arch' / 'GJ_436'
+    (star / 'phot' / 'tess').mkdir(parents=True)
+    (star / 'phot' / 'tess' / 's0042_SPOC.csv').write_text(
+        'rjd,flux,sflux\n60000.0,1.0,0.001\n')
+    (star / 'manifest.json').write_text(json.dumps(dict(
+        target='GJ 436', archives=dict(tess=dict(status='ok', sectors=[
+            dict(sector=42, pipeline='SPOC',
+                 file='phot/tess/s0042_SPOC.csv')])))))
     qid = 'remember1'
     gui.QUICKS[qid] = dict(
         id=qid, status='done', step='done', step_detail='', progress=None,
@@ -297,6 +307,9 @@ def test_a_result_remembered_and_recalled(tmp_path, monkeypatch):
     with pytest.raises(ValueError):
         gui.remember(page, 'nothing')
     out = gui.remember(page, qid, note='a peak at 2.64 d')
+    copied = tmp_path / 'remembered' / out['id'] / 'archives' / 'GJ_436'
+    assert (copied / 'manifest.json').exists()
+    assert not (copied / 'phot').exists()
     listed = gui.remembered()
     assert [entry['id'] for entry in listed] == [out['id']]
     assert listed[0]['note'] == 'a peak at 2.64 d'

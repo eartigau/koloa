@@ -474,11 +474,14 @@ def gather(target: str, root: str = '.', dace: bool = True,
     return manifest
 
 
-def load(folder: str) -> Dict[str, Any]:
+def load(folder: str, photometry: bool = True) -> Dict[str, Any]:
     """
     What gather() put in a folder
 
     :param folder: str, the folder of a star
+    :param photometry: bool, read the TESS sectors too (False: the
+                       velocities only, faster); a sector the manifest lists
+                       but the folder no longer has is left out
 
     :return: dict, target (target.json), manifest, rv (RVData of every
              velocity, None if there is none), tess (list of dict: sector,
@@ -497,9 +500,14 @@ def load(folder: str) -> Dict[str, Any]:
                           name=manifest.get('target'))
           if os.path.exists(rvfile) else None)
     sectors = []
-    for item in manifest.get('archives', {}).get('tess', {}).get('sectors',
-                                                                 []):
-        with open(os.path.join(folder, item['file'])) as handle:
+    for item in (manifest.get('archives', {}).get('tess', {})
+                 .get('sectors', []) if photometry else []):
+        path = os.path.join(folder, item['file'])
+        if not os.path.exists(path):
+            log(f'TESS sector {item["sector"]}: {item["file"]} is not in '
+                f'{folder}, left out', 'warn')
+            continue
+        with open(path) as handle:
             rows = list(csv.DictReader(handle))
         sectors.append(dict(sector=item['sector'], pipeline=item['pipeline'],
                             time=np.array([_float(r['rjd']) for r in rows]),
