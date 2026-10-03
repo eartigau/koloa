@@ -103,6 +103,12 @@
       </div>
       <h2 class="foldhead"><span data-i18n="fold_title">The fold at a peak</span> <button type="button" class="info" data-help="fold" aria-label="?">i</button></h2>
       <div class="row" id="foldbuttons"></div>
+      <div class="row foldopts">
+        <span class="check"><span class="hint" data-i18n="colour_by">Colour by</span>
+          <span class="seg"><button type="button" class="small on" data-fcol="inst" data-i18n="fcol_inst">instrument</button><button type="button" class="small" data-fcol="date" data-i18n="fcol_date">date</button><button type="button" class="small" data-fcol="berv" id="fcol-berv">BERV</button></span>
+          <button type="button" class="info" data-help="fold_colour" aria-label="?">i</button></span>
+        <span class="check"><label><input type="checkbox" id="foldoverlay"> <span data-i18n="overlay">the solution on the time series</span></label><button type="button" class="info" data-help="overlay" aria-label="?">i</button></span>
+      </div>
       <p class="hint" id="foldnote"></p>
       <div id="foldplot" class="plot"></div>
     </section>

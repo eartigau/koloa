@@ -487,8 +487,11 @@ def series_of(files: Any = '', target: str = '', root: str = '',
     if target:
         folder = os.path.join(root or 'archives', folder_name(target))
         if os.path.exists(os.path.join(folder, 'rv', 'all_rv.csv')):
-            # the velocities only (the photometry is not plotted)
+            # the velocities only (the photometry is not plotted), with the
+            #   BERV of each (the raw files of DACE and CARMENES)
+            from koloa.gather import archive_berv
             gathered = load(folder, photometry=False)['rv']
+            gathered.meta['BERV'] = archive_berv(folder, gathered.time)
             # each archive set apart from the file, as the report does
             for arch, tag, sel, asked in (
                     ('DACE', 'DACE',
@@ -537,6 +540,7 @@ def velocities(files: Any = '', target: str = '', root: str = '',
         rv = data.rv[sel] - np.median(data.rv[sel])
         out.append(dict(name=name, n=int(sel.sum()),
                         source=source.get(name, ''),
+                        median=float(np.median(data.rv[sel])),
                         time=np.round(data.time[sel], 6).tolist(),
                         rv=np.round(rv, 3).tolist(),
                         err=np.round(data.err[sel], 3).tolist(),
@@ -643,6 +647,27 @@ def _distinct_peaks(res, width: float, nmax: int = 8
     return out
 
 
+#: the names of the BERV column of a series (LBL: BERV; DACE: cal_berv)
+BERV_NAMES = ('BERV', 'berv', 'cal_berv')
+
+
+def _berv(data) -> Optional[np.ndarray]:
+    """the BERV of each point of a series [km/s], or None"""
+    for key in BERV_NAMES:
+        val = (getattr(data, 'meta', None) or {}).get(key)
+        if val is not None and np.asarray(val).dtype.kind in 'fiu':
+            val = np.asarray(val, dtype=float)
+            if np.any(np.isfinite(val)):
+                return val
+    return None
+
+
+def _listed(values: np.ndarray, digits: int) -> List[Optional[float]]:
+    """numbers for the page, nan as null (JSON has no nan)"""
+    return [round(float(val), digits) if np.isfinite(val) else None
+            for val in values]
+
+
 def fold(data, period: float, valid: Optional[np.ndarray] = None,
          trend: int = 1) -> Dict[str, Any]:
     """
@@ -659,8 +684,10 @@ def fold(data, period: float, valid: Optional[np.ndarray] = None,
                   acceleration, 2: and its change)
 
     :return: dict, period, K, K_err, tc, rms, the points of each instrument
-             (about its offset and the trend, with their probability to be
-             valid when given) and the curve
+             (about its offset and the trend, with their time, their BERV
+             when the series has it, and their probability to be valid when
+             given), the curve, and the model (its offsets, trend and
+             sinusoid, to draw it on the series)
     """
     time_ = data.time
     tref = float(np.median(time_))
@@ -696,13 +723,24 @@ def fold(data, period: float, valid: Optional[np.ndarray] = None,
                rms=float(np.std(resid[good >= 0.5])), chi2=chi2,
                curve=dict(phase=grid.tolist(),
                           rv=np.round(-amp * np.sin(2 * np.pi * grid),
-                                      4).tolist()), instruments=[])
+                                      4).tolist()), instruments=[],
+               # v(t) = offset + sum_k trend_k ((t - tref) / yr)^k
+               #        + cos cos(2 pi (t - tref) / P) + sin sin(...)
+               model=dict(tref=tref, offsets={str(inst): float(coef[it])
+                                              for it, inst in enumerate(insts)},
+                          trend=[float(val) for val in
+                                 coef[len(insts):len(insts) + trend]],
+                          cos=float(acos), sin=float(asin)))
+    berv = _berv(data)
     for inst in insts:
         sel = data.inst == inst
         out['instruments'].append(dict(
             name=str(inst), phase=np.round(phase[sel], 5).tolist(),
             rv=np.round(shown[sel], 3).tolist(),
-            err=np.round(data.err[sel], 3).tolist()))
+            err=np.round(data.err[sel], 3).tolist(),
+            time=np.round(time_[sel], 5).tolist(),
+            berv=(_listed(berv[sel], 3) if berv is not None
+                  and np.any(np.isfinite(berv[sel])) else None)))
         if valid is not None:
             out['instruments'][-1]['valid'] = np.round(valid[sel],
                                                        4).tolist()
@@ -904,9 +942,55 @@ def quick_state(qid: str) -> Dict[str, Any]:
     return dict(job, elapsed=(job['end'] or time.time()) - job['start'])
 
 
-def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=()):
-    """the figures of the quick look: the velocities shown, the quick FIP
-    with its peaks named, the folds at them"""
+def model_at(item: Dict[str, Any], inst: str, time: np.ndarray,
+             period: float) -> Optional[np.ndarray]:
+    """the solution of a fold (its offset for the instrument, its trend,
+    its sinusoid) at some times [m/s], None for an instrument it lacks"""
+    mod = item.get('model') or {}
+    if inst not in mod.get('offsets', {}):
+        return None
+    span = (np.asarray(time, dtype=float) - mod['tref']) / 365.25
+    arg = 2 * np.pi * (np.asarray(time, dtype=float) - mod['tref']) / period
+    out = mod['offsets'][inst] + mod['cos'] * np.cos(arg) + \
+        mod['sin'] * np.sin(arg)
+    for order, val in enumerate(mod.get('trend', []), start=1):
+        out = out + val * span ** order
+    return out
+
+
+def _mark_offscale(ax, x, y, yr) -> None:
+    """red triangles at the edge of a plot, pointing to the points beyond
+    its velocity range"""
+    if not yr:
+        return
+    x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+    pad = 0.025 * (yr[1] - yr[0])
+    for sel, edge, mark in ((y > yr[1], yr[1] - pad, '^'),
+                            (y < yr[0], yr[0] + pad, 'v')):
+        if np.any(sel):
+            ax.plot(x[sel], np.full(int(sel.sum()), edge), mark, ms=5,
+                    color='#d62728', mec='none', clip_on=False, zorder=6)
+
+
+def _date_ticks(t0: float, t1: float, most: int = 6):
+    """calendar dates between two times [rjd]: their times and labels"""
+    import matplotlib.dates as mdates
+    loc = mdates.AutoDateLocator(minticks=2, maxticks=most)
+    nums = loc.tick_values(mdates.num2date(t0 - 40587.5),
+                           mdates.num2date(t1 - 40587.5))
+    fmt = '%Y' if t1 - t0 > 3 * 365.25 else '%Y-%m' if t1 - t0 > 75 \
+        else '%Y-%m-%d'
+    ticks = [num + 40587.5 for num in nums if t0 <= num + 40587.5 <= t1]
+    return ticks, [mdates.num2date(tt - 40587.5).strftime(fmt)
+                   for tt in ticks]
+
+
+def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
+                       fold_colour: str = 'inst',
+                       overlay: Optional[int] = None):
+    """the figures of the quick look: the velocities shown (with the
+    solution of a fold on them when asked), the quick FIP with its peaks
+    named, the folds at them (coloured by instrument, date or BERV)"""
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -925,10 +1009,35 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=()):
                     color=colour[inst],
                     label=f'{inst} ({source.get(inst, "")}, {int(sel.sum())})')
     ax.axhline(0, color='0.6', lw=0.6, ls=':')
+    # the solution of a fold on the series, each instrument about its median
+    shown = next((item for item in (quick or {}).get('folds') or []
+                  if overlay is not None and item['id'] == overlay), None)
+    if shown:
+        for inst in data.instruments:
+            sel = data.inst == inst
+            lo, hi = data.time[sel].min(), data.time[sel].max()
+            npts = int(min(20000, max(400, 30 * (hi - lo) / shown['period'])))
+            grid = np.linspace(lo - 0.01 * (hi - lo + 1),
+                               hi + 0.01 * (hi - lo + 1), npts)
+            mod = model_at(shown, str(inst), grid, shown['period'])
+            if mod is not None:
+                ax.plot(grid, mod - np.median(data.rv[sel]), lw=0.6,
+                        alpha=0.8, color=colour[inst], zorder=1)
+        ax.text(0.99, 0.02, f'the solution of #{shown["id"]} '
+                f'({shown["period"]:.4f} d)', transform=ax.transAxes,
+                ha='right', fontsize=7, color='0.3')
     if xr:
         ax.set_xlim(*xr)
     if yr:
         ax.set_ylim(*yr)
+        rel = np.concatenate([data.rv[data.inst == inst]
+                              - np.median(data.rv[data.inst == inst])
+                              for inst in data.instruments])
+        times = np.concatenate([data.time[data.inst == inst]
+                                for inst in data.instruments])
+        inside = ((times >= xr[0]) & (times <= xr[1]) if xr
+                  else np.ones(len(times), bool))
+        _mark_offscale(ax, times[inside], rel[inside], yr)
     ax.set_xlabel('BJD - 2400000')
     ax.set_ylabel('RV - median [m s$^{-1}$]')
     ax.legend(fontsize=7, ncol=3, frameon=False, loc='upper left')
@@ -1028,11 +1137,45 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=()):
                                  squeeze=False)
         for ax in axes.ravel()[len(folds):]:
             ax.set_visible(False)
+        # the colour of the points: their instrument, their date or their
+        #   BERV (on one scale for every fold)
+        alls = [inst for item in folds for inst in item['instruments']]
+        if fold_colour == 'berv' and not any(inst.get('berv')
+                                             for inst in alls):
+            fold_colour = 'inst'
+        norm, cmap, label = None, None, ''
+        if fold_colour == 'date':
+            times = np.concatenate([inst['time'] for inst in alls])
+            norm = matplotlib.colors.Normalize(times.min(), times.max())
+            cmap, label = plt.get_cmap('viridis'), 'date'
+        elif fold_colour == 'berv':
+            vals = np.array([val for inst in alls for val in
+                             (inst.get('berv') or []) if val is not None])
+            top = max(float(np.max(np.abs(vals))), 1e-3)
+            norm = matplotlib.colors.Normalize(-top, top)
+            cmap, label = plt.get_cmap('RdBu_r'), 'BERV [km s$^{-1}$]'
         for ax, item in zip(axes.ravel(), folds):
             for inst in item['instruments']:
+                if norm is None:
+                    ax.errorbar(inst['phase'], inst['rv'], inst['err'],
+                                fmt=marker.get(inst['name'], 'o'), ms=3,
+                                lw=0.5, color=colour.get(inst['name'], 'k'))
+                    continue
                 ax.errorbar(inst['phase'], inst['rv'], inst['err'],
-                            fmt=marker.get(inst['name'], 'o'), ms=3,
-                            lw=0.5, color=colour.get(inst['name'], 'k'))
+                            fmt='none', lw=0.5, color='0.7', zorder=1)
+                vals = (inst['time'] if fold_colour == 'date'
+                        else inst.get('berv'))
+                if vals is None:
+                    ax.plot(inst['phase'], inst['rv'],
+                            marker.get(inst['name'], 'o'), ms=3,
+                            color='0.6', zorder=2)
+                    continue
+                vals = np.array([np.nan if val is None else val
+                                 for val in vals], dtype=float)
+                ax.scatter(inst['phase'], inst['rv'], c=vals, cmap=cmap,
+                           norm=norm, s=12, zorder=2,
+                           marker=marker.get(inst['name'], 'o'),
+                           edgecolors='none', plotnonfinite=True)
                 # circled: less than an even chance of being valid
                 low = np.asarray(inst.get('valid', []), float) < 0.5
                 if low.any():
@@ -1049,7 +1192,23 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=()):
             # the velocities shown as the series is
             if yr:
                 ax.set_ylim(*yr)
-        fig.tight_layout()
+                _mark_offscale(ax, [ph for inst in item['instruments']
+                                    for ph in inst['phase']],
+                               [val for inst in item['instruments']
+                                for val in inst['rv']], yr)
+        if norm is None:
+            fig.tight_layout()
+        else:
+            # the scale of the colours in a strip of its own, on the right
+            fig.tight_layout(rect=(0, 0, 0.92, 1))
+            cax = fig.add_axes((0.935, 0.15, 0.012, 0.7))
+            bar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap),
+                               cax=cax)
+            bar.set_label(label)
+            if fold_colour == 'date':
+                ticks, labels = _date_ticks(norm.vmin, norm.vmax)
+                bar.set_ticks(ticks)
+                bar.set_ticklabels(labels)
         figs.append(('folds', fig))
     return figs
 
@@ -1069,7 +1228,9 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
            f'and the folds at its strongest peaks.\n']
     captions = dict(
         series='The velocities shown, each instrument about its median, in '
-               'the ranges of the page.',
+               'the ranges of the page (the calendar dates on top), with the '
+               'solution of a fold when the page shows it; a red triangle '
+               'at an edge points to a velocity beyond the range.',
         fip='The quick FIP of the series shown: of the period or any of its '
             'aliases (black, what decides on a planet) and of the period '
             'alone (grey); FIP = 1 \\% dotted, the window (a day, a synodic '
@@ -1080,7 +1241,9 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
               'at the conjunction (each night weighted by its probability '
               'of being valid), on the velocity range of the series; '
               'circled, a night with less than a 50 \\% probability of '
-              'being valid (an outlier, as the FIP saw it).',
+              'being valid (an outlier, as the FIP saw it); coloured as on '
+              'the page (by instrument, date or BERV); a red triangle at an '
+              'edge points to a night beyond the range.',
         each='The quick FIP of each instrument on its own (its nightly '
              'means, its jitter sampled in the FIP): of the period or any '
              'of its aliases (colour) and of the period alone (grey); '
@@ -1238,7 +1401,9 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
 
 
 def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
-                  qid: str = '', command_line: str = '') -> bytes:
+                  qid: str = '', command_line: str = '',
+                  fold_colour: str = 'inst',
+                  overlay: Optional[int] = None) -> bytes:
     """
     The quick look as a PDF, a LaTeX document: the velocities shown (the
     ranges of the page), the quick FIP with its peaks named, the folds at
@@ -1260,7 +1425,8 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
     job = QUICKS.get(qid) or {}
     quick, each = job.get('result'), job.get('each') or []
     title = (opts.get('target') or '').strip() or 'the series'
-    figs = _quicklook_figures(data, source, quick, xr, yr, pr, title, each)
+    figs = _quicklook_figures(data, source, quick, xr, yr, pr, title, each,
+                              fold_colour, overlay)
     tmp = tempfile.mkdtemp(prefix='koloa_quicklook_')
     try:
         for name, fig in figs:
@@ -1627,7 +1793,9 @@ class Handler(BaseHTTPRequestHandler):
                 pdf = quicklook_pdf(body.get('options', {}), body.get('x'),
                                     body.get('y'), body.get('p'),
                                     body.get('quick', ''),
-                                    body.get('command', ''))
+                                    body.get('command', ''),
+                                    body.get('fold_colour') or 'inst',
+                                    body.get('overlay'))
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/pdf')
                 self.send_header('Content-Length', str(len(pdf)))

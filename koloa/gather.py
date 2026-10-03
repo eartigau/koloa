@@ -474,6 +474,52 @@ def gather(target: str, root: str = '.', dace: bool = True,
     return manifest
 
 
+def archive_berv(folder: str, times: np.ndarray, tol: float = 1e-4
+                 ) -> np.ndarray:
+    """
+    The barycentric Earth radial velocity (BERV) of each velocity of a
+    star's archives, from what they gave as it came: DACE's cal_berv
+    (rv/dace/raw_*.csv, by rjd) and CARMENES' berv (rv/carmenes/raw.csv, by
+    bjd); matched by time
+
+    :param folder: str, the folder of a star
+    :param times: np.ndarray, the times of the velocities [rjd]
+    :param tol: float, the largest difference of time to match [days]
+
+    :return: np.ndarray, the BERV [km/s] (nan where there is none)
+    """
+    import glob
+    ref_t, ref_v = [], []
+    sources = [(path, 'rjd', 'cal_berv', 0.0) for path in
+               sorted(glob.glob(os.path.join(folder, 'rv', 'dace',
+                                             'raw_*.csv')))]
+    sources.append((os.path.join(folder, 'rv', 'carmenes', 'raw.csv'),
+                    'bjd', 'berv', 2400000.0))
+    for path, tcol, bcol, offset in sources:
+        if not os.path.exists(path):
+            continue
+        with open(path) as handle:
+            for row in csv.DictReader(handle):
+                tt, bb = _float(row.get(tcol)), _float(row.get(bcol))
+                if np.isfinite(tt) and np.isfinite(bb):
+                    ref_t.append(tt - offset)
+                    ref_v.append(bb)
+    times = np.asarray(times, dtype=float)
+    out = np.full(len(times), np.nan)
+    if not ref_t or not len(times):
+        return out
+    order = np.argsort(ref_t)
+    ref_t, ref_v = np.asarray(ref_t)[order], np.asarray(ref_v)[order]
+    idx = np.clip(np.searchsorted(ref_t, times), 1, max(len(ref_t) - 1, 1))
+    idx = np.minimum(idx, len(ref_t) - 1)
+    left = np.maximum(idx - 1, 0)
+    pick = np.where(np.abs(times - ref_t[left]) <= np.abs(ref_t[idx] - times),
+                    left, idx)
+    near = np.abs(ref_t[pick] - times) <= tol
+    out[near] = ref_v[pick][near]
+    return out
+
+
 def load(folder: str, photometry: bool = True) -> Dict[str, Any]:
     """
     What gather() put in a folder

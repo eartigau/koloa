@@ -244,6 +244,7 @@ async function drawVelocities(res, extra) {
   const times = res.instruments.flatMap((inst) => inst.time);
   traces.push({ x: [Math.min(...times), Math.max(...times)], y: [null, null], xaxis: 'x2', type: 'scatter', mode: 'markers',
     showlegend: false, hoverinfo: 'skip', marker: { opacity: 0 } });
+  traces.push(offscaleTrace());
   $('plotcard').classList.add('on');
   div.classList.add('on');
   const axis = { gridcolor: 'rgba(200,220,255,0.10)', zerolinecolor: 'rgba(200,220,255,0.25)', color: '#7a8597' };
@@ -272,12 +273,14 @@ async function drawVelocities(res, extra) {
   if (window.Plotly && div.on) {
     div.removeAllListeners && div.removeAllListeners('plotly_legendclick');
     div.on('plotly_legendclick', (ev) => {
+      if (ev.curveNumber >= lastRV.length) return true;   // the solution of a fold
       const name = lastRV[ev.curveNumber].name;
       setExcluded(name, !excludedSet().has(name.toUpperCase()));
       return false;
     });
   }
   styleExcluded();
+  showModel();
   return true;
 }
 
@@ -351,6 +354,7 @@ function applyView() {
   syncSliders();
   foldY();
   dateAxis();
+  rvOffscale();
 }
 
 // the calendar dates on top of the time series: rjd (JD - 2400000) is
@@ -438,6 +442,10 @@ function fromZoom(ev) {
   if (ev['yaxis.autorange']) view.y = view.ydom.slice();
   syncSliders();
   if (ev['xaxis.range[0]'] !== undefined || ev['xaxis.autorange']) dateAxis();
+  if (ev['xaxis.range[0]'] !== undefined || ev['yaxis.range[0]'] !== undefined || ev['xaxis.autorange'] || ev['yaxis.autorange']) {
+    rvOffscale();
+    if (ev['yaxis.range[0]'] !== undefined || ev['yaxis.autorange']) foldY();
+  }
   if (ev['yaxis.range[0]'] !== undefined || ev['yaxis.autorange']) foldY();
 }
 
@@ -636,20 +644,58 @@ function drawEach(each) {
     + '</table>';
 }
 
+let foldShown = null;    // the id of the fold shown
+let foldColour = 'inst'; // its points by instrument, date or BERV
+try { foldColour = localStorage.getItem('koloa-foldcolour') || 'inst'; } catch (err) { /* no storage */ }
+const RED = '#ff3b3b';
+const dateText = (r) => rjdDate(r).toISOString().slice(0, 10);
+
+function currentFold() {
+  return ((quick && quick.result && quick.result.folds) || []).find((x) => x.id === foldShown) || null;
+}
+
 function showFold(id) {
   const f = ((quick && quick.result && quick.result.folds) || []).find((x) => x.id === +id);
   if (!f) return;
+  foldShown = f.id;
   document.querySelectorAll('[data-fold]').forEach((b) => b.classList.toggle('on', +b.dataset.fold === f.id));
-  $('foldnote').innerHTML = `<b>#${f.id}</b>: P = ${f.period.toFixed(4)} d, K = ${f.K.toFixed(2)} \u00b1 ${f.K_err.toFixed(2)} m/s, `
-    + `rms ${f.rms.toFixed(2)} m/s \u00b7 ${esc(t('fold_note'))}`;
+  $('foldnote').innerHTML = `<b>#${f.id}</b>: P = ${f.period.toFixed(4)} d, K = ${f.K.toFixed(2)} ± ${f.K_err.toFixed(2)} m/s, `
+    + `rms ${f.rms.toFixed(2)} m/s · ${esc(t('fold_note'))}`;
+  // the colour of the points: their instrument, their date, or their BERV
+  //   (when the series has it), on one scale for all
+  const hasBerv = f.instruments.some((inst) => inst.berv);
+  $('fcol-berv').disabled = !hasBerv;
+  const mode = foldColour === 'berv' && !hasBerv ? 'inst' : foldColour;
+  document.querySelectorAll('[data-fcol]').forEach((b) => b.classList.toggle('on', b.dataset.fcol === mode));
+  let scale = null;
+  if (mode === 'date') {
+    const ts = f.instruments.flatMap((inst) => inst.time || []);
+    const tk = dateTicks(Math.min(...ts), Math.max(...ts), 640);
+    scale = { cmin: Math.min(...ts), cmax: Math.max(...ts), colorscale: 'Viridis',
+      colorbar: { title: { text: t('fcol_date') }, tickvals: tk.vals, ticktext: tk.text } };
+  } else if (mode === 'berv') {
+    const top = Math.max(1e-3, ...f.instruments.flatMap((inst) => (inst.berv || []).filter((v) => v !== null).map(Math.abs)));
+    scale = { cmin: -top, cmax: top, colorscale: 'RdBu', reversescale: true, colorbar: { title: { text: 'BERV [km/s]' } } };
+  }
   const order = (lastRV || []).map((inst) => inst.name);
+  let barShown = false;
   const traces = f.instruments.map((inst) => {
     const i = Math.max(0, order.indexOf(inst.name));
-    const valid = inst.valid ? `<br>${esc(t('p_valid'))} %{customdata:.2f}` : '';
-    return { x: inst.phase, y: inst.rv, name: inst.name, type: 'scatter', mode: 'markers', customdata: inst.valid,
-      error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: COLOURS[i % 8] },
-      marker: { color: COLOURS[i % 8], symbol: SYMBOLS[i % 8], size: 7, line: { color: '#08111f', width: 1 } },
-      hovertemplate: `${inst.name}<br>phase %{x:.3f}<br>%{y:.2f} m/s${valid}<extra></extra>` };
+    const vals = mode === 'date' ? inst.time : mode === 'berv' ? inst.berv : null;
+    let marker = { color: COLOURS[i % 8], symbol: SYMBOLS[i % 8], size: 7, line: { color: '#08111f', width: 1 } };
+    if (scale && vals) {
+      marker = { ...marker, color: vals, colorscale: scale.colorscale, reversescale: !!scale.reversescale, cmin: scale.cmin, cmax: scale.cmax,
+        showscale: !barShown, colorbar: { ...scale.colorbar, thickness: 12, len: 0.9, x: 1.01, outlinewidth: 0, tickfont: { size: 10 } } };
+      barShown = true;
+    } else if (scale) marker = { ...marker, color: '#5a6476' };
+    const custom = inst.phase.map((_, k) => [inst.valid ? inst.valid[k] : null, inst.time ? dateText(inst.time[k]) : '',
+      inst.berv ? inst.berv[k] : null]);
+    const hover = `${inst.name}<br>phase %{x:.3f}<br>%{y:.2f} m/s`
+      + (inst.time ? '<br>%{customdata[1]}' : '') + (inst.berv ? '<br>BERV %{customdata[2]:.2f} km/s' : '')
+      + (inst.valid ? `<br>${esc(t('p_valid'))} %{customdata[0]:.2f}` : '');
+    return { x: inst.phase, y: inst.rv, name: inst.name, type: 'scatter', mode: 'markers', customdata: custom,
+      error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: scale ? 'rgba(200,220,255,0.35)' : COLOURS[i % 8] },
+      marker, hovertemplate: `${hover}<extra></extra>` };
   });
   traces.push({ x: f.curve.phase, y: f.curve.rv, name: `K = ${f.K.toFixed(2)} m/s`, type: 'scatter', mode: 'lines',
     line: { color: '#e8eef8', width: 2 }, hoverinfo: 'skip' });
@@ -664,20 +710,91 @@ function showFold(id) {
       marker: { symbol: 'circle-open', size: 17, color: '#ffffff', line: { width: 1.6 } },
       hovertemplate: `${esc(t('p_valid'))} %{customdata:.2f}<extra></extra>` });
   }
+  traces.push(offscaleTrace());
   const axis = { gridcolor: 'rgba(200,220,255,0.10)', zerolinecolor: 'rgba(200,220,255,0.25)', color: '#7a8597' };
   $('foldplot').classList.add('on');
   Plotly.newPlot('foldplot', traces, {
     paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(4,8,16,0.35)', font: { family: 'Space Grotesk, sans-serif', color: '#e8eef8' },
-    margin: { ...PLOT_MARGIN, t: 30 }, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' },
+    margin: { ...PLOT_MARGIN, t: 30, r: scale ? 100 : PLOT_MARGIN.r }, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' },
     xaxis: { ...axis, title: t('phase_axis'), range: [0, 1] },
     // the velocities on the range of the series above
     yaxis: { ...axis, title: 'RV [m/s]', ...(view && view.y ? { range: view.y.slice() } : {}) },
-  }, { responsive: true, displaylogo: false });
+  }, { responsive: true, displaylogo: false }).then(foldOffscale);
+  showModel();
 }
 
 // the fold follows the y range of the series
 function foldY() {
-  if (view && view.y && window.Plotly && $('foldplot').data) Plotly.relayout('foldplot', { 'yaxis.range': view.y.slice() });
+  if (view && view.y && window.Plotly && $('foldplot').data) {
+    Plotly.relayout('foldplot', { 'yaxis.range': view.y.slice() });
+    foldOffscale();
+  }
+}
+
+// a red triangle at the edge of a plot, pointing to a point beyond its y
+//   range (hover: its velocity)
+function offscaleTrace() {
+  return { x: [], y: [], type: 'scatter', mode: 'markers', uid: 'offscale', showlegend: false, cliponaxis: false,
+    marker: { color: RED, size: 10, symbol: [], line: { width: 0 } },
+    hovertemplate: `${esc(t('offscale'))}: %{customdata:.1f} m/s<extra></extra>` };
+}
+function setOffscale(id, xs, ys, yr, xr) {
+  const div = $(id);
+  if (!window.Plotly || !div.data) return;
+  const k = div.data.findIndex((d) => d.uid === 'offscale');
+  if (k < 0) return;
+  const out = { x: [], y: [], symbol: [], v: [] };
+  if (yr) {
+    const pad = 0.02 * (yr[1] - yr[0]);
+    xs.forEach((x, j) => {
+      const y = ys[j];
+      if (y === null || y === undefined || (xr && (x < xr[0] || x > xr[1]))) return;
+      if (y > yr[1]) { out.x.push(x); out.y.push(yr[1] - pad); out.symbol.push('triangle-up'); out.v.push(y); }
+      if (y < yr[0]) { out.x.push(x); out.y.push(yr[0] + pad); out.symbol.push('triangle-down'); out.v.push(y); }
+    });
+  }
+  Plotly.restyle(div, { x: [out.x], y: [out.y], customdata: [out.v], 'marker.symbol': [out.symbol] }, [k]);
+}
+function rvOffscale() {
+  if (!view) return;
+  const insts = kept();
+  setOffscale('rvplot', insts.flatMap((inst) => inst.time), insts.flatMap((inst) => inst.rv), view.y, view.x);
+}
+function foldOffscale() {
+  const f = currentFold();
+  if (!f || !view || !view.y) return;
+  setOffscale('foldplot', f.instruments.flatMap((inst) => inst.phase), f.instruments.flatMap((inst) => inst.rv), view.y, null);
+}
+
+// the solution of the fold shown on the time series, each instrument about
+//   its median as its points are (its offset, the trend, the sinusoid)
+function modelAt(f, name, tt) {
+  const m = f.model, span = (tt - m.tref) / 365.25, arg = 2 * Math.PI * (tt - m.tref) / f.period;
+  let v = m.offsets[name] + m.cos * Math.cos(arg) + m.sin * Math.sin(arg);
+  m.trend.forEach((c, k) => { v += c * span ** (k + 1); });
+  return v;
+}
+function showModel() {
+  const div = $('rvplot');
+  if (!window.Plotly || !div.data) return;
+  const old = div.data.map((d, k) => (String(d.uid || '').startsWith('model') ? k : -1)).filter((k) => k >= 0);
+  if (old.length) Plotly.deleteTraces(div, old);
+  const f = $('foldoverlay').checked ? currentFold() : null;
+  if (!f || !f.model) return;
+  const traces = [];
+  (lastRV || []).forEach((inst, i) => {
+    if (!(inst.name in f.model.offsets) || inst.median === undefined) return;
+    const lo = Math.min(...inst.time), hi = Math.max(...inst.time), pad = 0.01 * (hi - lo + 1);
+    const n = Math.round(Math.min(20000, Math.max(400, 30 * (hi - lo) / f.period)));
+    const x = [], y = [];
+    for (let k = 0; k < n; k++) {
+      const tt = lo - pad + (hi - lo + 2 * pad) * k / (n - 1);
+      x.push(tt); y.push(modelAt(f, inst.name, tt) - inst.median);
+    }
+    traces.push({ x, y, type: 'scatter', mode: 'lines', uid: `model-${inst.name}`, name: `#${f.id} · ${f.period.toFixed(4)} d`,
+      legendgroup: 'model', showlegend: !traces.length, line: { color: COLOURS[i % 8], width: 1.2 }, opacity: 0.85, hoverinfo: 'skip' });
+  });
+  if (traces.length) Plotly.addTraces(div, traces);
 }
 
 // the period slider, on a log scale
@@ -710,7 +827,8 @@ async function quicklookPdf() {
   try {
     const resp = await fetch('/api/quicklook_pdf', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ options: opts, x: view ? view.x : null, y: view ? view.y : null, p: pview ? pview.p : null,
-        quick: quick && quick.result ? quick.id : '', command: $('cmd-detailed').textContent }) });
+        quick: quick && quick.result ? quick.id : '', command: $('cmd-detailed').textContent,
+        fold_colour: foldColour, overlay: $('foldoverlay').checked && foldShown !== null ? foldShown : null }) });
     if (!resp.ok) throw new Error((await resp.json()).error || resp.statusText);
     const link = document.createElement('a');
     link.href = URL.createObjectURL(await resp.blob());
@@ -752,6 +870,7 @@ function resetPage() {
   pview = null;
   lastRV = null;
   onDisk = null;
+  foldShown = null;
   showDiskPoints();
 }
 
@@ -922,6 +1041,16 @@ $('phi').addEventListener('input', periodsFromSliders);
 $('refip').addEventListener('click', startQuick);
 $('pdf').addEventListener('click', quicklookPdf);
 document.addEventListener('click', (e) => { const b = e.target.closest('[data-fold]'); if (b) showFold(b.dataset.fold); });
+// the colour of the fold: by instrument, date or BERV
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-fcol]');
+  if (!b || b.disabled) return;
+  foldColour = b.dataset.fcol;
+  try { localStorage.setItem('koloa-foldcolour', foldColour); } catch (err) { /* no storage */ }
+  if (foldShown !== null) showFold(foldShown);
+  else document.querySelectorAll('[data-fcol]').forEach((x) => x.classList.toggle('on', x.dataset.fcol === foldColour));
+});
+$('foldoverlay').addEventListener('change', showModel);
 $('fullrange').addEventListener('click', () => { $('clip').checked = false; view = null; refitY(); });
 window.addEventListener('resize', () => { if (view) setTimeout(() => { syncSliders(); dateAxis(); }, 100); });
 $('run-gather').addEventListener('click', () => run('gather', options('gather')));

@@ -377,3 +377,67 @@ def test_the_quick_look_measures_the_acceleration(tmp_path, monkeypatch):
                                   / 365.25)) < 4 * acc['accel'][1]
     assert acc['accel_sigma'] > 5
     assert 'jerk' not in out[False]['acceleration']
+
+
+def test_the_fold_carries_its_solution_dates_and_berv(tmp_path):
+    """a fold gives each night its time and BERV, and its solution (offsets,
+    trend, sinusoid) that the series is drawn with; the BERV of archives
+    comes from their raw files; the PDF colours by date or BERV, draws the
+    solution on the series, and marks what is off scale"""
+    import numpy as np
+    from koloa.data import RVData
+    from koloa.gather import archive_berv
+    rng = np.random.default_rng(5)
+    time = np.sort(rng.uniform(60000, 60400, 50))
+    inst = np.array(['AAA'] * 30 + ['BBB'] * 20)
+    rv = (8.0 * np.sin(2 * np.pi * time / 5.3) + 2.0 * (time - 60200)
+          / 365.25 + np.where(inst == 'AAA', 100.0, -50.0)
+          + rng.normal(0, 1.0, 50))
+    berv = 25 * np.cos(2 * np.pi * (time - 60000) / 365.25)
+    data = RVData(time, rv, np.full(50, 1.0), inst=inst,
+                  meta=dict(BERV=np.where(inst == 'AAA', berv, np.nan)))
+    out = gui.fold(data, 5.3)
+    one = {item['name']: item for item in out['instruments']}
+    assert one['AAA']['berv'] is not None and one['BBB']['berv'] is None
+    assert len(one['AAA']['time']) == 30
+    # the solution, at the times of the points, is the fit itself
+    for name in ('AAA', 'BBB'):
+        sel = data.inst == name
+        mod = gui.model_at(out, name, data.time[sel], 5.3)
+        assert np.std(data.rv[sel] - mod) < 1.5
+    assert gui.model_at(out, 'CCC', data.time, 5.3) is None
+    # the BERV of the archives: DACE's raw file by rjd, CARMENES' by bjd
+    (tmp_path / 'rv' / 'dace').mkdir(parents=True)
+    (tmp_path / 'rv' / 'carmenes').mkdir()
+    (tmp_path / 'rv' / 'dace' / 'raw_X.csv').write_text(
+        'rjd,cal_berv\n60001.5,12.5\n60003.25,-3.0\n')
+    (tmp_path / 'rv' / 'carmenes' / 'raw.csv').write_text(
+        'bjd,berv\n2460010.0,7.0\n')
+    got = archive_berv(str(tmp_path), np.array([60003.25, 60001.5, 60010.0,
+                                                60020.0]))
+    assert got[:3].tolist() == [-3.0, 12.5, 7.0] and np.isnan(got[3])
+    # the PDF, coloured by date then by BERV, the solution on the series
+    write = tmp_path / 'series.csv'
+    write.write_text('rjd,vrad,svrad,BERV\n' + ''.join(
+        f'{tt!r},{vv!r},1.0,{bb!r}\n' for tt, vv, bb in
+        zip(time[inst == 'AAA'], rv[inst == 'AAA'], berv[inst == 'AAA'])))
+    nights = gui.selection(dict(files=[dict(path=str(write))]))[0].nightly()
+    fold = dict(gui.fold(nights, 5.3), id=1)
+    qid = 'foldpdf'
+    gui.QUICKS[qid] = dict(id=qid, status='done', start=0.0, end=1.0,
+                           each=[], result=dict(
+                               gui._fip_curves(type('R', (), dict(
+                                   freq=np.array([0.1, 0.2, 0.3]),
+                                   fip=np.array([0.5, 1e-5, 0.9]),
+                                   family=np.array([0.5, 1e-5, 0.9])))()),
+                               known=[], window=gui.WINDOW, passes=1,
+                               planets=[], peak_list=[], folds=[fold],
+                               pk=[0.1, 0.9], peaks=[], n=nights.n,
+                               nexp=nights.n, instruments={'inst': nights.n},
+                               inflation={}, settings=dict(gui.QUICK,
+                                                           trend=1)))
+    for colour in ('date', 'berv'):
+        pdf = gui.quicklook_pdf(dict(files=[dict(path=str(write))]),
+                                yr=[-5.0, 5.0], qid=qid, fold_colour=colour,
+                                overlay=1)
+        assert pdf[:4] == b'%PDF'

@@ -190,3 +190,12 @@ main[hidden] { display: none !important; }
 #remlist td .note { display: block; color: var(--muted); font-size: 0.82rem; max-width: 260px; }
 #remlist td.acts { white-space: nowrap; }
 #remlist td.acts button { margin: 0 4px 4px 0; }
+
+/* the colour of the fold, and its solution on the series */
+.foldopts { gap: 18px; }
+.foldopts .check { gap: 6px; }
+.seg { display: inline-flex; }
+.seg button { border-radius: 0; margin-left: -1px; }
+.seg button:first-child { border-radius: 999px 0 0 999px; margin-left: 0; }
+.seg button:last-child { border-radius: 0 999px 999px 0; }
+[data-fcol].on { background: rgba(98, 194, 255, 0.35); border-color: var(--accent); color: #fff; position: relative; }
