@@ -597,6 +597,8 @@ def known_periods(target: str) -> List[Dict[str, Any]]:
         return [dict(name=pl['name'], P=float(pl['P']), K=number(pl.get('K')),
                      e=number(pl.get('e')), omega=number(pl.get('omega')),
                      tp=number(pl.get('tp')), tc=number(pl.get('tc')),
+                     P_err=number(pl.get('P_err')),
+                     tc_err=number(pl.get('tc_err')),
                      reference=pl.get('reference') or '')
                 for pl in (known_planets(host=host)['planets'] if host
                            else []) if pl.get('P')]
@@ -604,10 +606,147 @@ def known_periods(target: str) -> List[Dict[str, Any]]:
         return []
 
 
+def transits_of(target: str, known: List[Dict[str, Any]]
+                ) -> List[Dict[str, Any]]:
+    """
+    The transit ephemerides of a star: of its known planets that have a
+    time of transit (the archive), and of its TOIs (TESS; not the false
+    positives)
+
+    :return: list of dict: name, source, P, P_err, tc, tc_err [BJD -
+             2400000], reference
+    """
+    out = [dict(name=pl['name'], source='archive', P=pl['P'],
+                P_err=pl.get('P_err'), tc=pl['tc'], tc_err=pl.get('tc_err'),
+                reference=pl.get('reference', ''))
+           for pl in known if pl.get('tc') is not None]
+    try:
+        from koloa.archive import TOI_NOT_PLANETS, resolve, tois
+        tic = resolve(target).get('tic') if target.strip() else None
+        for item in tois(tic) if tic else []:
+            if item['tc'] is None or item['disposition'] in TOI_NOT_PLANETS:
+                continue
+            out.append(dict(name=f'TOI-{item["toi"]}', source='TESS',
+                            P=item['P'], P_err=item['P_err'], tc=item['tc'],
+                            tc_err=item['tc_err'],
+                            reference=f'TESS ({item["disposition"]})'))
+    except Exception:  # a help, not a need
+        pass
+    return out
+
+
+def fold_transit(data, transit: Dict[str, Any],
+                 valid: Optional[np.ndarray] = None, trend: int = 1
+                 ) -> Dict[str, Any]:
+    """
+    The series folded on a transit ephemeris: phase 0 at the transit (not
+    at a conjunction the velocities put), a circular orbit with its phase
+    fixed by the transits (its K, each instrument's offset and the trend
+    fitted, each night weighted by its probability of being valid); the
+    ephemeris carried to the velocities with its error; and the
+    conjunction the velocities put on their own, set against it
+
+    :param data: RVData, the nightly means
+    :param transit: dict, name, P, P_err, tc, tc_err (transits_of)
+    :param valid: np.ndarray or None, each night's probability of being
+                  valid
+    :param trend: int, the order of the trend
+
+    :return: dict, as fold() gives, with transit (the ephemeris at the
+             velocities: t0, its error in days and in phase, the cycles
+             since the transit; the conjunction of the velocities alone,
+             its offset from t0 and in sigma)
+    """
+    per, tc = float(transit['P']), float(transit['tc'])
+    sper = float(transit.get('P_err') or 0.0)
+    stc = float(transit.get('tc_err') or 0.0)
+    time_ = data.time
+    # the transit nearest the middle of the velocities, and its error
+    ncyc = int(np.round((np.median(time_) - tc) / per))
+    t0 = tc + ncyc * per
+    st0 = float(np.hypot(stc, ncyc * sper))
+    insts = list(data.instruments)
+    cols = [(data.inst == inst).astype(float) for inst in insts]
+    tref = float(np.median(time_))
+    cols += [((time_ - tref) / 365.25) ** order
+             for order in range(1, trend + 1)]
+    cols.append(-np.sin(2 * np.pi * (time_ - t0) / per))
+    design = np.column_stack(cols)
+    good = (np.ones(data.n) if valid is None
+            else np.clip(np.asarray(valid, float), 1e-6, 1.0))
+    wgt = good / data.err ** 2
+    amat = design.T @ (design * wgt[:, None])
+    coef = np.linalg.solve(amat, design.T @ (data.rv * wgt))
+    cov = np.linalg.inv(amat)
+    resid = data.rv - design @ coef
+    chi2 = float(np.sum(resid ** 2 * wgt)) / max(np.sum(good) - len(coef),
+                                                 1)
+    cov *= max(chi2, 1.0)
+    amp, kerr = float(coef[-1]), float(np.sqrt(cov[-1, -1]))
+    shown = data.rv - design[:, :-1] @ coef[:-1]
+    phase = ((time_ - t0) / per) % 1.0
+    grid = np.linspace(0, 1, 201)
+    curve = -amp * np.sin(2 * np.pi * grid)
+    band = kerr * np.abs(np.sin(2 * np.pi * grid))
+    # the conjunction of the velocities alone (a sinusoid, its phase free)
+    free = fold(data, per, valid, trend)
+    shift = (free['tc'] - t0 + 0.5 * per) % per - 0.5 * per
+    sshift = float(np.hypot(free.get('tc_err') or 0.0, st0))
+    out = dict(kind='sine', period=per, K=amp, K_err=kerr, tc=float(t0),
+               rms=float(np.std(resid[good >= 0.5])), chi2=chi2,
+               curve=dict(phase=grid.tolist(), rv=np.round(curve, 4).tolist(),
+                          lo=np.round(curve - band, 4).tolist(),
+                          hi=np.round(curve + band, 4).tolist()),
+               instruments=[],
+               model=dict(kind='sine', period=per, tref=float(t0),
+                          offsets={str(inst): float(coef[it])
+                                   for it, inst in enumerate(insts)},
+                          trend=[float(val) for val in
+                                 coef[len(insts):len(insts) + trend]],
+                          ttrend=tref, tscale=365.25, cos=0.0,
+                          sin=-amp),
+               transit=dict(transit, t0=float(t0), t0_err=st0,
+                            phase_err=st0 / per, cycles=ncyc,
+                            conj=float(free['tc']),
+                            conj_err=free.get('tc_err'),
+                            shift=float(shift), shift_err=sshift,
+                            shift_sigma=(abs(shift) / sshift if sshift > 0
+                                         else None),
+                            K_free=free['K'], K_free_err=free['K_err']))
+    out['draws'] = []
+    try:
+        rng = np.random.default_rng(17)
+        for draw in rng.multivariate_normal(coef, cov, NDRAW):
+            out['draws'].append(dict(
+                out['model'], offsets={str(inst): float(draw[it])
+                                       for it, inst in enumerate(insts)},
+                trend=[float(val) for val in
+                       draw[len(insts):len(insts) + trend]],
+                sin=-float(draw[-1])))
+    except (ValueError, np.linalg.LinAlgError):
+        out['draws'] = []
+    berv = _berv(data)
+    for inst in insts:
+        sel = data.inst == inst
+        out['instruments'].append(dict(
+            name=str(inst), phase=np.round(phase[sel], 5).tolist(),
+            rv=np.round(shown[sel], 3).tolist(),
+            err=np.round(data.err[sel], 3).tolist(),
+            time=np.round(time_[sel], 5).tolist(),
+            berv=(_listed(berv[sel], 3) if berv is not None
+                  and np.any(np.isfinite(berv[sel])) else None)))
+        if valid is not None:
+            out['instruments'][-1]['valid'] = np.round(valid[sel],
+                                                       4).tolist()
+    return out
+
+
 def published(planet: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """the published orbit of a known planet as a Keplerian signal (the
-    archive's default solution: P, K, e, omega [deg], tp, or tc when there
-    is no tp), or None when it lacks K or an epoch"""
+    archive's default solution: P, K, e, omega [deg], and its phase from tc
+    when there is one, the transits being far more precise than an RV tp,
+    which the archive may take from another paper; else from tp), or None
+    when it lacks K or an epoch"""
     from koloa import kepler
     if not planet.get('K') or (planet.get('tp') is None
                                and planet.get('tc') is None):
@@ -616,9 +755,8 @@ def published(planet: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     # an omega of 0 is one (not a missing one: 90 deg, a circular orbit's)
     omega = np.radians(float(planet['omega'] if planet.get('omega')
                              is not None else 90.0))
-    tperi = (float(planet['tp']) if planet.get('tp') is not None
-             else kepler.tc_to_tp(float(planet['tc']), planet['P'], ecc,
-                                  omega))
+    tperi = (kepler.tc_to_tp(float(planet['tc']), planet['P'], ecc, omega)
+             if planet.get('tc') is not None else float(planet['tp']))
     return dict(kind='kepler', period=float(planet['P']), tp=tperi, e=ecc,
                 omega=float(omega), K=float(planet['K']),
                 name=planet['name'], reference=planet.get('reference', ''))
@@ -771,6 +909,10 @@ def fold(data, period: float, valid: Optional[np.ndarray] = None,
     #   a quarter of a period later
     phi0 = float(np.arctan2(asin, acos))
     tc = tref + period * (phi0 / (2 * np.pi) + 0.25)
+    # the error of the conjunction: of phi0 = atan2(sin, cos)
+    gphi = np.array([-asin, acos]) / max(amp, 1e-12) ** 2
+    tc_err = float(period / (2 * np.pi)
+                   * np.sqrt(max(gphi @ cov[-2:, -2:] @ gphi, 0.0)))
     phase = ((time_ - tc) / period) % 1.0
     shown = data.rv - design[:, :-2] @ coef[:-2]
     grid = np.linspace(0, 1, 201)
@@ -781,6 +923,7 @@ def fold(data, period: float, valid: Optional[np.ndarray] = None,
     curve = -amp * np.sin(2 * np.pi * grid)
     sig = np.sqrt(np.einsum('ik,ij,jk->k', gvec, cov[-2:, -2:], gvec))
     out = dict(period=float(period), K=amp, K_err=kerr, tc=float(tc),
+               tc_err=tc_err,
                rms=float(np.std(resid[good >= 0.5])), chi2=chi2,
                curve=dict(phase=grid.tolist(), rv=np.round(curve, 4).tolist(),
                           lo=np.round(curve - sig, 4).tolist(),
@@ -952,6 +1095,7 @@ def _run_quick(qid: str, data, target: str, trend: int = 1):
                      for pk in named]
             job['result'] = dict(
                 _fip_curves(res), known=known, window=WINDOW, passes=passes,
+                transits=transits_of(target, known),
                 planets=pers, peak_list=peaks, folds=folds,
                 pk=[float(val) for val in res.pk],
                 peaks=[dict(period=float(pk['period']), fip=float(pk['fip']),
@@ -1045,7 +1189,8 @@ def _snap(res, period: float, baseline: float) -> float:
 
 def fold_request(qid: str, opts: Dict[str, Any], period: Optional[float] = None,
                  fid: Optional[int] = None, kind: str = 'sine',
-                 snap: bool = False, known: str = '') -> Dict[str, Any]:
+                 snap: bool = False, known: str = '',
+                 transit: str = '') -> Dict[str, Any]:
     """
     A fold the page asks for: at a period of its own (clicked on the FIP,
     then moved to the dip nearest; or typed, as it is), or the Keplerian
@@ -1059,6 +1204,28 @@ def fold_request(qid: str, opts: Dict[str, Any], period: Optional[float] = None,
     series = _quick_series(qid, opts)
     nights = series['nights']
     folds = job['result'].setdefault('folds', [])
+    if transit:
+        # a transit ephemeris: phase 0 at its transit, its period
+        eph = next((item for item in job['result'].get('transits') or []
+                    if item['name'] == transit), None)
+        if eph is None:
+            raise ValueError(f'no transit ephemeris {transit}')
+        series = _quick_series(qid, opts)
+        item = next((item for item in folds
+                     if (item.get('transit') or {}).get('name') == transit),
+                    None)
+        if item is None:
+            item = dict(fold_transit(series['nights'], eph, series['valid'],
+                                     series['trend']),
+                        id=max([item['id'] for item in folds] + [0]) + 1,
+                        forced=True)
+            folds.append(item)
+        if kind == 'kepler' and 'kepler' not in item:
+            item['kepler'] = fold_kepler(series['nights'], eph['P'],
+                                         series['trend'],
+                                         transit=item['transit'])
+            item['kepler']['transit'] = item['transit']
+        return dict(fold=item)
     planet = None
     if known:
         # a known planet: at its published period, whatever the FIP says
@@ -1185,7 +1352,8 @@ def model_at(item: Dict[str, Any], inst: str, time: np.ndarray,
 
 
 def fold_kepler(data, period: float, trend: int = 1,
-                width: Optional[float] = None) -> Dict[str, Any]:
+                width: Optional[float] = None,
+                transit: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     The series folded on a Keplerian orbit, its eccentricity free: koloa's
     fit (RVModel: outliers, a jitter per instrument, the trend), its period
@@ -1197,6 +1365,9 @@ def fold_kepler(data, period: float, trend: int = 1,
     :param trend: int, the order of the trend
     :param width: float or None, the width of a peak in frequency [1/days]
                   (1 / the baseline)
+    :param transit: dict or None, a transit ephemeris (fold_transit's
+                    transit): its period and time of transit as gaussian
+                    priors, and phase 0 at its transit nearest the data
 
     :return: dict, as fold() gives, with kind='kepler', the orbit (P, e,
              omega, tp) and the errors of P, K and e
@@ -1209,8 +1380,13 @@ def fold_kepler(data, period: float, trend: int = 1,
     phi = min(1.0 / max(freq - 0.5 * width, 1e-9), 1.1 * period)
     seq_jitter = ('instrument' if len(data.instruments) > 1
                   and data.nseq < data.n else None)
-    model = RVModel(data, [dict(period=period, eccentric=True,
-                                period_range=(plo, phi))],
+    orbit = dict(period=period, eccentric=True, period_range=(plo, phi))
+    if transit is not None:
+        orbit.update(period=transit['P'], tc=transit['t0'],
+                     tc_err=max(transit['t0_err'], 1e-5),
+                     period_err=max(float(transit.get('P_err') or 0.0),
+                                    1e-7 * transit['P']))
+    model = RVModel(data, [orbit],
                     likelihood='mixture', unit='both', trend=trend,
                     seq_jitter=seq_jitter)
     res = model.fit(nstart=4, quiet=True)
@@ -1229,7 +1405,9 @@ def fold_kepler(data, period: float, trend: int = 1,
         except (ValueError, np.linalg.LinAlgError):
             draws, orbits = None, None
     shown = data.rv - model.systematics(res.theta)
-    tconj = kepler.tp_to_tc(tperi, per, ecc, omega)
+    # phase 0: the conjunction of the orbit, or the transit
+    tconj = (transit['t0'] if transit is not None
+             else kepler.tp_to_tc(tperi, per, ecc, omega))
     phase = ((data.time - tconj) / per) % 1.0
     valid = res.reliability
     sig = kepler.rv_keplerian(data.time, per, tperi, ecc, omega, amp)
@@ -1325,7 +1503,8 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
                        fold_colour: str = 'inst',
                        overlay: Optional[int] = None,
                        fold_model: str = 'sine',
-                       series_colour: str = 'inst'):
+                       series_colour: str = 'inst',
+                       fip_view: str = 'each'):
     """the figures of the quick look: the velocities shown (with the
     solution of a fold on them when asked), the quick FIP with its peaks
     named, the folds at them (coloured by instrument, date or BERV)"""
@@ -1445,7 +1624,7 @@ def _quicklook_figures(data, source, quick, xr, yr, pr, title, each=(),
     # each instrument in its colour, under the joint FIP (in black: the
     #   colour of the first instrument is koloa's blue)
     valid = [item for item in each if not item.get('skipped')]
-    for item in valid:
+    for item in (valid if fip_view == 'each' else []):
         ax.plot(item['period'], item['family'], lw=0.7, alpha=0.85,
                 color=colour.get(item['name'], '0.5'),
                 label=f'{item["name"]} alone (period or alias)')
@@ -1778,6 +1957,24 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
                 + f'{item["period"]:.4f}\\,d (K = '
                 f'${item["K"]:.2f} \\pm {item["K_err"]:.2f}$\\,m/s)'
                 for item in forced) + '.\n')
+        for item in quick.get('folds') or []:
+            eph = item.get('transit')
+            if not eph:
+                continue
+            out.append(
+                f'\\#{item["id"]} {escape(eph["name"])} on its transit '
+                f'ephemeris ({escape(eph.get("reference") or "")}): '
+                f'$P = {eph["P"]:.7f}$\\,d, the transit nearest the '
+                f'velocities $T_0 = {eph["t0"]:.5f} \\pm '
+                f'{eph["t0_err"] * 1440:.1f}$\\,min ({eph["cycles"]} '
+                f'periods from {eph["tc"]:.5f}; phase $\\pm '
+                f'{eph["phase_err"]:.4f}$); $K = {item["K"]:.2f} \\pm '
+                f'{item["K_err"]:.2f}$\\,m/s with its phase fixed; the '
+                f'velocities alone put the conjunction '
+                f'${eph["shift"] * 24:+.2f} \\pm {eph["shift_err"] * 24:.2f}'
+                f'$\\,h from it'
+                + (f' ({eph["shift_sigma"]:.1f}\\,$\\sigma$)'
+                   if eph.get('shift_sigma') is not None else '') + '.\n')
         keps = [dict(item['kepler'], id=item['id'])
                 for item in quick.get('folds') or [] if 'kepler' in item]
         if keps:
@@ -1841,7 +2038,8 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
                   fold_colour: str = 'inst',
                   overlay: Optional[int] = None,
                   fold_model: str = 'sine',
-                  series_colour: str = 'inst') -> bytes:
+                  series_colour: str = 'inst',
+                  fip_view: str = 'each') -> bytes:
     """
     The quick look as a PDF, a LaTeX document: the velocities shown (the
     ranges of the page), the quick FIP with its peaks named, the folds at
@@ -1865,7 +2063,7 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
     title = (opts.get('target') or '').strip() or 'the series'
     figs = _quicklook_figures(data, source, quick, xr, yr, pr, title, each,
                               fold_colour, overlay, fold_model,
-                              series_colour)
+                              series_colour, fip_view)
     tmp = tempfile.mkdtemp(prefix='koloa_quicklook_')
     try:
         for name, fig in figs:
@@ -2095,6 +2293,11 @@ def recall(rid: str) -> Dict[str, Any]:
                        result=quick['result'], error=None, start=0.0,
                        end=float(quick.get('elapsed') or 0.0),
                        instruments=list(quick['result']['instruments']))
+    # a result kept before the quick FIP listed the star's transits
+    result = QUICKS[qid]['result']
+    if 'transits' not in result:
+        result['transits'] = transits_of(page.get('target', ''),
+                                         result.get('known') or [])
     try:
         if _refresh_folds(qid, page):
             notes.append('folds kept before their dates, BERV and solution '
@@ -2305,7 +2508,8 @@ class Handler(BaseHTTPRequestHandler):
                                     body.get('fold_colour') or 'inst',
                                     body.get('overlay'),
                                     body.get('fold_model') or 'sine',
-                                    body.get('series_colour') or 'inst')
+                                    body.get('series_colour') or 'inst',
+                                    body.get('fip_view') or 'each')
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/pdf')
                 self.send_header('Content-Length', str(len(pdf)))
@@ -2323,7 +2527,7 @@ class Handler(BaseHTTPRequestHandler):
                     body.get('quick', ''), body.get('options', {}),
                     body.get('period'), body.get('id'),
                     body.get('kind') or 'sine', bool(body.get('snap')),
-                    body.get('known') or ''))
+                    body.get('known') or '', body.get('transit') or ''))
             if path == '/api/remember':
                 return self._json(remember(body.get('page', {}),
                                            body.get('quick', ''),

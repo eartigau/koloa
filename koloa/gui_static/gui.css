@@ -211,3 +211,7 @@ main[hidden] { display: none !important; }
 [data-fold].known, [data-known] { border-color: rgba(245, 165, 36, 0.7); }
 [data-known] { color: #f5c46a; }
 #foldnote .pubnote { color: #f5c46a; }
+[data-fipview].on { background: rgba(98, 194, 255, 0.35); border-color: var(--accent); color: #fff; position: relative; }
+[data-fold].transit, [data-transit] { border-color: rgba(108, 226, 173, 0.7); }
+[data-transit] { color: #8eeac0; }
+#foldnote .trnote { display: block; margin-top: 4px; color: #8eeac0; }

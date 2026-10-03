@@ -650,8 +650,12 @@ function drawFip(r, each) {
       legendrank: 1, hovertemplate: '%{x:.4f} d<br>-log10 FIP %{y:.2f}<extra></extra>' },
   ];
   // each instrument on its own: its FIP of the period or any of its aliases
-  for (const one of each.filter((x) => !x.skipped)) {
+  const valid = each.filter((x) => !x.skipped);
+  $('fipv-each').disabled = !valid.length;
+  document.querySelectorAll('[data-fipview]').forEach((b) => b.classList.toggle('on', b.dataset.fipview === (valid.length ? fipView : 'joint')));
+  for (const one of valid) {
     traces.push({ x: one.period, y: one.family, name: `${one.name} ${t('inst_alone')}`, type: 'scatter', mode: 'lines',
+      uid: `each-${one.name}`, visible: fipView === 'each',
       line: { color: instColour(one.name), width: 1 }, opacity: 0.85, legendrank: 10 + traces.length,
       hovertemplate: `${esc(one.name)}<br>%{x:.4f} d<br>-log10 FIP %{y:.2f}<extra></extra>` });
   }
@@ -691,26 +695,44 @@ function drawFip(r, each) {
   if (r.folds && r.folds.length) showFold(r.folds[0].id);
 }
 
+// the FIP: the period alone and with its aliases, or each instrument too
+let fipView = 'joint';
+try { fipView = localStorage.getItem('koloa-fipview') || 'joint'; } catch (err) { /* no storage */ }
+function showFipView() {
+  const div = $('fipplot');
+  document.querySelectorAll('[data-fipview]').forEach((b) => b.classList.toggle('on', b.dataset.fipview === fipView));
+  if (!window.Plotly || !div.data) return;
+  const idx = div.data.map((d, k) => (String(d.uid || '').startsWith('each-') ? k : -1)).filter((k) => k >= 0);
+  if (idx.length) Plotly.restyle(div, { visible: fipView === 'each' }, idx);
+}
+
 // a button per fold: the numbered peaks, then the periods asked
 function renderFoldButtons() {
   const folds = (quick && quick.result && quick.result.folds) || [];
   const known = (quick && quick.result && quick.result.known) || [];
-  $('foldbuttons').innerHTML = folds.map((f) => `<button type="button" class="small${f.forced ? ' forced' : ''}${f.known ? ' known' : ''}" data-fold="${f.id}"`
-    + `${f.forced ? ` title="${esc(t('asked'))}"` : ''}>${f.known ? `\u2605 ${esc(f.known.name)}` : `#${f.id}`} \u00b7 ${f.period.toFixed(4)} d</button>`).join('')
+  const transits = (quick && quick.result && quick.result.transits) || [];
+  const label = (f) => (f.transit ? `\u25d0 ${esc(f.transit.name)}` : f.known ? `\u2605 ${esc(f.known.name)}` : `#${f.id}`);
+  $('foldbuttons').innerHTML = folds.map((f) => `<button type="button" class="small${f.forced ? ' forced' : ''}${f.known ? ' known' : ''}${f.transit ? ' transit' : ''}" data-fold="${f.id}"`
+    + `${f.forced ? ` title="${esc(t('asked'))}"` : ''}>${label(f)} \u00b7 ${f.period.toFixed(4)} d</button>`).join('')
     // the known planets, at their published period whatever the FIP says
     + known.filter((pl) => !folds.some((f) => f.known && f.known.name === pl.name))
       .map((pl) => `<button type="button" class="small known" data-known="${esc(pl.name)}" title="${esc(t('known_fold'))}">`
-        + `\u2605 ${esc(pl.name)} \u00b7 ${(+pl.P).toPrecision(6)} d</button>`).join('');
+        + `\u2605 ${esc(pl.name)} \u00b7 ${(+pl.P).toPrecision(6)} d</button>`).join('')
+    // the transit ephemerides: phase 0 at the transit
+    + transits.filter((tr) => !folds.some((f) => f.transit && f.transit.name === tr.name))
+      .map((tr) => `<button type="button" class="small transit" data-transit="${esc(tr.name)}" title="${esc(t('transit_fold'))}">`
+        + `\u25d0 ${esc(tr.name)} \u00b7 ${esc(t('transit_word'))} (${esc(tr.reference)})</button>`).join('');
   document.querySelectorAll('[data-fold]').forEach((b) => b.classList.toggle('on', +b.dataset.fold === foldShown));
 }
 
 // a fold at a period of one's own: clicked on the FIP (then at the dip of
 //   the period nearest) or typed (as it is)
-async function forceFold(period, snap, known) {
-  if (!quick || !quick.result || !(period > 0 || known)) return;
+async function forceFold(period, snap, known, transit) {
+  if (!quick || !quick.result || !(period > 0 || known || transit)) return;
   $('foldnote').innerHTML = `<span class="spin"></span> ${esc(t('folding'))}`;
   try {
-    const res = await api('/api/fold', { quick: quick.id, period, snap: !!snap, kind: foldModel, options: shownOptions(), known: known || '' });
+    const res = await api('/api/fold', { quick: quick.id, period, snap: !!snap, kind: foldModel, options: shownOptions(),
+      known: known || '', transit: transit || '' });
     const folds = quick.result.folds = quick.result.folds || [];
     const old = folds.findIndex((x) => x.id === res.fold.id);
     if (old >= 0) folds[old] = res.fold; else folds.push(res.fold);
@@ -729,7 +751,8 @@ async function keplerOf(base) {
   keplerBusy = base.id;
   $('foldnote').innerHTML = `<span class="spin"></span> ${esc(t('fitting_kepler'))}`;
   try {
-    const res = await api('/api/fold', { quick: quick.id, id: base.id, kind: 'kepler', options: shownOptions() });
+    const res = await api('/api/fold', { quick: quick.id, id: base.transit ? undefined : base.id, kind: 'kepler', options: shownOptions(),
+      transit: base.transit ? base.transit.name : '' });
     base.kepler = res.fold.kepler;
     if (foldShown === base.id || foldShown === null) showFold(base.id);
   } catch (err) {
@@ -776,6 +799,24 @@ function currentFold() {
   return foldShownObj;
 }
 
+// a time span in minutes, hours or days
+function span(days) {
+  const a = Math.abs(days);
+  return a < 2 / 24 ? `${(days * 1440).toFixed(1)} min` : a < 2 ? `${(days * 24).toFixed(2)} h` : `${days.toFixed(3)} d`;
+}
+// a fold on a transit ephemeris: the ephemeris at the velocities, and the
+//   conjunction the velocities put on their own
+function transitNote(f) {
+  const e = f.transit;
+  if (!e) return '';
+  const sig = e.shift_sigma !== null && e.shift_sigma !== undefined ? ` (${e.shift_sigma.toFixed(1)}\u03c3)` : '';
+  return `<span class="trnote">\u25d0 ${esc(e.name)} (${esc(e.reference || '')}), ${esc(t('on_transit'))}: P = ${pm(e.P, e.P_err, 7)} d, `
+    + `T\u2080 = ${e.t0.toFixed(5)} \u00b1 ${span(e.t0_err)} (${e.cycles} ${esc(t('cycles_from'))} ${e.tc.toFixed(5)}; `
+    + `${esc(t('phase_word'))} \u00b1 ${e.phase_err.toFixed(4)})`
+    + (f.kind === 'kepler' ? '' : `; K = ${pm(f.K, f.K_err, 2)} m/s ${esc(t('phase_fixed'))}; ${esc(t('conj_alone'))} `
+      + `${e.shift >= 0 ? '+' : ''}${span(e.shift)} \u00b1 ${span(e.shift_err)}${sig}, K ${pm(e.K_free, e.K_free_err, 2)} m/s`) + '</span>';
+}
+
 const pm = (v, e, d) => `${v.toFixed(d)}${Number.isFinite(e) ? ` \u00b1 ${e.toFixed(d)}` : ''}`;
 
 function showFold(id) {
@@ -785,7 +826,7 @@ function showFold(id) {
   document.querySelectorAll('[data-fold]').forEach((b) => b.classList.toggle('on', +b.dataset.fold === base.id));
   document.querySelectorAll('[data-fmodel]').forEach((b) => b.classList.toggle('on', b.dataset.fmodel === foldModel));
   if (foldModel === 'kepler' && !base.kepler) { keplerOf(base); return; }
-  const f = foldModel === 'kepler' ? { ...base.kepler, id: base.id, forced: base.forced } : base;
+  const f = foldModel === 'kepler' ? { ...base.kepler, id: base.id, forced: base.forced, transit: base.transit } : base;
   foldShownObj = f;
   const pubNote = f.published ? ` \u00b7 <span class="pubnote">\u2605 ${esc(t('published'))} (${esc(f.published.reference)}): `
     + `P = ${f.published.period.toFixed(4)} d, K = ${f.published.K.toFixed(2)} m/s, e = ${f.published.e.toFixed(2)}</span>` : '';
@@ -794,7 +835,7 @@ function showFold(id) {
       + `e = ${pm(f.e, f.e_err, 2)}, \u03c9 = ${f.omega.toFixed(0)}\u00b0, rms ${f.rms.toFixed(2)} m/s \u00b7 ${esc(t('fold_note_kep'))}`
     : `<b>#${f.id}</b>: P = ${f.period.toFixed(4)} d, K = ${f.K.toFixed(2)} \u00b1 ${f.K_err.toFixed(2)} m/s, `
       + `rms ${f.rms.toFixed(2)} m/s \u00b7 ${esc(t('fold_note'))}`;
-  $('foldnote').innerHTML += pubNote;
+  $('foldnote').innerHTML += pubNote + transitNote(f);
   // the colour of the points: their instrument, their date, or their BERV
   //   (when the series has it), on one scale for all
   const hasBerv = f.instruments.some((inst) => inst.berv);
@@ -1026,7 +1067,7 @@ async function quicklookPdf() {
       body: JSON.stringify({ options: opts, x: view ? view.x : null, y: view ? view.y : null, p: pview ? pview.p : null,
         quick: quick && quick.result ? quick.id : '', command: $('cmd-detailed').textContent,
         fold_colour: foldColour, overlay: $('foldoverlay').checked && foldShown !== null ? foldShown : null,
-        fold_model: foldModel, series_colour: seriesColour }) });
+        fold_model: foldModel, series_colour: seriesColour, fip_view: fipView }) });
     if (!resp.ok) throw new Error((await resp.json()).error || resp.statusText);
     const link = document.createElement('a');
     link.href = URL.createObjectURL(await resp.blob());
@@ -1283,6 +1324,14 @@ document.addEventListener('click', (e) => {
 $('foldgo').addEventListener('click', () => forceFold(+$('foldp').value, false));
 // a known planet: a fold at its published period
 document.addEventListener('click', (e) => { const b = e.target.closest('[data-known]'); if (b) forceFold(0, false, b.dataset.known); });
+document.addEventListener('click', (e) => { const b = e.target.closest('[data-transit]'); if (b) forceFold(0, false, '', b.dataset.transit); });
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-fipview]');
+  if (!b || b.disabled) return;
+  fipView = b.dataset.fipview;
+  try { localStorage.setItem('koloa-fipview', fipView); } catch (err) { /* no storage */ }
+  showFipView();
+});
 $('foldp').addEventListener('keydown', (e) => { if (e.key === 'Enter') forceFold(+$('foldp').value, false); });
 $('subtract').addEventListener('click', subtractFold);
 document.addEventListener('click', (e) => { if (e.target.id === 'unsubtract') { subtractList = []; startQuick(); } });

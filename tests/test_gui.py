@@ -574,3 +574,55 @@ def test_a_quick_fip_is_stopped(tmp_path, monkeypatch):
     assert until(second['id'], lambda st: st['status'] != 'running'
                  )['status'] == 'stopped'
     assert time.time() - start < 30
+
+
+def test_a_fold_on_a_transit_ephemeris(tmp_path, monkeypatch):
+    """a fold on a transit ephemeris: phase 0 at the transit carried to the
+    velocities, its error from those of tc and P; the conjunction the
+    velocities put on their own set against it; a wrong ephemeris shows"""
+    import time
+    import numpy as np
+    from koloa.simulate import simulate
+    from koloa.gather import write_rv
+    # a transit some periods before the velocities (simulated from day 0)
+    tc, per = -30.123, 3.21
+    # a circular orbit: the star moves away fastest a quarter period
+    #   before the transit (its velocity falls through zero at it)
+    sim = simulate(planets=[dict(P=per, K=6.0, e=0.0, tp=tc - per / 4)],
+                   err=1.0, seed=21, nvisits=50, per_visit=1,
+                   baseline=200)['data']
+    write_rv(sim, str(tmp_path / 'transit.csv'))
+    monkeypatch.setattr(gui, 'QUICK', dict(kmax=1, nsweep=150, nburn=80))
+    opts = dict(files=[dict(path=str(tmp_path / 'transit.csv'))])
+    state = gui.quick_fip(opts)
+    for _ in range(300):
+        state = gui.quick_state(state['id'])
+        if state['status'] != 'running':
+            break
+        time.sleep(0.5)
+    qid = state['id']
+    good = dict(name='Sim b', source='archive', P=per, P_err=2e-5, tc=tc,
+                tc_err=1e-3, reference='a test')
+    bad = dict(good, name='Sim b (off)', tc=tc + 0.125)
+    gui.QUICKS[qid]['result']['transits'] = [good, bad]
+    fold = gui.fold_request(qid, opts, transit='Sim b')['fold']
+    eph = fold['transit']
+    ncyc = eph['cycles']
+    assert abs(eph['t0'] - (tc + ncyc * per)) < 1e-9
+    assert abs(eph['t0_err'] - np.hypot(1e-3, ncyc * 2e-5)) < 1e-12
+    assert abs(fold['K'] - 6.0) < 4 * fold['K_err']
+    assert eph['shift_sigma'] < 3
+    # the same, asked again: the same fold
+    assert gui.fold_request(qid, opts, transit='Sim b')['fold']['id'] == \
+        fold['id']
+    # an ephemeris 3 h off: the velocities say so
+    off = gui.fold_request(qid, opts, transit='Sim b (off)')['fold']
+    assert off['transit']['shift_sigma'] > 3
+    assert abs(off['transit']['shift'] + 0.125) < 0.05
+    # the Keplerian, the transits as priors, phase 0 at the transit
+    kep = gui.fold_request(qid, opts, transit='Sim b',
+                           kind='kepler')['fold']['kepler']
+    assert kep['tc'] == eph['t0'] and abs(kep['K'] - 6.0) < 4 * kep['K_err']
+    pdf = gui.quicklook_pdf(opts, qid=qid, fold_model='kepler',
+                            fip_view='joint')
+    assert pdf[:4] == b'%PDF'
