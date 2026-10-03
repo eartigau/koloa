@@ -636,3 +636,54 @@ def test_a_fold_on_a_transit_ephemeris(tmp_path, monkeypatch):
         text = ' '.join(page.get_text() for page in
                         fitz.open(stream=pdf, filetype='pdf'))
         assert 'transit ephemeris' in text and 'Jup' in text
+
+
+def test_a_batch_fip(tmp_path, monkeypatch):
+    """the quick FIP of many files, one after the other: their best peaks
+    and accelerations; a file that fails does not stop the others; one
+    opened for the page; New target leaves the batch alone; a batch
+    stopped"""
+    import time
+    from koloa.simulate import simulate
+    from koloa.gather import write_rv
+    for seed, period in ((3, 5.3), (4, 11.7)):
+        sim = simulate(planets=[dict(P=period, K=9.0, e=0.0)], err=1.0,
+                       seed=seed, nvisits=50, per_visit=1,
+                       baseline=300)['data']
+        write_rv(sim, str(tmp_path / f'star{seed}.csv'))
+    (tmp_path / 'empty.csv').write_text('rjd,vrad,svrad\n')
+    monkeypatch.setattr(gui, 'QUICK', dict(kmax=1, nsweep=150, nburn=80))
+    assert len(gui.list_files(str(tmp_path), '*.csv')['paths']) == 3
+    paths = [str(tmp_path / name) for name in ('star3.csv', 'empty.csv',
+                                               'star4.csv')]
+    state = gui.batch_fip(paths, dict(trend=True))
+    gui.forget()   # New target: the batch goes on
+    for _ in range(600):
+        state = gui.batch_state(state['id'])
+        if state['status'] != 'running':
+            break
+        time.sleep(0.5)
+    assert state['status'] == 'done'
+    items = state['items']
+    assert [item['status'] for item in items] == ['done', 'failed', 'done']
+    for item, period in ((items[0], 5.3), (items[2], 11.7)):
+        assert abs(item['summary']['period'] / period - 1) < 0.01
+        assert item['summary']['fip'] < 0.01
+        assert item['summary']['accel_err'] > 0
+    opened = gui.batch_open(state['id'], 2)
+    assert opened['page']['files'][0]['path'] == paths[2]
+    assert opened['quick']['status'] == 'done'
+    assert opened['rv']['instruments'][0]['n'] == 50
+    # a batch stopped: the file running and those after it
+    monkeypatch.setattr(gui, 'QUICK', dict(kmax=2, nsweep=50000, nburn=100))
+    state = gui.batch_fip(paths, {})
+    time.sleep(2.0)
+    gui.stop_batch(state['id'])
+    for _ in range(100):
+        state = gui.batch_state(state['id'])
+        if state['status'] != 'running':
+            break
+        time.sleep(0.25)
+    assert state['status'] == 'stopped'
+    assert all(item['status'] in ('stopped', 'failed')
+               for item in state['items'])

@@ -408,6 +408,54 @@ PROMPTS = dict(file='A file of velocities (LBL .rdb, csv, DACE csv)',
                folder='A folder')
 
 
+def _pick_files(start: str) -> Dict[str, Any]:
+    """the dialog of this machine for several files at once (the batch
+    FIP): paths, or cancelled"""
+    if sys.platform == 'darwin':
+        place = start.replace('\\', '\\\\').replace('"', '\\"')
+        script = ('set chosen to choose file with prompt "Files of '
+                  f'velocities (LBL .rdb, csv)" default location (POSIX file '
+                  f'"{place}") with multiple selections allowed\n'
+                  'set out to ""\n'
+                  'repeat with one in chosen\n'
+                  'set out to out & POSIX path of one & linefeed\n'
+                  'end repeat\n'
+                  'return out')
+        proc = subprocess.run(['osascript', '-e', 'activate', '-e', script],
+                              capture_output=True, text=True)
+        if proc.returncode != 0:
+            if '-128' in proc.stderr:
+                return dict(cancelled=True)
+            raise RuntimeError(proc.stderr.strip() or 'osascript failed')
+        paths = [line for line in proc.stdout.splitlines() if line.strip()]
+    else:
+        code = ('import sys, tkinter as tk\n'
+                'from tkinter import filedialog\n'
+                'root = tk.Tk(); root.withdraw()\n'
+                "root.attributes('-topmost', True)\n"
+                "print('\\n'.join(filedialog.askopenfilenames("
+                "initialdir=sys.argv[1], filetypes=[('velocities', '*.rdb "
+                "*.csv *.dat *.txt'), ('all', '*')])))")
+        proc = subprocess.run([sys.executable, '-c', code, start],
+                              capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise RuntimeError('no dialog on this machine (Tk): give a '
+                               'folder')
+        paths = [line for line in proc.stdout.splitlines() if line.strip()]
+    return dict(paths=paths) if paths else dict(cancelled=True)
+
+
+def list_files(folder: str, pattern: str = '*.rdb') -> Dict[str, Any]:
+    """the files of a folder that match a pattern (the batch FIP)"""
+    import glob
+    folder = os.path.expanduser(folder or '.')
+    if not os.path.isdir(folder):
+        raise ValueError(f'no folder {folder}')
+    found = sorted(path for path in glob.glob(os.path.join(
+        folder, pattern or '*.rdb')) if os.path.isfile(path))
+    return dict(paths=[os.path.abspath(path) for path in found])
+
+
 def pick(kind: str = 'file', start: str = '') -> Dict[str, Any]:
     """
     A dialog of this machine to choose a file or a folder (the page cannot:
@@ -424,6 +472,8 @@ def pick(kind: str = 'file', start: str = '') -> Dict[str, Any]:
     while start and not os.path.isdir(start):
         start = os.path.dirname(start)
     start = start or os.getcwd()
+    if kind == 'files':
+        return _pick_files(start)
     what = 'folder' if kind == 'folder' else 'file'
     if sys.platform == 'darwin':
         place = start.replace('\\', '\\\\').replace('"', '\\"')
@@ -1039,7 +1089,8 @@ def stop_quick(qid: str) -> Dict[str, Any]:
     return quick_state(qid)
 
 
-def _run_quick(qid: str, data, target: str, trend: int = 1):
+def _run_quick(qid: str, data, target: str, trend: int = 1,
+               each: bool = True):
     """the quick FIP, in a thread, in the two passes of the report without
     its GP: the errors of each instrument inflated to the noise of a fit
     without planets, a first FIP; then to the noise of a fit with the
@@ -1144,7 +1195,7 @@ def _run_quick(qid: str, data, target: str, trend: int = 1):
             #   the FIP, no inflation needed), when there are several
             insts = list(nights.instruments)
             job['each'] = []
-            if len(insts) > 1:
+            if len(insts) > 1 and each:
                 from koloa.fip import oafip
                 from koloa.utils import blas_threads
                 for rank, inst in enumerate(insts):
@@ -1300,7 +1351,7 @@ def quick_fip(opts: Dict[str, Any]) -> Dict[str, Any]:
     data = subtracted(data, opts)
     # the quick FIPs before it are out of date: stopped, not waited for
     for other in QUICKS.values():
-        if other.get('status') == 'running':
+        if other.get('status') == 'running' and not other.get('batch'):
             other['cancel'] = True
     qid = uuid.uuid4().hex[:8]
     QUICKS[qid] = dict(id=qid, status='running', step='waiting',
@@ -1333,14 +1384,145 @@ def forget() -> Dict[str, Any]:
     for jid in [jid for jid, job in JOBS.items()
                 if job.returncode is not None]:
         del JOBS[jid]
-    # a quick FIP that runs is stopped, and forgotten
-    for job in QUICKS.values():
+    # a quick FIP that runs is stopped, and forgotten (a batch's are kept)
+    for qid, job in list(QUICKS.items()):
+        if job.get('batch'):
+            continue
         if job.get('status') == 'running':
             job['cancel'] = True
-    QUICKS.clear()
-    _QUICK_DATA.clear()
+        QUICKS.pop(qid)
+        _QUICK_DATA.pop(qid, None)
     karchive._TABLES = None
     return dict(kept=[job.id for job in JOBS.values()])
+
+
+#: the batch FIPs of this session
+BATCHES: Dict[str, Dict[str, Any]] = {}
+
+
+def batch_fip(paths: List[str], opts: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    The quick FIP of many files, one after the other, in a thread: each
+    file on its own, with no SIMBAD name (no archive, no known planet),
+    the trend as the report's boxes say; each kept as a quick FIP of its
+    own, to be opened in the page
+
+    :param paths: list of str, the files of velocities
+    :param opts: dict, the options of the page (trend, curvature)
+
+    :return: dict, the state of the batch (batch_state)
+    """
+    paths = [os.path.abspath(os.path.expanduser(str(path)))
+             for path in paths if str(path).strip()]
+    if not paths:
+        raise ValueError('no file to run the FIP of')
+    bid = uuid.uuid4().hex[:8]
+    BATCHES[bid] = dict(id=bid, status='running', start=time.time(),
+                        end=None, cancel=False, trend=trend_order(opts),
+                        items=[dict(path=path, name=os.path.basename(path),
+                                    status='waiting', qid=None, error=None,
+                                    summary=None) for path in paths])
+    threading.Thread(target=_run_batch, args=(bid,), daemon=True).start()
+    return batch_state(bid)
+
+
+def _batch_summary(result: Dict[str, Any], data) -> Dict[str, Any]:
+    """one line of the table of a batch: the best peak, its fold, the
+    acceleration"""
+    peak = (result.get('peak_list') or [None])[0]
+    folds = result.get('folds') or []
+    best = next((item for item in folds if peak and item['id'] == peak['id']),
+                None)
+    acc = (result.get('acceleration') or {}).get('accel')
+    return dict(
+        n=result.get('n'), nexp=result.get('nexp'),
+        instruments=result.get('instruments'),
+        baseline=float(data.baseline),
+        period=peak['period'] if peak else None,
+        fip=peak['family'] if peak else None,
+        fip_alone=peak['alone'] if peak else None,
+        K=best['K'] if best else None, K_err=best['K_err'] if best else None,
+        rms=best['rms'] if best else None,
+        accel=acc[0] if acc else None,
+        accel_err=0.5 * (acc[1] + acc[2]) if acc else None,
+        accel_sigma=(result.get('acceleration') or {}).get('accel_sigma'))
+
+
+def _run_batch(bid: str) -> None:
+    """the files of a batch, one quick FIP after the other"""
+    batch = BATCHES[bid]
+    for item in batch['items']:
+        if batch['cancel']:
+            item['status'] = 'stopped'
+            continue
+        item['status'] = 'running'
+        try:
+            data, _, _ = selection(dict(files=[dict(path=item['path'])]))
+            if data is None:
+                raise ValueError('no velocity in the file')
+            qid = uuid.uuid4().hex[:8]
+            QUICKS[qid] = dict(id=qid, status='running', step='waiting',
+                               step_detail='', each=[], subtracted=[],
+                               progress=None, result=None, error=None,
+                               start=time.time(), end=None, batch=bid,
+                               instruments=list(data.instruments))
+            item['qid'] = qid
+            _run_quick(qid, data, '', batch['trend'], each=False)
+            job = QUICKS[qid]
+            item['status'] = job['status']
+            item['error'] = job.get('error')
+            if job.get('result'):
+                item['summary'] = _batch_summary(job['result'], data)
+        except Exception as err:
+            item['status'] = 'failed'
+            item['error'] = f'{type(err).__name__}: {err}'
+    batch['status'] = 'stopped' if batch['cancel'] else 'done'
+    batch['end'] = time.time()
+
+
+def batch_state(bid: str) -> Dict[str, Any]:
+    """what the page shows of a batch: each file, the one running with
+    its step and its sweeps"""
+    batch = BATCHES[bid]
+    items = []
+    for item in batch['items']:
+        one = {key: item[key] for key in ('path', 'name', 'status', 'qid',
+                                          'error', 'summary')}
+        job = QUICKS.get(item['qid']) if item['qid'] else None
+        if job is not None and item['status'] == 'running':
+            one.update(step=job.get('step'), progress=job.get('progress'))
+        items.append(one)
+    return dict(id=bid, status=batch['status'], items=items,
+                elapsed=(batch['end'] or time.time()) - batch['start'])
+
+
+def stop_batch(bid: str) -> Dict[str, Any]:
+    """a batch stopped: the file running and those after it"""
+    batch = BATCHES[bid]
+    batch['cancel'] = True
+    for item in batch['items']:
+        job = QUICKS.get(item['qid']) if item['qid'] else None
+        if job is not None and job.get('status') == 'running':
+            job['cancel'] = True
+    return batch_state(bid)
+
+
+def batch_open(bid: str, index: int) -> Dict[str, Any]:
+    """one file of a batch for the page, as a result recalled: the page
+    (the file, no star), the velocities, its quick FIP"""
+    batch = BATCHES[bid]
+    item = batch['items'][int(index)]
+    if not item['qid'] or item['qid'] not in QUICKS:
+        raise ValueError(f'{item["name"]}: no quick FIP to open')
+    detailed = dict(trend=batch['trend'] >= 1, curvature=batch['trend'] >= 2,
+                    dace=False, carmenes=False, exclude='')
+    page = dict(target='', files=[dict(path=item['path'], label='')],
+                root='', outdir='', detailed=detailed, clip=False, view=None,
+                periods=None, subtract=[])
+    return dict(page=page, rv=velocities([dict(path=item['path'])]),
+                quick=quick_state(item['qid']), notes=[],
+                entry=dict(id='', target=item['name'], note='',
+                           created=time.strftime('%Y-%m-%d %H:%M')))
 
 
 def quick_state(qid: str) -> Dict[str, Any]:
@@ -2510,6 +2692,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(quick_state(query['id']))
             if url.path == '/api/remembered':
                 return self._json(remembered())
+            if url.path == '/api/batch':
+                return self._json(batch_state(query['id']))
+            if url.path == '/api/listfiles':
+                return self._json(list_files(query.get('folder', ''),
+                                             query.get('pattern', '*.rdb')))
             if url.path == '/api/archives':
                 state = archives(query.get('target', ''),
                                  query.get('root', ''))
@@ -2599,6 +2786,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(forget())
             if path == '/api/quickstop':
                 return self._json(stop_quick(body.get('id', '')))
+            if path == '/api/batch':
+                return self._json(batch_fip(body.get('paths') or [],
+                                            body.get('options') or {}))
+            if path == '/api/batchstop':
+                return self._json(stop_batch(body.get('id', '')))
+            if path == '/api/batch_open':
+                return self._json(batch_open(body.get('id', ''),
+                                             body.get('index', 0)))
             if path == '/api/fold':
                 return self._json(fold_request(
                     body.get('quick', ''), body.get('options', {}),

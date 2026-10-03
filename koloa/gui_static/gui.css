@@ -220,3 +220,14 @@ ol.steps .result { grid-column: 2 / 4; font-family: "IBM Plex Mono", monospace; 
 .massrow { font-size: 0.85rem; color: var(--muted); }
 #foldnote .massnote { display: block; margin-top: 4px; color: #e8eef8; }
 [data-zero].on { background: rgba(98, 194, 255, 0.35); border-color: var(--accent); color: #fff; position: relative; }
+
+/* the batch FIP */
+.batchlist { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 4px 0 8px; font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; }
+.bfile { display: inline-flex; align-items: center; gap: 4px; }
+.bfile button { padding: 0 6px; font-size: 0.75rem; }
+#batchpattern { width: 7em; }
+#batchfolder { min-width: 18em; }
+table.batch th.sortable { cursor: pointer; user-select: none; }
+table.batch th.sorted { color: var(--text); }
+table.batch td { white-space: nowrap; }
+table.batch td button { margin-left: 6px; }

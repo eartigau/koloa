@@ -1179,7 +1179,7 @@ async function quicklookPdf() {
 //   star, no plot, no run that ended, as fresh as a new session (a run that
 //   still runs stays: closing a page does not stop it either)
 function resetPage() {
-  document.querySelectorAll('main input, main select').forEach((el) => {
+  document.querySelectorAll('#tab-analysis input, #tab-analysis select').forEach((el) => {
     if (el.type === 'checkbox') el.checked = el.defaultChecked;
     else if (el.tagName === 'SELECT') {
       const def = [...el.options].find((opt) => opt.defaultSelected) || el.options[0];
@@ -1237,6 +1237,7 @@ function showTab(name) {
   document.querySelectorAll('.tabs .tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
   $('tab-analysis').hidden = name !== 'analysis';
   $('tab-remembered').hidden = name !== 'remembered';
+  $('tab-batch').hidden = name !== 'batch';
   if (name === 'remembered') loadRemembered();
   else if (view) setTimeout(() => { syncSliders(); syncPeriods(); }, 50);
 }
@@ -1299,6 +1300,12 @@ function renderRemembered() {
 async function recallResult(id) {
   let res;
   try { res = await api('/api/recall', { id }); } catch (err) { alert(err.message); return; }
+  await applyRecall(res);
+}
+
+// a result put back in the page as it was (a result remembered, or a file
+//   of a batch): the page, the velocities, its quick FIP, nothing computed
+async function applyRecall(res) {
   showTab('analysis');
   resetPage();
   const page = res.page;
@@ -1334,8 +1341,93 @@ async function recallResult(id) {
     syncPeriods();
   }
   $('remnote').value = res.entry.note || '';
-  $('remstate').textContent = `${t('recalled_from')} ${res.entry.created}`;
+  $('remstate').textContent = res.entry.id ? `${t('recalled_from')} ${res.entry.created}` : t('from_batch');
+  $('remember').disabled = !!res.entry.id;
   $('plotcard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// -----------------------------------------------------------------------------
+// the batch FIP: the quick FIP of many files, a table, each opened in the page
+// -----------------------------------------------------------------------------
+let batchFiles = [];
+let batch = null;            // the batch running or run: its state
+let batchSort = { key: 'fip', dir: 1 };
+
+function renderBatchFiles() {
+  const box = $('batchfiles');
+  if (!batchFiles.length) { box.innerHTML = `<p class="hint">${esc(t('batch_none'))}</p>`; return; }
+  box.innerHTML = `<p class="hint">${batchFiles.length} ${esc(t('batch_files'))}</p><div class="batchlist">`
+    + batchFiles.map((path, i) => `<span class="bfile" title="${esc(path)}">${esc(path.split('/').pop())}`
+      + `<button type="button" class="small" data-bdel="${i}">\u00d7</button></span>`).join('') + '</div>';
+}
+function addBatchFiles(paths) {
+  for (const path of paths || []) if (!batchFiles.includes(path)) batchFiles.push(path);
+  renderBatchFiles();
+}
+
+async function runBatch() {
+  if (!batchFiles.length) return;
+  try {
+    batch = await api('/api/batch', { paths: batchFiles, options: readOptions('detailed') });
+    pollBatch(batch.id);
+  } catch (err) {
+    $('batchstatus').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
+  }
+}
+async function pollBatch(id) {
+  if (!batch || batch.id !== id) return;
+  try { batch = await api(`/api/batch?id=${id}`); } catch (err) { return; }
+  renderBatch();
+  if (batch.status === 'running') setTimeout(() => pollBatch(id), 1500);
+}
+
+// a FIP: green below 1 %; one too small for a float, below 1e-300
+const fipCell = (v) => (v === null || v === undefined ? ''
+  : `<span class="${v < 0.01 ? 'ok' : ''}">${v > 0 ? v.toExponential(1) : '&lt; 1e-300'}</span>`);
+function batchRows() {
+  const rows = batch.items.map((item, i) => ({ ...item, i, ...(item.summary || {}) }));
+  const { key, dir } = batchSort;
+  const val = (r) => (key === 'name' ? r.name : r[key] === null || r[key] === undefined ? Infinity * dir : r[key]);
+  return rows.sort((a, b) => (key === 'name' ? dir * a.name.localeCompare(b.name) : dir * (val(a) - val(b))));
+}
+function renderBatch() {
+  if (!batch) { $('batchtable').innerHTML = ''; $('batchstatus').textContent = ''; return; }
+  const done = batch.items.filter((item) => item.status !== 'waiting' && item.status !== 'running').length;
+  const running = batch.status === 'running';
+  $('batchstatus').innerHTML = `${running ? '<span class="hourglass">\u23f3</span> ' : ''}${done} / ${batch.items.length} \u00b7 ${clock(batch.elapsed)}`
+    + (running ? ` <button type="button" class="small stop" id="batchstop">${esc(t('stop_fip'))}</button>` : '')
+    + (done ? ` <button type="button" class="small" id="batchcsv">CSV</button>` : '');
+  const cols = [['name', t('col_file')], ['n', t('col_nights')], ['baseline', t('col_span')], ['period', 'P [d]'],
+    ['fip', t('col_fip')], ['fip_alone', t('col_fip_alone')], ['K', 'K [m/s]'], ['rms', 'rms [m/s]'], ['accel', 'dv/dt [m/s/yr]'], ['accel_sigma', '\u03c3']];
+  const head = cols.map(([k, label]) => `<th data-bsort="${k}" class="sortable${batchSort.key === k ? ' sorted' : ''}">${esc(label)}`
+    + `${batchSort.key === k ? (batchSort.dir > 0 ? ' \u25b2' : ' \u25bc') : ''}</th>`).join('');
+  const num = (v, d) => (v === null || v === undefined ? '' : v.toFixed(d));
+  $('batchtable').innerHTML = `<div class="remwrap"><table class="mini batch"><tr>${head}<th></th></tr>`
+    + batchRows().map((r) => {
+      let state = '';
+      if (r.status === 'running') {
+        const p = r.progress;
+        state = `<span class="hourglass">\u23f3</span> ${esc(t({ noise: 'quick_noise', fip1: 'quick_fip1', planets: 'quick_planets', fip2: 'quick_fip2' }[r.step] || 'quick_noise'))}`
+          + (p ? ` ${Math.round(100 * p.done / Math.max(p.total, 1))} %` : '');
+      } else if (r.status === 'failed' || r.status === 'stopped') state = `<span class="bad">${esc(r.error || t(r.status))}</span>`;
+      else if (r.status === 'waiting') state = `<span class="hint">${esc(t('batch_waiting'))}</span>`;
+      const acc = r.accel !== null && r.accel !== undefined ? `${r.accel >= 0 ? '+' : '\u2212'}${Math.abs(r.accel).toPrecision(3)} \u00b1 ${r.accel_err.toPrecision(2)}` : '';
+      return `<tr><td title="${esc(r.path)}">${esc(r.name)}</td><td class="num">${r.n ?? ''}</td><td class="num">${num(r.baseline, 0)}</td>`
+        + `<td class="num">${num(r.period, 4)}</td><td class="num">${fipCell(r.fip)}</td><td class="num">${fipCell(r.fip_alone)}</td>`
+        + `<td class="num">${r.K !== null && r.K !== undefined ? `${r.K.toFixed(2)} \u00b1 ${r.K_err.toFixed(2)}` : ''}</td><td class="num">${num(r.rms, 2)}</td>`
+        + `<td class="num">${acc}</td><td class="num">${num(r.accel_sigma, 1)}</td>`
+        + `<td>${state}${r.status === 'done' ? `<button type="button" class="small go" data-bopen="${r.i}">${esc(t('open'))}</button>` : ''}</td></tr>`;
+    }).join('') + '</table></div>';
+}
+function batchCsv() {
+  const head = ['file', 'path', 'nights', 'baseline_d', 'period_d', 'fip', 'fip_alone', 'K_ms', 'K_err_ms', 'rms_ms', 'dvdt_msyr', 'dvdt_err_msyr', 'dvdt_sigma', 'status'];
+  const lines = [head.join(',')].concat(batchRows().map((r) => [r.name, r.path, r.n, r.baseline, r.period, r.fip, r.fip_alone, r.K, r.K_err,
+    r.rms, r.accel, r.accel_err, r.accel_sigma, r.status].map((v) => (v === null || v === undefined ? '' : `"${String(v).replace(/"/g, '""')}"`)).join(',')));
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([lines.join('\n') + '\n'], { type: 'text/csv' }));
+  link.download = 'koloa_batch_fip.csv';
+  link.click();
+  URL.revokeObjectURL(link.href);
 }
 
 // -----------------------------------------------------------------------------
@@ -1506,10 +1598,43 @@ document.addEventListener('click', async (e) => {
   }
 });
 $('remember').addEventListener('click', rememberResult);
+// the batch FIP
+$('batchpick').addEventListener('click', async () => {
+  try {
+    const res = await api(`/api/pick?${new URLSearchParams({ kind: 'files', start: batchFiles[0] || '' })}`);
+    if (res.paths) addBatchFiles(res.paths);
+  } catch (err) { alert(err.message); }
+});
+$('batchfolderadd').addEventListener('click', async () => {
+  try {
+    const res = await api(`/api/listfiles?${new URLSearchParams({ folder: $('batchfolder').value.trim(), pattern: $('batchpattern').value.trim() || '*.rdb' })}`);
+    addBatchFiles(res.paths);
+    if (!res.paths.length) alert(t('batch_nomatch'));
+  } catch (err) { alert(err.message); }
+});
+$('batchclear').addEventListener('click', () => { batchFiles = []; renderBatchFiles(); });
+$('batchrun').addEventListener('click', runBatch);
+document.addEventListener('click', async (e) => {
+  const del = e.target.closest('[data-bdel]');
+  if (del) { batchFiles.splice(+del.dataset.bdel, 1); renderBatchFiles(); }
+  const head = e.target.closest('[data-bsort]');
+  if (head) {
+    const key = head.dataset.bsort;
+    batchSort = { key, dir: batchSort.key === key ? -batchSort.dir : 1 };
+    renderBatch();
+  }
+  if (e.target.id === 'batchstop' && batch) api('/api/batchstop', { id: batch.id }).catch(() => {});
+  if (e.target.id === 'batchcsv') batchCsv();
+  const open = e.target.closest('[data-bopen]');
+  if (open && batch) {
+    try { await applyRecall(await api('/api/batch_open', { id: batch.id, index: +open.dataset.bopen })); } catch (err) { alert(err.message); }
+  }
+});
 
 (async () => {
   $('detailed-options').innerHTML = renderOptions('detailed');
-  langHooks.push(showCwd, renderJobs, renderFiles, checkArchives, renderRemembered, dateAxis,
+  renderBatchFiles();
+  langHooks.push(showCwd, renderJobs, renderFiles, checkArchives, renderRemembered, dateAxis, renderBatchFiles, renderBatch,
     () => { if (quick && quick.each) drawEach(quick.each); });
   loadRemembered();
   jobDoneHooks.push(async (job) => {

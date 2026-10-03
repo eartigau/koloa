@@ -30,6 +30,7 @@
   <nav class="tabs">
     <button type="button" class="tab on" data-tab="analysis" data-i18n="tab_analysis">Analysis</button>
     <button type="button" class="tab" data-tab="remembered"><span data-i18n="tab_remembered">Remembered targets</span> <span class="count" id="nrem"></span></button>
+    <button type="button" class="tab" data-tab="batch" data-i18n="tab_batch">Batch FIP</button>
   </nav>
 
   <main class="layout" id="tab-analysis">
@@ -175,6 +176,25 @@
       <h2><span data-i18n="rem_title">Remembered targets</span> <button type="button" class="info" data-help="remembered" aria-label="?">i</button></h2>
       <p class="hint" data-i18n="rem_hint">The quick looks remembered, the last first: recall one to find the page as it was.</p>
       <div id="remlist"></div>
+    </section>
+  </main>
+
+  <!-- the batch FIP -->
+  <main class="layout" id="tab-batch" hidden>
+    <section class="card span-3">
+      <h2><span data-i18n="tab_batch">Batch FIP</span> <button type="button" class="info" data-help="batch" aria-label="?">i</button></h2>
+      <p class="hint" data-i18n="batch_hint">The quick FIP of many files, one after the other, each on its own (no SIMBAD name: no archive, no known planet); a table of their best peaks and accelerations; open one in the Analysis tab to look closer.</p>
+      <div class="row">
+        <button type="button" id="batchpick" class="small" data-i18n="batch_pick">Add files...</button>
+        <span class="hint" data-i18n="batch_or">or the files of a folder:</span>
+        <span class="picker"><input id="batchfolder" type="text" autocomplete="off"><button type="button" data-pick="folder" data-into="batchfolder">...</button></span>
+        <input id="batchpattern" type="text" value="*.rdb" autocomplete="off" class="pattern">
+        <button type="button" id="batchfolderadd" class="small" data-i18n="batch_add">Add them</button>
+        <button type="button" id="batchclear" class="small" data-i18n="batch_clear">Clear</button>
+      </div>
+      <div id="batchfiles"></div>
+      <div class="row"><button type="button" id="batchrun" class="go" data-i18n="batch_run">Run the FIPs</button><span class="hint" id="batchstatus"></span></div>
+      <div id="batchtable"></div>
     </section>
   </main>
 
