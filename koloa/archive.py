@@ -21,6 +21,12 @@ Who the star is, and what is known of its planets.
 known_planets also keeps what the archive knows of the star (rotation
 period, spectral type, Teff, radius, metallicity, v sin i, magnitudes).
 
+A second opinion: encyclopaedia() keeps the catalogue of the Extrasolar
+Planets Encyclopaedia (exoplanet.eu), and known_planets sets its answer
+beside the archive's (eu of each planet: its P, K, e, time of transit...;
+the planets it alone has are added). The two mostly agree; each has
+planets and times of transit the other lacks.
+
 The archive is fetched once and kept: its two tables (pscomppars, the
 default solution of every planet, and the solutions of ps that give K, a
 few MB in all) in ~/.cache/koloa/archive, where every star is then looked
@@ -50,6 +56,26 @@ from koloa.log import log
 # =============================================================================
 SESAME = 'https://cds.unistra.fr/cgi-bin/nph-sesame/-oxI/S'
 ARCHIVE = 'https://exoplanetarchive.ipac.caltech.edu/TAP/sync'
+#: the Extrasolar Planets Encyclopaedia (exoplanet.eu): its catalogue of
+#: confirmed planets as csv, and the page of the catalogue
+ENCYCLOPAEDIA = 'https://exoplanet.eu/catalog/csv/'
+ENCYCLOPAEDIA_PAGE = 'https://exoplanet.eu/catalog/'
+#: its columns kept (masses in Jupiter masses, radii in Jupiter radii, K in
+#: m/s, times in JD)
+EU_COLUMNS = ['name', 'star_name', 'star_alternate_names', 'ra', 'dec',
+              'orbital_period', 'orbital_period_error_min',
+              'orbital_period_error_max', 'k', 'k_error_min', 'k_error_max',
+              'eccentricity', 'omega', 'tperi', 'tconj', 'tzero_tr',
+              'tzero_tr_error_min', 'tzero_tr_error_max', 'mass',
+              'mass_sini', 'radius', 'discovered', 'updated',
+              'detection_type']
+#: a star of exoplanet.eu is the one asked when within this [arcsec] (when
+#: no name of its matches)
+EU_MATCH_ARCSEC = 30.0
+#: Jupiter's mass and equatorial radius in the Earth's (IAU 2015 nominal
+#: values: GM 1.2668653e17 / 3.986004e14, 71492 km / 6378.1 km)
+M_JUP_EARTH = 317.828
+R_JUP_EARTH = 11.209
 #: where the archive's tables are kept, once fetched
 CACHE = os.path.join(os.path.expanduser('~'), '.cache', 'koloa', 'archive')
 #: the columns of pscomppars kept (the ones that find a star, and the ones
@@ -72,12 +98,15 @@ TOI_COLUMNS = ['toi', 'tid', 'tfopwg_disp', 'pl_orbper', 'pl_orbpererr1',
 TOI_NOT_PLANETS = ('FP', 'FA')
 #: the tables, once read
 _TABLES: Optional[Dict[str, Any]] = None
+#: exoplanet.eu's catalogue, once read, and the thread that fetches it
+_EU: Optional[Dict[str, Any]] = None
+_EU_THREAD = None
 #: a fitted signal is a known planet when their periods are within this
 #: fraction (the periods of old solutions can be off by a few per cent)
 MATCH = 0.05
 #: what a file of known_planets holds: 2 adds the star (rotation, type...)
-#: and the ephemeris and discovery of each planet
-SCHEMA = 2
+#: and the ephemeris and discovery of each planet; 3, exoplanet.eu's answer
+SCHEMA = 3
 #: the columns of the star kept from pscomppars, and their names in koloa
 STAR_COLUMNS = dict(st_spectype='spectral_type', st_teff='teff',
                     st_mass='mass', st_rad='radius', st_met='metallicity',
@@ -376,11 +405,14 @@ def solutions(host: str) -> Dict[str, List[Dict[str, Any]]]:
 
 def known_planets(name: Optional[str] = None, host: Optional[str] = None,
                   path: Optional[str] = None,
-                  refresh: bool = False) -> Dict[str, Any]:
+                  refresh: bool = False,
+                  ident: Optional[Dict[str, Any]] = None,
+                  wait: bool = True) -> Dict[str, Any]:
     """
     The planets of a star in the NASA Exoplanet Archive: the default
     solution of each (pscomppars), every published solution that gives K
-    (ps), and the mass and distance of the star
+    (ps), and the mass and distance of the star; and, beside it,
+    exoplanet.eu's answer (eu of each planet, and the planets it alone has)
 
     :param name: str or None, any name of the star (resolved by Sesame)
     :param host: str or None, the archive's host name, when known
@@ -388,6 +420,12 @@ def known_planets(name: Optional[str] = None, host: Optional[str] = None,
                  when it exists, unless refresh)
     :param refresh: bool, fetch the archive again (tables(refresh=True)),
                     even when the file exists
+    :param ident: dict or None, the star as resolve() gives it (its names
+                  and position find it in exoplanet.eu); asked of Sesame
+                  from the name when None
+    :param wait: bool, fetch exoplanet.eu's catalogue now when it is not
+                 kept (a few minutes); False: in the background, eu
+                 pending meanwhile
 
     :return: dict, host, fetched (date), star (mass, distance, and the
              STAR_COLUMNS the archive has: rotation, spectral type, Teff...),
@@ -404,10 +442,12 @@ def known_planets(name: Optional[str] = None, host: Optional[str] = None,
         # a file of an older koloa: ask again, for what it lacks
         host = out['host']
     kept = tables(refresh=refresh)
+    if ident is None and name is not None:
+        ident = resolve(name)
     if host is None:
-        if name is None:
+        if ident is None:
             raise ValueError('known_planets needs a name or a host')
-        host = host_name(resolve(name))
+        host = host_name(ident)
     out = dict(host=host, fetched=kept['fetched'], star={}, planets=[],
                schema=SCHEMA)
     if host is not None:
@@ -443,12 +483,234 @@ def known_planets(name: Optional[str] = None, host: Optional[str] = None,
                     planet[key] = float(planet[key]) - 2400000.0
                 planet[f'{key}_err'] = _error(row, col)
             out['planets'].append(planet)
-    if path:
+    nasa = len(out['planets'])
+    if refresh and ident is not None:
+        encyclopaedia(refresh=True, wait=wait)
+    _with_encyclopaedia(out, ident, wait)
+    if path and not (out.get('eu') or {}).get('pending'):
         with open(path, 'w') as handle:
             json.dump(out, handle, indent=1)
-    log(f'{len(out["planets"])} planets of {host or name} in the NASA '
-        f'Exoplanet Archive (kept, of {kept["fetched"]})', 'value')
+    log(f'{nasa} planets of {host or name} in the NASA Exoplanet Archive '
+        f'(kept, of {kept["fetched"]})', 'value')
+    eu = out.get('eu') or {}
+    if eu.get('fetched'):
+        log(f'{eu["planets"]} in exoplanet.eu (kept, of {eu["fetched"]})'
+            + (f', {len(out["planets"]) - nasa} the archive does not have'
+               if len(out['planets']) > nasa else ''), 'value')
     return out
+
+
+# =============================================================================
+# The Extrasolar Planets Encyclopaedia (exoplanet.eu)
+# =============================================================================
+def _eu_number(value: Any) -> Optional[float]:
+    """a cell of the catalogue as a number (None when empty)"""
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if np.isfinite(out) else None
+
+
+def _eu_fetch(timeout: float = 120.0) -> Dict[str, Any]:
+    """exoplanet.eu's catalogue fetched (its server is slow: a few minutes
+    for a few MB) and kept, the columns of EU_COLUMNS only"""
+    import csv
+    import io
+    log(f'fetching the catalogue of exoplanet.eu (a few MB, a few minutes: '
+        f'its server is slow; once, kept in {CACHE})')
+    with urllib.request.urlopen(ENCYCLOPAEDIA, timeout=timeout) as response:
+        text = response.read().decode('utf-8', 'replace')
+    rows = [{col: (row.get(col) or '').strip() for col in EU_COLUMNS}
+            for row in csv.DictReader(io.StringIO(text))]
+    if not rows or not rows[0].get('name'):
+        raise ValueError('exoplanet.eu gave no catalogue')
+    out = dict(fetched=time.strftime('%Y-%m-%d %H:%M'), planets=rows)
+    os.makedirs(CACHE, exist_ok=True)
+    path = os.path.join(CACHE, 'exoplanet_eu.json')
+    with open(path + '.part', 'w') as handle:
+        json.dump(out, handle)
+    os.replace(path + '.part', path)
+    log(f'exoplanet.eu: {len(rows)} planets, kept', 'value')
+    return out
+
+
+def _eu_background() -> None:
+    """the catalogue fetched in a thread: what asked goes on without it"""
+    global _EU
+    try:
+        _EU = _eu_fetch()
+    except Exception as err:  # asked again the next time
+        log(f'exoplanet.eu could not be fetched ({err}): the NASA Exoplanet '
+            f'Archive alone for now', 'warn')
+
+
+def encyclopaedia(refresh: bool = False, wait: bool = True
+                  ) -> Optional[Dict[str, Any]]:
+    """
+    The catalogue of the Extrasolar Planets Encyclopaedia (exoplanet.eu),
+    kept: fetched the first time (or with refresh) into CACHE and read from
+    there after. A second opinion beside the NASA Exoplanet Archive: its
+    planets are mostly the same, their values not always (another paper
+    taken), and each has planets or times of transit the other lacks
+
+    :param refresh: bool, fetch it again
+    :param wait: bool, fetch it now when it is not kept (a few minutes);
+                 False: fetched in the background, and None (or the copy
+                 kept before a refresh) given meanwhile
+
+    :return: dict, fetched (date) and planets (rows: EU_COLUMNS, as text);
+             None when it is not kept (wait False), or cannot be fetched
+    """
+    global _EU, _EU_THREAD
+    path = os.path.join(CACHE, 'exoplanet_eu.json')
+    if _EU is None and os.path.exists(path):
+        try:
+            with open(path) as handle:
+                _EU = json.load(handle)
+        except (OSError, ValueError):
+            _EU = None
+    if _EU is not None and not refresh:
+        return _EU
+    if not wait:
+        if _EU_THREAD is None or not _EU_THREAD.is_alive():
+            import threading
+            _EU_THREAD = threading.Thread(target=_eu_background, daemon=True)
+            _EU_THREAD.start()
+        return _EU
+    try:
+        _EU = _eu_fetch()
+    except Exception as err:  # the archive alone
+        log(f'exoplanet.eu could not be fetched ({err}): the NASA Exoplanet '
+            f'Archive alone', 'warn')
+    return _EU
+
+
+def encyclopaedia_fetched() -> Optional[str]:
+    """when the kept catalogue of exoplanet.eu was fetched (None: never)"""
+    kept = encyclopaedia(wait=False) if (
+        _EU is not None or os.path.exists(os.path.join(
+            CACHE, 'exoplanet_eu.json'))) else None
+    return kept.get('fetched') if kept else None
+
+
+def _star_key(name: Any) -> str:
+    """a star's name compared across catalogues: SIMBAD's prefixes (NAME,
+    V*, *) left out, Gliese and Gl as GJ, no case and no spaces"""
+    text = re.sub(r'^(NAME|V\*|\*\*|\*|EM\*)\s+', '', str(name).strip())
+    return re.sub(r'^(gliese|gl)(?=\d)', 'gj', _key(text))
+
+
+def encyclopaedia_planets(ident: Dict[str, Any], wait: bool = True
+                          ) -> Optional[List[Dict[str, Any]]]:
+    """
+    The planets of a star in exoplanet.eu: by its names (the star's and its
+    alternate names against SIMBAD's aliases), else by its position (within
+    EU_MATCH_ARCSEC)
+
+    :param ident: dict, from resolve() (main, name, aliases, ra, dec)
+    :param wait: bool, see encyclopaedia()
+
+    :return: list of dict (name, P, P_err, K, K_err, e, omega [deg], tc
+             and tp [BJD - 2400000], tc_err, mass_earth, msini_earth,
+             radius_earth, discovery, disc_year, updated), by period; None
+             while the catalogue is not kept
+    """
+    kept = encyclopaedia(wait=wait)
+    if kept is None:
+        return None
+    names = {_star_key(alias) for alias in
+             [ident.get('main'), ident.get('name'), ident.get('gj'),
+              ident.get('hd'), ident.get('hip')]
+             + list(ident.get('aliases') or []) if alias}
+    rows = [row for row in kept['planets']
+            if names & {_star_key(val) for val in
+                        [row.get('star_name')]
+                        + (row.get('star_alternate_names') or '').split(',')
+                        if val and val.strip()}]
+    if not rows and ident.get('ra') is not None \
+            and ident.get('dec') is not None:
+        cosd = np.cos(np.radians(ident['dec']))
+        for row in kept['planets']:
+            ra, dec = _eu_number(row.get('ra')), _eu_number(row.get('dec'))
+            if ra is None or dec is None:
+                continue
+            dra = (ra - ident['ra'] + 180.0) % 360.0 - 180.0
+            if 3600.0 * np.hypot(dra * cosd, dec - ident['dec']) \
+                    < EU_MATCH_ARCSEC:
+                rows.append(row)
+    out = []
+    for row in rows:
+        num = {col: _eu_number(row.get(col)) for col in EU_COLUMNS}
+
+        def err(col):
+            vals = [abs(num[key]) for key in (f'{col}_error_min',
+                                              f'{col}_error_max')
+                    if num.get(key) is not None]
+            return float(np.mean(vals)) if vals else None
+        mass = num['mass'] if num['mass'] is not None else num['mass_sini']
+        tc = num['tzero_tr'] if num['tzero_tr'] is not None else num['tconj']
+        out.append(dict(
+            name=row['name'], P=num['orbital_period'],
+            P_err=err('orbital_period'), K=num['k'], K_err=err('k'),
+            e=num['eccentricity'], omega=num['omega'],
+            # its times are JD: koloa's BJD - 2400000
+            tc=None if tc is None else tc - 2400000.0,
+            tc_err=err('tzero_tr') if num['tzero_tr'] is not None else None,
+            tp=None if num['tperi'] is None else num['tperi'] - 2400000.0,
+            mass_earth=None if mass is None else mass * M_JUP_EARTH,
+            msini_earth=(None if num['mass_sini'] is None
+                         else num['mass_sini'] * M_JUP_EARTH),
+            radius_earth=(None if num['radius'] is None
+                          else num['radius'] * R_JUP_EARTH),
+            discovery=row.get('detection_type') or None,
+            disc_year=row.get('discovered') or None,
+            updated=row.get('updated') or None))
+    return sorted(out, key=lambda pl: (pl['P'] is None, pl['P'] or 0))
+
+
+def _with_encyclopaedia(out: Dict[str, Any], ident: Optional[Dict[str, Any]],
+                        wait: bool) -> None:
+    """
+    exoplanet.eu's answer set beside the archive's: each of the archive's
+    planets with eu (the planet of exoplanet.eu at its period, within
+    MATCH, or of its name), and the planets only exoplanet.eu has added
+    (source 'exoplanet.eu'); out['eu']: fetched, how many it has, or
+    pending while its catalogue is being fetched
+    """
+    if ident is None:
+        return
+    try:
+        found = encyclopaedia_planets(ident, wait=wait)
+    except Exception as err:  # a second opinion, not a need
+        out['eu'] = dict(error=f'{type(err).__name__}: {err}')
+        return
+    if found is None:
+        out['eu'] = dict(pending=True)
+        return
+    out['eu'] = dict(fetched=(encyclopaedia(wait=False) or {}).get('fetched'),
+                     planets=len(found))
+    left = list(found)
+    for planet in out['planets']:
+        same = [pl for pl in left
+                if (pl['P'] and planet.get('P')
+                    and abs(pl['P'] / planet['P'] - 1) < MATCH)
+                or _key(pl['name']) == _key(planet['name'])]
+        if same:
+            planet['eu'] = same[0]
+            left.remove(same[0])
+    for pl in left:
+        # a planet the archive does not have (one without a period is of
+        #   no use here), with every key a planet of the archive has
+        if not pl.get('P'):
+            continue
+        blank = {key: None for key in list(PLANET_COLUMNS.values())
+                 + ['tc_err', 'tp_err']}
+        out['planets'].append(dict(
+            blank, **pl, source='exoplanet.eu', reference='exoplanet.eu',
+            reference_url=ENCYCLOPAEDIA_PAGE, solutions=[], eu=dict(pl)))
+    out['planets'].sort(key=lambda pl: (pl.get('P') is None,
+                                        pl.get('P') or 0))
 
 
 def compare(orb: Dict[str, Any], known: Dict[str, Any],

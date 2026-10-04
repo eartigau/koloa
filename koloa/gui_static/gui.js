@@ -132,15 +132,18 @@ function archivesByDefault(disk) {
 
 let cwd = '';
 let archiveDate = null;
+let euDate = null;          // when exoplanet.eu's catalogue was fetched
+let euTarget = null, euTries = 0;
 function showCwd() {
   if (cwd) $('cwd').textContent = `${t('cwd')} ${cwd} ${t('rel')}`;
-  $('archive-date').textContent = archiveDate ? `${t('archive_kept')} ${archiveDate}` : t('archive_none');
+  $('archive-date').textContent = (archiveDate ? `${t('archive_kept')} ${archiveDate}` : t('archive_none'))
+    + (euDate ? ` \u00b7 exoplanet.eu: ${euDate}` : '');
 }
 
 async function refreshInfo() {
   try {
     const info = await api('/api/info');
-    cwd = info.cwd_shown || info.cwd; archiveDate = info.archive; showCwd();
+    cwd = info.cwd_shown || info.cwd; archiveDate = info.archive; euDate = info.eu; showCwd();
   } catch (err) { /* later */ }
 }
 
@@ -285,9 +288,22 @@ async function resolveStar(refresh) {
       + `<span class="pnum">P ${num(pl.P, 4)} d \u00b7 K ${num(pl.K, 2)} m/s`
       + (pl.mass_earth != null ? ` \u00b7 m sin i ${num(pl.mass_earth, 1)} M\u2295` : '') + `</span><br>`
       + `<span class="hint">${pl.reference_url ? `<a href="${esc(pl.reference_url)}" target="_blank">${esc(pl.reference || '')}</a>` : esc(pl.reference || '')}`
-      + ` \u00b7 ${pl.solutions} ${esc(t(pl.solutions === 1 ? 'solution' : 'solutions'))}`
-      + (pl.discovery ? ` \u00b7 ${esc(pl.discovery)}${pl.year ? ` ${esc(pl.year)}` : ''}` : '') + `</span></div>`).join('')
+      + (pl.source === 'exoplanet.eu' ? ` \u00b7 ${esc(t('eu_only'))}` : ` \u00b7 ${pl.solutions} ${esc(t(pl.solutions === 1 ? 'solution' : 'solutions'))}`)
+      + (pl.discovery ? ` \u00b7 ${esc(pl.discovery)}${pl.year ? ` ${esc(pl.year)}` : ''}` : '') + `</span>`
+      // exoplanet.eu's answer, beside the archive's
+      + (pl.eu && pl.source !== 'exoplanet.eu' ? `<br><span class="hint">exoplanet.eu: <span class="pnum">P ${num(pl.eu.P, 4)} d \u00b7 K ${num(pl.eu.K, 2)} m/s`
+        + (pl.eu.e != null ? ` \u00b7 e ${num(pl.eu.e, 2)}` : '') + `</span></span>` : '')
+      + `</div>`).join('')
       || `<span class="hint">${esc(id.planets_error || t('none_known'))}</span>`;
+    // exoplanet.eu's catalogue on its way (its server is slow): the star
+    //   read again when it is there
+    const euNote = id.eu && id.eu.pending ? `<span class="hint"><span class="spin"></span> ${esc(t('eu_pending'))}</span>` : '';
+    if (id.eu && id.eu.pending) {
+      const asked = name;
+      euTries = (euTarget === asked ? euTries : 0) + 1;
+      euTarget = asked;
+      if (euTries <= 30) setTimeout(() => { if ($('target').value.trim() === asked) resolveStar(); }, 30000);
+    }
     const tois = (id.tois || []).map((ti) => `<button type="button" class="chip" data-toi="${esc(ti.toi)}"><b>TOI-${esc(ti.toi)}</b> ${esc(ti.disposition || '')} `
       + `<span class="pnum">P ${num(ti.P, 6)} d \u00b7 ${esc(t('transit'))} ${num(ti.tc, 4)}`
       + (ti.depth != null ? ` \u00b7 ${num(ti.depth, 0)} ppm` : '') + (ti.radius != null ? ` \u00b7 ${num(ti.radius, 2)} R\u2295` : '')
@@ -316,7 +332,7 @@ async function resolveStar(refresh) {
       + tile(t('pos'), pos) + tile(t('gaia'), esc((id.gaia_dr3 || '-').replace('Gaia DR3 ', '')))
       + tile(t('names'), others, true)
       + tile(rot.length > 1 ? `${t('rotation')} \u00b7 ${t('use_sho_head')}` : t('rotation'), rot.length ? `<div class="prots">${rot.join('')}</div>` : esc(t('none')), 'full')
-      + tile(t('known'), planets, true)
+      + tile(t('known'), planets + euNote, true)
       + tile(t('toi_title'), toiTile, (id.tois || []).length > 0)
       + tile(t('carmenes'), carm) + '</div>'
       + `<p class="hint">${esc(where)} <button type="button" class="small" id="refresh-star">${esc(t('refresh_star'))}</button></p>`;

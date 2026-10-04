@@ -219,10 +219,11 @@ def main(argv=None):
         if not args.filename and not args.refresh_archive:
             return
     if args.refresh_archive:
-        from koloa.archive import tables
+        from koloa.archive import encyclopaedia, tables
         from koloa.gather import carmenes_objects
         from koloa.published import refresh_lists
         tables(refresh=True)
+        encyclopaedia(refresh=True)
         carmenes_objects(refresh=True)
         refresh_lists()
         if not args.filename:

@@ -998,6 +998,11 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
                 last = (pl['solutions'] or [pl])[-1]
                 log(f'  known: {pl["name"]}, P = {pl["P"]:.4f} d, K = '
                     f'{last.get("K")} m/s ({last.get("reference")})', 'value')
+                # the second opinion, where it has the planet too
+                eu = pl.get('eu')
+                if eu and pl.get('source') != 'exoplanet.eu':
+                    log(f'    exoplanet.eu: P = {eu.get("P")} d, K = '
+                        f'{eu.get("K")} m/s, e = {eu.get("e")}', 'value')
         except OSError as err:
             log(f'NASA Exoplanet Archive: {err}', 'warn')
     tois = _tois(toi, ident)
@@ -1630,14 +1635,21 @@ def _report(star, data, ident, known, fip1, fip2, orbits, indic, ducks, why,
     if params:
         lines.append('The star (NASA Exoplanet Archive): ' + ', '.join(
             f'{key} {val}' for key, val in params.items()))
-    lines += ['', 'Known planets (NASA Exoplanet Archive)']
+    lines += ['', 'Known planets (NASA Exoplanet Archive, exoplanet.eu)']
     if not known.get('planets'):
         lines.append('  none')
     for pl in known.get('planets', []):
         sols = '; '.join(f'K {sol["K"]} +- {sol["K_err"]} ({sol["reference"]})'
                          for sol in reversed(pl.get('solutions') or [])
                          if sol.get('K_err'))
-        lines.append(f'  {pl["name"]}: P = {pl["P"]} d; {sols}')
+        lines.append(f'  {pl["name"]}: P = {pl["P"]} d; {sols}'
+                     + (' (exoplanet.eu only)'
+                        if pl.get('source') == 'exoplanet.eu' else ''))
+        eu = pl.get('eu')
+        if eu:
+            lines.append(f'    exoplanet.eu: P = {eu.get("P")} d, K = '
+                         f'{eu.get("K")} +- {eu.get("K_err")} m/s, e = '
+                         f'{eu.get("e")}')
     for label, res in (('FIP, noise without planets', fip1),
                        ('FIP, noise with the planets', fip2)):
         lines += ['', label, '  P(k) = ' + ', '.join(f'{val:.2f}'

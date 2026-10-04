@@ -294,7 +294,8 @@ def resolve_star(name: str, root: str = '', refresh: bool = False
                  ) -> Dict[str, Any]:
     """the SIMBAD resolver of the page: identifiers, position, TIC, the
     periods SIMBAD lists, CARMENES DR1, and the planets the NASA Exoplanet
-    Archive knows (its copy kept here, koloa.archive)"""
+    Archive and exoplanet.eu know (their copies kept here, koloa.archive;
+    exoplanet.eu's is fetched in the background the first time)"""
     from koloa.archive import CACHE, host_name, known_planets, resolve, tois
     from koloa.gather import carmenes_star, folder_name, variability
     folder = folder_name(name)
@@ -325,16 +326,22 @@ def resolve_star(name: str, root: str = '', refresh: bool = False
     known = {}
     try:
         host = host_name(out)
-        known = known_planets(host=host) if host else {}
+        known = known_planets(host=host, ident=out, wait=False)
         out['archive_host'] = host
         out['archive_rotation'] = (known.get('star') or {}).get('rotation')
+        out['eu'] = known.get('eu')
         out['planets'] = [
             dict(name=pl['name'], P=pl.get('P'), K=pl.get('K'),
                  mass_earth=pl.get('mass_earth'), e=pl.get('e'),
                  reference=pl.get('reference'),
                  reference_url=pl.get('reference_url'),
                  solutions=len(pl.get('solutions') or []),
-                 discovery=pl.get('discovery'), year=pl.get('disc_year'))
+                 discovery=pl.get('discovery'), year=pl.get('disc_year'),
+                 source=pl.get('source') or 'archive',
+                 # exoplanet.eu's answer, beside the archive's
+                 eu=({key: (pl['eu'] or {}).get(key) for key in
+                      ('name', 'P', 'K', 'K_err', 'e', 'mass_earth',
+                       'updated')} if pl.get('eu') else None))
             for pl in known.get('planets', [])]
     except Exception as err:  # a help, not a need
         out['planets_error'] = str(err)
@@ -704,22 +711,36 @@ def selection(opts: Dict[str, Any]):
 
 
 def known_periods(target: str) -> List[Dict[str, Any]]:
-    """the known planets of a star (the archive's copy kept here)"""
+    """the known planets of a star (the copies kept here of the NASA
+    Exoplanet Archive and of exoplanet.eu: the archive's values, and the
+    planets exoplanet.eu alone has; a time of transit only exoplanet.eu
+    has is taken with its period, tc_source saying so)"""
     if not target.strip():
         return []
     from koloa.archive import host_name, known_planets, resolve
     def number(value):
         return float(value) if value is not None else None
     try:
-        host = host_name(resolve(target))
-        return [dict(name=pl['name'], P=float(pl['P']), K=number(pl.get('K')),
-                     e=number(pl.get('e')), omega=number(pl.get('omega')),
-                     tp=number(pl.get('tp')), tc=number(pl.get('tc')),
-                     P_err=number(pl.get('P_err')),
-                     tc_err=number(pl.get('tc_err')),
-                     reference=pl.get('reference') or '')
-                for pl in (known_planets(host=host)['planets'] if host
-                           else []) if pl.get('P')]
+        ident = resolve(target)
+        out = []
+        for pl in known_planets(host=host_name(ident), ident=ident,
+                                wait=False)['planets']:
+            if not pl.get('P'):
+                continue
+            one = dict(name=pl['name'], P=float(pl['P']),
+                       K=number(pl.get('K')), e=number(pl.get('e')),
+                       omega=number(pl.get('omega')), tp=number(pl.get('tp')),
+                       tc=number(pl.get('tc')), P_err=number(pl.get('P_err')),
+                       tc_err=number(pl.get('tc_err')),
+                       reference=pl.get('reference') or '')
+            eu = pl.get('eu') or {}
+            if one['tc'] is None and eu.get('tc') is not None \
+                    and eu.get('P'):
+                one.update(tc=float(eu['tc']), tc_err=number(eu.get('tc_err')),
+                           tc_P=float(eu['P']), tc_P_err=number(eu.get('P_err')),
+                           tc_source='exoplanet.eu')
+            out.append(one)
+        return out
     except Exception:  # a help, not a need
         return []
 
@@ -734,9 +755,12 @@ def transits_of(target: str, known: List[Dict[str, Any]]
     :return: list of dict: name, source, P, P_err, tc, tc_err [BJD -
              2400000], reference
     """
-    out = [dict(name=pl['name'], source='archive', P=pl['P'],
-                P_err=pl.get('P_err'), tc=pl['tc'], tc_err=pl.get('tc_err'),
-                reference=pl.get('reference', ''))
+    out = [dict(name=pl['name'], source=pl.get('tc_source') or 'archive',
+                P=pl.get('tc_P') or pl['P'],
+                P_err=(pl.get('tc_P_err') if pl.get('tc_P')
+                       else pl.get('P_err')),
+                tc=pl['tc'], tc_err=pl.get('tc_err'),
+                reference=pl.get('tc_source') or pl.get('reference', ''))
            for pl in known if pl.get('tc') is not None]
     try:
         from koloa.archive import TOI_NOT_PLANETS, resolve, tois
@@ -1593,6 +1617,7 @@ def forget() -> Dict[str, Any]:
         QUICKS.pop(qid)
         _QUICK_DATA.pop(qid, None)
     karchive._TABLES = None
+    karchive._EU = None
     return dict(kept=[job.id for job in JOBS.values()])
 
 
@@ -3326,11 +3351,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._file(os.path.join(STATIC, name))
             if url.path == '/api/info':
                 from koloa.archive import fetched
+                from koloa.archive import encyclopaedia_fetched
                 return self._json(dict(cwd=os.getcwd(),
                                        cwd_shown=_home_short(os.getcwd()),
                                        python=sys.executable,
                                        defaults=DEFAULTS,
-                                       archive=fetched()))
+                                       archive=fetched(),
+                                       eu=encyclopaedia_fetched()))
             if url.path == '/api/resolve':
                 return self._json(resolve_star(
                     query.get('name', ''), query.get('root', ''),
@@ -3518,6 +3545,13 @@ def serve(port: int = 8765, browser: bool = True):
     else:
         raise OSError(f'no free port from {port} to {port + 19}')
     url = f'http://127.0.0.1:{server.server_address[1]}/'
+    # exoplanet.eu's catalogue, when not kept yet: fetched in the
+    #   background (its server takes minutes), the pages go on without it
+    try:
+        from koloa.archive import encyclopaedia
+        encyclopaedia(wait=False)
+    except Exception:  # a second opinion, not a need
+        pass
     print(f'koloa GUI: {url} (runs from {os.getcwd()}; Ctrl-C to stop)',
           flush=True)
     if browser:
