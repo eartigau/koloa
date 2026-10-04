@@ -110,3 +110,30 @@ def test_the_light_curve_of_the_archives(tmp_path):
     read = transit.from_csv(str(path))
     assert len(read['time']) == 500
     assert read['flux'][3] == pytest.approx(lc['flux'][3])
+
+
+def test_the_period_scanned():
+    """a period off by enough that, over two sectors 400 days apart, its
+    transits do not line up: folded at it, the box is weak; scanned within
+    its error, the transits line up again, at the true period"""
+    lc = _light_curve(seed=7, transits=[(3.1, 58001.3, 1.2, 1.6)])
+    asked = 3.1 + 0.0008
+    fixed = transit.search(lc, asked, mstar=0.4, rstar=0.4, ntrial=5)
+    scanned = transit.search(lc, asked, period_err=0.0005, mstar=0.4,
+                             rstar=0.4, ntrial=5)
+    assert 'scan' in scanned and 'scan' not in fixed
+    assert scanned['fold_period'] == pytest.approx(3.1, abs=1.5e-4)
+    assert scanned['best']['snr'] > 1.3 * fixed['best']['snr']
+    assert scanned['plausible'], scanned['why']
+    assert scanned['best']['depth'] == pytest.approx(1.2, abs=0.25)
+    # a period known well enough is not scanned
+    assert 'scan' not in transit.search(lc, 3.1, period_err=1e-6,
+                                        mstar=0.4, rstar=0.4, ntrial=5)
+
+
+def test_the_chance_of_the_null():
+    """a Gumbel fitted to the null: a value far beyond it is unlikely, one
+    within it is not"""
+    null = [3.1, 4.0, 3.5, 2.8, 4.4, 3.9, 3.0, 3.6, 4.1, 3.3]
+    assert transit.null_chance(12.0, null) < 1e-6
+    assert transit.null_chance(4.0, null) > 0.1

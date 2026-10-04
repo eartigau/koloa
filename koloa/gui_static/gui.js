@@ -917,10 +917,16 @@ function drawTransit(res, c) {
     + (b ? ` ${esc(t('ts_box'))} ${fmt(b.depth, 3)} \u00b1 ${fmt(b.depth_err, 3)} ppt, ${fmt(b.duration, 1)} h, Rp \u2248 ${fmt(b.radius, 2)} R\u2295` : '')
     + ` \u00b7 R\u2605 ${fmt(res.star.radius, 3)} R\u2609 (${esc(res.star.radius_source)}), ${t('ts_expected')} ${fmt(res.duration, 1)} h`
     + ` \u00b7 TESS ${esc((res.sectors || []).join(', '))} (${esc(res.lc)})`
-    + (res.window ? ` \u00b7 ${t('ts_window')} \u00b1${fmt(res.window, 1)} h` : ` \u00b7 ${t('ts_whole')}`);
+    + (res.window ? ` \u00b7 ${t('ts_window')} \u00b1${fmt(res.window, 1)} h` : ` \u00b7 ${t('ts_whole')}`)
+    // the period scanned: how many, and where the box is best
+    + (res.scan ? ` \u00b7 ${t('ts_scan')} ${res.scan.n} ${t('ts_periods')} ${fmt(res.scan.low, 5)} - ${fmt(res.scan.high, 5)} d,`
+      + ` ${t('ts_folded')} ${fmt(P, 5)} d${b && b.period_offset !== undefined ? ` (${b.period_offset >= 0 ? '+' : ''}${fmt(b.period_offset, 1)}\u03c3)` : ''}` : '');
   const div = $('tsplot');
   div.classList.add('on');
   if (!window.Plotly) return;
+  // the light curve folded at the period found (the scan's best, when the
+  //   period was scanned), the box and the window about it
+  const P = res.fold_period || res.period;
   const traces = [{ x: res.hours, y: res.flux, type: 'scattergl', mode: 'markers', name: t('ts_points'),
     marker: { size: 3, color: 'rgba(170,185,210,0.35)' }, hoverinfo: 'skip' }];
   const bins = res.bins || [];
@@ -930,14 +936,14 @@ function drawTransit(res, c) {
     hovertemplate: '%{x:.2f} h<br>%{y:.3f} ppt<extra></extra>' });
   // the box found, about the centre shown
   if (b) {
-    const off = (((b.centre - res.shown_centre) / res.period + 0.5) % 1 + 1) % 1 * res.period * 24 - 0.5 * res.period * 24;
+    const off = (((b.centre - res.shown_centre) / P + 0.5) % 1 + 1) % 1 * P * 24 - 0.5 * P * 24;
     const h = b.duration / 2;
     traces.push({ x: [off - 3 * h, off - h, off - h, off + h, off + h, off + 3 * h], y: [0, 0, -b.depth, -b.depth, 0, 0], type: 'scatter',
       mode: 'lines', name: t('ts_boxname'), line: { color: '#f5a524', width: 1.6 }, hoverinfo: 'skip' });
   }
   // the depths of a 1 Earth-radius and a 1 Jupiter-radius planet
   const span = Math.max(4 * res.duration, res.window ? 1.2 * res.window : 0, 6);
-  const xr = [-Math.min(span, res.period * 12), Math.min(span, res.period * 12)];
+  const xr = [-Math.min(span, P * 12), Math.min(span, P * 12)];
   const vis = bins.filter((v) => v[0] >= xr[0] && v[0] <= xr[1]);
   const err = vis.length ? vis.map((v) => v[2]).sort((p, q) => p - q)[Math.floor(vis.length / 2)] : 0.1;
   let lo = Math.min(...vis.map((v) => v[1]), -(b ? b.depth : 0)) - 4 * err, hi = Math.max(...vis.map((v) => v[1]), 0) + 4 * err;
@@ -954,7 +960,7 @@ function drawTransit(res, c) {
   });
   // where the transit is expected (the ephemeris carried to TESS), shaded
   if (res.window && res.t0 !== null && res.t0 !== undefined) {
-    const at = (((res.t0 - res.shown_centre) / res.period + 0.5) % 1 + 1) % 1 * res.period * 24 - 0.5 * res.period * 24;
+    const at = (((res.t0 - res.shown_centre) / P + 0.5) % 1 + 1) % 1 * P * 24 - 0.5 * P * 24;
     shapes.push({ type: 'rect', xref: 'x', yref: 'paper', x0: at - res.window, x1: at + res.window, y0: 0, y1: 1,
       fillcolor: 'rgba(98,194,255,0.06)', line: { width: 0 } });
   }

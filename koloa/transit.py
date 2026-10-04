@@ -22,6 +22,15 @@ the transit would be
   ephemeris of a TOI), carried to the epochs of TESS with its error,
   sqrt(t0_err^2 + (n P_err)^2): the search is within 3 sigma of it (and
   at least one duration), or over the whole phase when that is wider.
+- The period scanned when its error is too large to fold at it: when 3
+  sigma of it, over the span of the TESS light curve, move a transit by
+  more than half a duration (a period from the velocities, against
+  sectors years apart), the periods within 3 sigma: a coarse grid (each
+  step moving a transit by two durations at most over that span, 300 at
+  most), then a fine one (a quarter of a duration) about its five best;
+  the best kept and the light curve folded at it. The search runs on the
+  light curve in bins of a twelfth of the duration (the plot keeps every
+  point).
 - The search: boxes of 0.5, 1 and 2 times the expected duration, their
   centres a quarter of the shortest apart; the depth of a box is minus the
   mean flux in it, its error the scatter of the light curve averaged over
@@ -46,7 +55,9 @@ the transit would be
   there is nothing to find (0.7 to 1.4 times the period, the same width
   of window at a random time, the box's own transits left out), each
   judged as the box is, without its deepest transit; a transit beats the
-  best box of every one
+  best box of every one, and the chance that the null reaches it (a
+  Gumbel fitted to the null, each of its values the best box of a search)
+  is below 1 %
   (an active star, its flares and spots, makes dips as deep as a planet's
   at any period: then the light curve cannot tell).
 - The radius of the planet from the depth, Rp = R* sqrt(depth), and the
@@ -59,7 +70,7 @@ Created on 2026-10-03
 """
 import csv
 import math
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -87,6 +98,13 @@ WINDOW_MIN = 0.5
 DURATIONS = (0.5, 1.0, 2.0)
 #: the periods of the null: a transit beats the best box of each
 NTRIAL = 20
+#: the most periods of the coarse grid of a scan (the period too uncertain
+#: to fold at it)
+MAX_PERIODS = 300
+#: the periods of the null when the period is scanned (each scanned too)
+NTRIAL_SCAN = 10
+#: a transit is beyond this chance of the null (null_chance)
+NULL_CHANCE = 0.01
 
 
 # =============================================================================
@@ -212,6 +230,33 @@ def highpass(lc: Dict[str, np.ndarray], window: float,
     return {key: val[order] for key, val in out.items()}
 
 
+def bin_light_curve(lc: Dict[str, np.ndarray], width: float
+                    ) -> Dict[str, np.ndarray]:
+    """
+    A light curve in bins of a width [days] (each stretch on its own: the
+    means of the time and the flux, the error of the mean): the search on
+    a few points per tenth of a transit, not on every 2-minute one
+
+    :return: dict, time, flux, err, sector
+    """
+    keep: Dict[str, List[np.ndarray]] = dict(time=[], flux=[], err=[],
+                                             sector=[])
+    for seg in _segments(lc['time'], lc['sector']):
+        time = lc['time'][seg]
+        idx = np.floor((time - time[0]) / width).astype(int)
+        count = np.bincount(idx)
+        full = count > 0
+        num = count[full]
+        keep['time'].append(np.bincount(idx, time)[full] / num)
+        keep['flux'].append(np.bincount(idx, lc['flux'][seg])[full] / num)
+        keep['err'].append(np.sqrt(np.bincount(idx, lc['err'][seg] ** 2)
+                                   [full]) / num)
+        keep['sector'].append(np.full(len(num), lc['sector'][seg][0]))
+    out = {key: np.concatenate(val) for key, val in keep.items()}
+    order = np.argsort(out['time'])
+    return {key: val[order] for key, val in out.items()}
+
+
 def red_noise(lc: Dict[str, np.ndarray], width: float) -> float:
     """
     The scatter of a high-passed light curve averaged over a time [days]:
@@ -240,17 +285,23 @@ def red_noise(lc: Dict[str, np.ndarray], width: float) -> float:
 
 
 def _boxes(hp: Dict[str, np.ndarray], period: float, ref: float,
-           half: float, dur: float) -> Optional[Dict[str, Any]]:
+           half: float, dur: float,
+           cache: Optional[Dict[float, float]] = None
+           ) -> Optional[Dict[str, Any]]:
     """
     The best box of a high-passed light curve folded at a period: centres
     within half [phase] of ref, durations DURATIONS times dur [days]; the
     depth of a box minus its mean flux, its error the scatter of the light
     curve over its duration over the root of its transits
 
-    :return: dict (centre, phase [h from ref], duration [h], depth,
-             depth_err [ppt], snr, ntransits), or None
+    :param cache: dict or None, the red noise of each width (it does not
+                  depend on the period: kept across the periods of a scan)
+
+    :return: dict (period, centre, phase [h from ref], duration [h],
+             depth, depth_err [ppt], snr, ntransits), or None
     """
     time, flux = hp['time'], hp['flux']
+    cache = {} if cache is None else cache
     phase = ((time - ref) / period + 0.5) % 1.0 - 0.5
     # the boxes: their centres a quarter of the shortest apart, on a grid
     #   of the folded light curve
@@ -277,7 +328,9 @@ def _boxes(hp: Dict[str, np.ndarray], period: float, ref: float,
         if not np.any(ok):
             continue
         depth = np.where(ok, -tot / np.maximum(cnt, 1), -np.inf)
-        noise = red_noise(hp, width)
+        if width not in cache:
+            cache[width] = red_noise(hp, width)
+        noise = cache[width]
         null = phase_scatter(hp, period, width)
         for k in np.argsort(depth)[::-1][:5]:
             if not ok[k] or depth[k] <= 0:
@@ -295,8 +348,10 @@ def _boxes(hp: Dict[str, np.ndarray], period: float, ref: float,
             err = max(noise / math.sqrt(ntr), null)
             snr = float(depth[k] / err) if err > 0 else 0.0
             if best is None or snr > best['snr']:
-                best = dict(centre=float(centre), phase=float(
-                    mid[k] * period * 24.0), duration=float(width * 24.0),
+                best = dict(
+                    period=float(period), centre=float(centre),
+                    phase=float(mid[k] * period * 24.0),
+                    duration=float(width * 24.0),
                     depth=float(depth[k]), depth_err=float(err), snr=snr,
                     ntransits=ntr)
             break
@@ -371,15 +426,64 @@ def _measure(hp: Dict[str, np.ndarray], period: float, centre: float,
                 epochs=each, snr_drop=drop)
 
 
+def _scan(hp: Dict[str, np.ndarray], period: float, perr: float,
+          ref: float, half: float, dur: float,
+          cache: Dict[float, float]) -> Tuple[Optional[Dict[str, Any]], int]:
+    """
+    The best box over the periods within 3 sigma of a period, in two
+    steps: a coarse grid (each step moving a transit by two durations at
+    most over the span of the light curve, MAX_PERIODS at most), then a
+    fine one (a quarter of a duration) about its five best periods
+
+    :return: tuple, the best box (or None) and the periods tried
+    """
+    nspan = max(float(hp['time'].max() - hp['time'].min()) / period, 1e-9)
+    fine = 0.25 * dur / nspan
+    coarse = max(fine, 2.0 * dur / nspan, 6 * perr / (MAX_PERIODS - 1))
+    grid = period + np.arange(-3 * perr, 3 * perr + 0.5 * coarse, coarse)
+
+    def at(trial):
+        # the same window about ref, in the phase of each period
+        return _boxes(hp, float(trial), ref, min(0.5, half * period / trial),
+                      dur, cache)
+    found = [(one['snr'], float(trial), one) for trial in grid
+             for one in [at(trial)] if one is not None]
+    tried = len(grid)
+    if coarse > fine and found:
+        found.sort(key=lambda item: -item[0])
+        tops: List[float] = []
+        for _, trial, _ in found:
+            if all(abs(trial - old) > coarse for old in tops):
+                tops.append(trial)
+            if len(tops) == 5:
+                break
+        for top in tops:
+            sub = top + np.arange(-coarse, coarse + 0.5 * fine, fine)
+            tried += len(sub)
+            found += [(one['snr'], float(trial), one) for trial in sub
+                      for one in [at(trial)] if one is not None]
+    if not found:
+        return None, tried
+    return max(found, key=lambda item: item[0])[2], tried
+
+
 def _detect(lc: Dict[str, np.ndarray], hp: Dict[str, np.ndarray],
             period: float, ref: float, half: float, dur: float,
-            window: float):
-    """the best box of a light curve at a period (its high-pass given),
-    in two passes: searched, then the trend again without its transits
-    and the same box measured again; (best or None, the high-pass)"""
-    best = _boxes(hp, period, ref, half, dur)
+            window: float, perr: Optional[float] = None):
+    """the best box of a light curve at a period (its high-pass given), or
+    over the periods within 3 sigma of it (perr: _scan), in two passes:
+    searched, then the trend again without its transits and the same box
+    measured again; (best or None, the high-pass)"""
+    cache: Dict[float, float] = {}
+    if perr:
+        best, tried = _scan(hp, period, perr, ref, half, dur, cache)
+        if best is not None:
+            best['tried'] = tried
+    else:
+        best = _boxes(hp, period, ref, half, dur, cache)
     if best is None:
         return None, hp
+    period = best['period']
     best.update(_measure(hp, period, best['centre'], best['duration']
                          / 24.0) or {})
     width = max(best['duration'] / 24.0, dur)
@@ -392,17 +496,40 @@ def _detect(lc: Dict[str, np.ndarray], hp: Dict[str, np.ndarray],
     return best, hp
 
 
+def null_chance(value: float, null: Sequence[float]) -> float:
+    """
+    The chance that the null reaches a value: each value of the null is the
+    best box of a search (a maximum), so the null follows an extreme-value
+    law, a Gumbel fitted by its moments (scale sd sqrt(6) / pi, location
+    mean - 0.5772 scale); the chance, one minus its distribution at the
+    value
+
+    :return: float
+    """
+    vals = np.asarray(null, float)
+    if len(vals) < 3:
+        return float('nan')
+    scale = max(float(np.std(vals, ddof=1)) * math.sqrt(6) / math.pi, 1e-6)
+    loc = float(np.mean(vals)) - 0.5772 * scale
+    return float(-np.expm1(-math.exp(-(value - loc) / scale)))
+
+
 def null_trials(lc: Dict[str, np.ndarray], period: float, half: float,
                 mstar: float, rstar: float, ntrial: int = NTRIAL,
-                avoid: Sequence[float] = (), seed: int = 2) -> List[float]:
+                avoid: Sequence[float] = (), seed: int = 2,
+                perr: Optional[float] = None) -> List[float]:
     """
     The same search at periods where there is no transit to find: ntrial
     periods drawn between 0.7 and 1.4 times the period (none within 2 % of
     it, of a known planet's, or of their harmonics), the same width of
-    window about a time drawn at random; the signal-to-noise ratio of the
-    best box of each without its deepest transit (what the light curve
-    gives by chance, on the statistic the candidate is judged on: one deep
-    event is not a transit seen twice)
+    window about a time drawn at random (and, when the period was scanned,
+    the same scan about each: as many periods, as far apart in ratio); the
+    signal-to-noise ratio of the best box of each without its deepest
+    transit (what the light curve gives by chance, on the statistic the
+    candidate is judged on: one deep event is not a transit seen twice)
+
+    :param perr: float or None, the error of the period when it was
+                 scanned (each trial scanned as far, in ratio)
 
     :return: list of float
     """
@@ -418,10 +545,11 @@ def null_trials(lc: Dict[str, np.ndarray], period: float, half: float,
             continue
         dur = max(duration(trial, mstar, rstar) / 24.0, 0.02)
         window = max(WINDOW_MIN, 3 * dur)
-        hp = highpass(lc, window)
+        sub = bin_light_curve(lc, max(dur / 12.0, 2.0 / 1440))
+        hp = highpass(sub, window)
         ref = float(lc['time'].min() + rng.uniform(0, trial))
-        best, _ = _detect(lc, hp, trial, ref, max(half, dur / trial), dur,
-                          window)
+        best, _ = _detect(sub, hp, trial, ref, max(half, dur / trial), dur,
+                          window, perr * trial / period if perr else None)
         out.append(float(best.get('snr_drop') or 0.0) if best else 0.0)
     return out
 
@@ -478,6 +606,10 @@ def search(lc: Dict[str, np.ndarray], period: float,
                        - 0.5) * other['P'] <= 0.75 * width + 0.02
     if skip.any():
         lc = {key: val[~skip] for key, val in lc.items()}
+    # the search on the light curve in bins of a twelfth of the duration
+    #   (the 2-minute points kept for the plot)
+    full = lc
+    lc = bin_light_curve(full, max(dur / 12.0, 2.0 / 1440))
     hp = highpass(lc, window)
     out = dict(period=float(period), duration=float(dur_h), window=None,
                best=None, plausible=False, why='no light curve',
@@ -490,13 +622,21 @@ def search(lc: Dict[str, np.ndarray], period: float,
     if len(hp['time']) < 100:
         return out
     ref = float(t0) if t0 is not None else float(hp['time'].min())
-    # where to search: within 3 sigma of the expected transit carried to
-    #   the epochs of TESS (at least a duration), or everywhere
+    # the period scanned when its error, over the span of TESS, moves a
+    #   transit by more than half a duration (3 sigma): folded at it, the
+    #   transits would not line up (_scan: within 3 sigma, coarse then
+    #   fine); the window then about the conjunction alone, the period's
+    #   error left to the scan (a quarter of a duration over the span)
+    nspan = float(hp['time'].max() - hp['time'].min()) / period
+    scan = None
+    perr = period_err or 0.0
+    if perr > 0 and 3 * perr * nspan > 0.5 * dur:
+        scan = perr
+        perr = 0.125 * dur / max(nspan, 1e-9)
     half = 0.5
     if t0 is not None:
         epochs = float(np.median(np.abs(hp['time'] - ref))) / period
-        sig = math.sqrt((t0_err or 0.0) ** 2 + (epochs * (period_err or 0.0))
-                        ** 2)
+        sig = math.sqrt((t0_err or 0.0) ** 2 + (epochs * perr) ** 2)
         half = min(0.5, max(3 * sig, dur) / period)
         if half < 0.5:
             out['window'] = float(half * period * 24.0)
@@ -504,14 +644,31 @@ def search(lc: Dict[str, np.ndarray], period: float,
     #   the transits found (each epoch's box, and a margin) and the same
     #   box measured again (not searched again: a second search on the
     #   trend interpolated across it would pick the noise twice)
-    best, hp = _detect(lc, hp, period, ref, half, dur, window)
-    time, flux = hp['time'], hp['flux']
+    best, hp = _detect(lc, hp, period, ref, half, dur, window, scan)
+    # the period the light curve is folded at: the scan's best
+    fold = best['period'] if best is not None else float(period)
+    out['fold_period'] = fold
+    if scan:
+        out['scan'] = dict(low=float(period - 3 * scan),
+                           high=float(period + 3 * scan),
+                           n=int((best or {}).get('tried', 0)))
+    # the points of the plot: every one, high-passed, without the transits
+    #   found in the trend
+    mask = None
+    if best is not None:
+        width = max(best['duration'] / 24.0, dur)
+        mask = np.abs(((full['time'] - best['centre']) / fold + 0.5) % 1.0
+                      - 0.5) * fold <= 0.75 * width
+    shown = highpass(full, window, mask=mask)
+    time, flux = shown['time'], shown['flux']
     cadence = float(np.median(np.diff(time)))
     if best is not None:
         best['radius'] = radius_of(best['depth'], rstar)
+        if period_err:
+            best['period_offset'] = float((fold - period) / period_err)
         if t0 is not None:
-            best['phase'] = float(((best['centre'] - t0) / period + 0.5)
-                                  % 1.0 - 0.5) * period * 24.0
+            best['phase'] = float(((best['centre'] - t0) / fold + 0.5)
+                                  % 1.0 - 0.5) * fold * 24.0
     out['best'] = best
     if best is None:
         out['why'] = 'no box with data where the transit would be'
@@ -532,13 +689,18 @@ def search(lc: Dict[str, np.ndarray], period: float,
         #   (the light curve without the box's own transits, which would
         #   line up by chance at some of them)
         width = max(best['duration'] / 24.0, dur)
-        own = np.abs(((lc['time'] - best['centre']) / period + 0.5) % 1.0
-                     - 0.5) * period <= width + 0.02
+        own = np.abs(((lc['time'] - best['centre']) / fold + 0.5) % 1.0
+                     - 0.5) * fold <= width + 0.02
         null = null_trials({key: val[~own] for key, val in lc.items()},
-                           period, half, mstar, rstar, ntrial,
-                           [other.get('P') for other in others])
+                           period, half, mstar, rstar,
+                           ntrial if scan is None else min(ntrial,
+                                                           NTRIAL_SCAN),
+                           [other.get('P') for other in others],
+                           perr=scan)
         out['null'] = null
         top = max(null) if null else 0.0
+        chance = null_chance(best['snr_drop'], null)
+        out['null_chance'] = chance
         if null and best['snr_drop'] <= top:
             out['why'] = (f'{best["snr"]:.1f} sigma in {best["ntransits"]} '
                           f'transits, but as strong a box at another period '
@@ -546,18 +708,24 @@ def search(lc: Dict[str, np.ndarray], period: float,
                           f'deepest transit, {top:.1f} at one of '
                           f'{len(null)}): this light curve makes dips of its '
                           f'own')
+        elif not chance < NULL_CHANCE:
+            out['why'] = (f'{best["snr"]:.1f} sigma in {best["ntransits"]} '
+                          f'transits, but within reach of chance (the null '
+                          f'of {len(null)} other periods reaches '
+                          f'{best["snr_drop"]:.1f} sigma one time in '
+                          f'{1 / max(chance, 1e-12):.0f})')
         else:
             out['plausible'] = True
             out['why'] = (f'{best["snr"]:.1f} sigma in {best["ntransits"]} '
                           f'transits ({best["snr_drop"]:.1f} without the '
                           f'deepest; at most {top:.1f} at {len(null)} other '
-                          f'periods)')
+                          f'periods, chance {chance:.0e})')
     # what to plot: the hours from the transit found (plausible) or
     #   expected, the points (a draw of them when too many) and their
     #   medians in bins of a third of the duration
     centre = best['centre'] if (best and out['plausible']) else ref
     out['shown_centre'] = float(centre)
-    hours = (((time - centre) / period + 0.5) % 1.0 - 0.5) * period * 24.0
+    hours = (((time - centre) / fold + 0.5) % 1.0 - 0.5) * fold * 24.0
     pick = np.arange(len(hours))
     if len(pick) > npoints:
         pick = np.sort(np.random.default_rng(seed).choice(
@@ -565,8 +733,7 @@ def search(lc: Dict[str, np.ndarray], period: float,
     out['hours'] = np.round(hours[pick], 4).tolist()
     out['flux'] = np.round(flux[pick], 4).tolist()
     width = max(dur_h / 3.0, cadence * 24.0 * 3)
-    edges = np.arange(-0.5 * period * 24.0, 0.5 * period * 24.0 + width,
-                      width)
+    edges = np.arange(-0.5 * fold * 24.0, 0.5 * fold * 24.0 + width, width)
     which = np.digitize(hours, edges)
     bins = []
     for k in np.unique(which):
