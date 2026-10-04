@@ -130,6 +130,35 @@ def test_a_deep_transit_of_a_faint_m_dwarf():
     assert res['depth_jupiter'] > depth
 
 
+def test_a_deep_transit_keeps_its_points():
+    """a transit tens of sigma deep a point (a Jupiter before an M dwarf,
+    117 ppt; a hot Jupiter before a Sun, 12 ppt at 0.6 ppt a point): only
+    the points above the curve (flares) are cut, never its dips; found at
+    its depth, a planet of Jupiter's size"""
+    for depth, dur, white, mstar, rstar in ((117.0, 1.2, 2.0, 0.3, 0.3),
+                                            (12.0, 2.6, 0.6, 1.0, 1.0)):
+        lc = _light_curve(seed=5, spots=2.0, white=white,
+                          transits=[(3.2, 58001.1, depth, dur)])
+        inside = np.abs((((lc['time'] - 58001.1) / 3.2 + 0.5) % 1.0 - 0.5)
+                        * 3.2 * 24.0) < dur / 2
+        trimmed = transit.trim_edges(lc)
+        kept = transit.highpass(trimmed, 3 * dur / 24.0)
+        left = np.abs((((kept['time'] - 58001.1) / 3.2 + 0.5) % 1.0 - 0.5)
+                      * 3.2 * 24.0) < dur / 2
+        asked = np.abs((((trimmed['time'] - 58001.1) / 3.2 + 0.5) % 1.0
+                        - 0.5) * 3.2 * 24.0) < dur / 2
+        # every point of the transits is still there
+        assert inside.sum() > 300 and left.sum() == asked.sum()
+        for t0 in (58001.1, None):
+            res = transit.search(lc, 3.2, t0, 0.01 if t0 else None,
+                                 1e-6 if t0 else None, mstar=mstar,
+                                 rstar=rstar, ntrial=5)
+            assert res['plausible'], res['why']
+            assert res['fit']['depth'] == pytest.approx(depth, rel=0.02)
+            assert res['fit']['radius'] == pytest.approx(
+                transit.radius_of(depth, rstar), rel=0.02)
+
+
 def test_the_light_curve_of_the_archives(tmp_path):
     """phot/tess.csv as koloa.gather writes it"""
     lc = _light_curve(seed=5)
