@@ -760,6 +760,9 @@ def test_a_batch_fip_with_every_archive(tmp_path, monkeypatch):
     monkeypatch.setattr(kgather, 'gather', gather)
     monkeypatch.setattr(gui, 'known_periods', lambda target: [])
     monkeypatch.setattr(gui, 'transits_of', lambda target, known: [])
+    monkeypatch.setattr(gui, '_star_planets', lambda target: (
+        [dict(name='GJ 1 b', P=5.3)], [dict(toi='999.01', P=40.1,
+                                             disposition='PC')]))
     monkeypatch.setattr(gui, 'QUICK', dict(kmax=1, nsweep=150, nburn=80))
     # its TESS light curve (not asked of MAST): a transit at the
     #   conjunction of the signal (9 sin(2 pi t / 5.3): falling through zero
@@ -793,6 +796,8 @@ def test_a_batch_fip_with_every_archive(tmp_path, monkeypatch):
     assert first['star']['apero'] == 'GL1' and first['star']['raw'] == 'Gl 1'
     assert first['star']['target'] == 'GJ 1' and first['star']['spt'] == \
         'M1.5V'
+    assert first['star']['planets'][0]['P'] == 5.3
+    assert first['star']['tois'][0]['toi'] == '999.01'
     insts = first['summary']['instruments']
     assert len(insts) == 2 and insts['HARPS15'] == 25
     assert first['summary']['sources']['HARPS15'] == 'DACE'

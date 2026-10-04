@@ -1711,13 +1711,39 @@ def _batch_summary(result: Dict[str, Any], data) -> Dict[str, Any]:
         accel_sigma=(result.get('acceleration') or {}).get('accel_sigma'))
 
 
+def _star_planets(target: str):
+    """the known planets of a star (the archive's: name, period) and its
+    TOIs that are candidates (not false positives, not a known planet
+    again: number, period, disposition)"""
+    known = [dict(name=pl['name'], P=float(pl['P']))
+             for pl in known_periods(target) if pl.get('P')]
+    cands = []
+    try:
+        from koloa.archive import TOI_NOT_PLANETS, resolve, tois
+        tic = resolve(target).get('tic') if target.strip() else None
+        for one in tois(tic) if tic else []:
+            if one['disposition'] in TOI_NOT_PLANETS or not one.get('P'):
+                continue
+            if any(abs(one['P'] / pl['P'] - 1) < 0.01 for pl in known):
+                continue
+            cands.append(dict(toi=one['toi'], P=float(one['P']),
+                              disposition=one['disposition']))
+    except Exception:  # a help, not a need
+        pass
+    return known, cands
+
+
 def _batch_star(item: Dict[str, Any]) -> None:
-    """the star of a file of a batch (its APERO name), for its line"""
+    """the star of a file of a batch (its APERO name), for its line, with
+    its known planets and its candidate TOIs"""
     star = star_of_file(item['path'])
     entry = star.get('entry') or {}
     item['star'] = dict(raw=star.get('raw'), source=star.get('source'),
                         apero=star.get('apero'), target=star.get('target'),
                         spt=entry.get('spt'), status=entry.get('status'))
+    if star.get('target'):
+        known, cands = _star_planets(star['target'])
+        item['star'].update(planets=known, tois=cands)
 
 
 def _batch_archives(batch: Dict[str, Any], item: Dict[str, Any]):
@@ -1743,6 +1769,20 @@ def _batch_archives(batch: Dict[str, Any], item: Dict[str, Any]):
     data, source, _ = series_of([dict(path=item['path'])], target,
                                 batch['root'], dace=True, carmenes=True,
                                 vizier=True)
+    # the DACE copy of an instrument of the file (NIRPS_DACE: the same
+    #   spectra through DACE's pipeline, less precise than LBL's) left out,
+    #   as the page does by default
+    copies = [str(inst) for inst in (data.instruments if data is not None
+                                     else []) if str(inst).upper()
+              .endswith('_DACE')]
+    if copies and len(copies) < len(data.instruments):
+        data = data.select(~np.isin(data.inst.astype(str), copies))
+        for name in copies:
+            source.pop(name, None)
+        item['note'] = ((item.get('note') + '; ') if item.get('note') else
+                        '') + (f'{", ".join(copies)} left out (DACE\'s copy '
+                               f'of the file\'s spectra)')
+        item['dace_copies'] = copies
     return data, source, target
 
 
@@ -1880,7 +1920,8 @@ def batch_open(bid: str, index: int) -> Dict[str, Any]:
     target = ((item.get('star') or {}).get('target') or '') if arch else ''
     root = batch.get('root', '') if arch else ''
     detailed = dict(trend=batch['trend'] >= 1, curvature=batch['trend'] >= 2,
-                    dace=arch, carmenes=arch, vizier=arch, exclude='')
+                    dace=arch, carmenes=arch, vizier=arch,
+                    exclude=', '.join(item.get('dace_copies') or []))
     page = dict(target=target, files=[dict(path=item['path'], label='')],
                 root=root, outdir='', detailed=detailed, clip=False,
                 view=None, periods=None, subtract=[])

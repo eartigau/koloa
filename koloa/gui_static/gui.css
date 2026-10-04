@@ -180,6 +180,7 @@ h2 .hint { font-weight: 400; font-size: 0.85rem; }
 /* the fold at a peak */
 #foldplot.plot.on { height: min(46vh, 420px); }
 #tsplot.plot.on { height: min(46vh, 420px); }
+#tsplot.plot.on.series { height: auto; }
 .foldhead { margin-top: 18px; }
 [data-fold].on { background: rgba(98, 194, 255, 0.35); border-color: var(--accent); color: #fff; }
 
@@ -263,3 +264,4 @@ table.batch td.insts span { display: block; white-space: nowrap; }
 table.batch td { vertical-align: top; }
 table.batch th.sorted { color: var(--text); }
 table.batch td button { margin-left: 4px; }
+table.batch .planets { font-size: 0.68rem; line-height: 1.2; margin-top: 1px; white-space: normal; }

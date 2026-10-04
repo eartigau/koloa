@@ -210,12 +210,66 @@ def _segments(time: np.ndarray, sector: np.ndarray) -> List[np.ndarray]:
     return [seg for seg in np.split(order, cut) if len(seg)]
 
 
+def _line(time: np.ndarray, flux: np.ndarray) -> np.ndarray:
+    """a straight line through points, robustly (clipped at 3 sigma twice):
+    its two coefficients (np.polyval's)"""
+    keep = np.ones(len(time), bool)
+    coef = np.array([0.0, float(np.median(flux))])
+    for _ in range(3):
+        if keep.sum() < 3:
+            break
+        coef = np.polyfit(time[keep] - time[0], flux[keep], 1)
+        rest = flux - np.polyval(coef, time - time[0])
+        sig = 1.4826 * np.median(np.abs(rest[keep] - np.median(rest[keep])))
+        if sig <= 0:
+            break
+        keep = np.abs(rest) < 3 * sig
+    # the line in time itself
+    return np.array([coef[0], coef[1] - coef[0] * time[0]])
+
+
+def _edges(time: np.ndarray, flux: np.ndarray, use: np.ndarray,
+           trend: np.ndarray, window: float) -> np.ndarray:
+    """
+    The trend of a stretch near its two ends: a running median there has
+    half its window padded with the end point, and follows that one point
+    (an offset of a fraction of a ppt at the start and the end of each
+    sector and gap); instead, a straight line fitted robustly to the points
+    of the first (and last) window, blended into the running median over
+    half a window (all of it a line when the stretch is shorter than two
+    windows)
+
+    :return: np.ndarray, the trend
+    """
+    out = trend.copy()
+    span = time.max() - time.min()
+    if use.sum() < 6:
+        return out
+    if span < 2 * window:
+        coef = _line(time[use], flux[use])
+        return np.polyval(coef, time)
+    half = 0.5 * window
+    for start in (True, False):
+        dist = (time - time.min()) if start else (time.max() - time)
+        fit = use & (dist <= window)
+        if fit.sum() < 6:
+            continue
+        coef = _line(time[fit], flux[fit])
+        near = dist < half
+        weight = dist[near] / half
+        out[near] = (1 - weight) * np.polyval(coef, time[near]) + \
+            weight * trend[near]
+    return out
+
+
 def highpass(lc: Dict[str, np.ndarray], window: float,
              mask: Optional[np.ndarray] = None) -> Dict[str, np.ndarray]:
     """
     The light curve high-passed: in each stretch (a sector, split at its
-    gaps), a running median of a window [days] taken out; flares (more
-    than 4 sigma above it) clipped. The points of a mask (the transits)
+    gaps: each its own, nothing carried across), a running median of a
+    window [days] taken out, a robust line near its two ends (_edges: a
+    running median there follows the end point); flares (more than 4
+    sigma above it) clipped. The points of a mask (the transits)
     are left out of the running median, interpolated across them: on a
     steep slope of an active star, a running median would follow a part
     of the transit and make it shallower
@@ -240,8 +294,10 @@ def highpass(lc: Dict[str, np.ndarray], window: float,
         # an odd number of points, no more than the stretch has
         size = max(3, int(round(window / max(step, 1e-6))) | 1)
         size = min(size, int(use.sum()) - 1 + int(use.sum()) % 2)
-        trend = median_filter(flux[use], size=size, mode='nearest')
-        rest = flux - np.interp(time, time[use], trend)
+        trend = np.interp(time, time[use], median_filter(
+            flux[use], size=size, mode='nearest'))
+        trend = _edges(time, flux, use, trend, window)
+        rest = flux - trend
         sig = 1.4826 * np.median(np.abs(rest - np.median(rest)))
         good = rest < 4 * sig if sig > 0 else np.ones(len(rest), bool)
         keep_t.append(time[good])
@@ -851,6 +907,10 @@ def search(lc: Dict[str, np.ndarray], period: float,
             len(pick), npoints, replace=False))
     out['hours'] = np.round(hours[pick], 4).tolist()
     out['flux'] = np.round(flux[pick], 4).tolist()
+    # the same points in time, by sector (the time series, each transit
+    #   seen on its own)
+    out['time'] = np.round(time[pick], 5).tolist()
+    out['sector'] = shown['sector'][pick].astype(int).tolist()
     width = max(dur_h / 3.0, cadence * 24.0 * 3)
     edges = np.arange(-0.5 * fold * 24.0, 0.5 * fold * 24.0 + width, width)
     which = np.digitize(hours, edges)
@@ -874,6 +934,28 @@ def search(lc: Dict[str, np.ndarray], period: float,
         if fit is not None and fit['depth'] > 0:
             fit['radius'] = radius_of(fit['depth'], rstar)
             out['fit'] = fit
+        # each putative transit in the light curve: its time (the fitted
+        #   box's, else the search's), and its own depth (its points in the
+        #   box, minus the level about it)
+        mid = (centre + fit['centre'] / 24.0) if out['fit'] else \
+            best['centre']
+        width = (fit['duration'] if out['fit'] else best['duration']) / 24.0
+        first = math.ceil((time.min() - mid) / fold - 0.5)
+        last = math.floor((time.max() - mid) / fold + 0.5)
+        events = []
+        for k in range(first, last + 1):
+            when = mid + k * fold
+            inside = np.abs(time - when) <= 0.5 * width
+            around = (np.abs(time - when) > 0.5 * width) & \
+                (np.abs(time - when) <= 1.5 * width + 0.1)
+            if inside.sum() < 3:
+                continue
+            level = float(np.median(flux[around])) if around.sum() >= 3 \
+                else 0.0
+            events.append(dict(time=float(when), n=int(inside.sum()),
+                               depth=float(level - np.mean(flux[inside])),
+                               level=level))
+        out['events'] = events
     return out
 
 

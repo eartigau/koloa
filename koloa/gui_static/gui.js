@@ -186,6 +186,10 @@ function minimumMass(f) {
   vals.sort((a, b) => a - b);
   return { best, lo: best - percentile(vals, 15.87), hi: percentile(vals, 84.13) - best, M, Merr };
 }
+// the DACE copies of the instruments of the files already seen (left out
+//   once, by default; not when a result is recalled as it was)
+const daceSeen = new Set();
+let daceAuto = true;
 // the star of the page (its radius and effective temperature, for the
 //   equilibrium temperature of a planet)
 let starNow = {};
@@ -437,6 +441,15 @@ async function drawVelocities(res, extra) {
       setExcluded(name, !excludedSet().has(name.toUpperCase()));
       return false;
     });
+  }
+  // the DACE copy of an instrument of the files (NIRPS_DACE: the same
+  //   spectra through DACE's pipeline, less precise than LBL's) left out
+  //   the first time it is seen, and said: one tick adds it back
+  const copies = res.instruments.map((inst) => inst.name).filter((name) => /_DACE$/i.test(name) && !daceSeen.has(name));
+  copies.forEach((name) => daceSeen.add(name));
+  if (copies.length && daceAuto) {
+    copies.forEach((name) => { if (!excludedSet().has(name.toUpperCase())) setExcluded(name, true); });
+    $('rvnote').textContent += ` \u00b7 ${copies.join(', ')}: ${t('dace_copy_off')}`;
   }
   styleExcluded();
   showModel();
@@ -929,7 +942,13 @@ async function showTransit(key, fetch) {
     note.innerHTML = `<span class="bad">${esc(err.message)}</span>`;
   }
 }
+// the TESS panel as a fold or as the time series of each sector
+let tsView = 'fold';
+try { tsView = localStorage.getItem('koloa-tsview') || 'fold'; } catch (err) { /* no storage */ }
+let tsLast = null;
 function drawTransit(res, c) {
+  tsLast = { res, c };
+  document.querySelectorAll('[data-tsview]').forEach((x) => x.classList.toggle('on', x.dataset.tsview === tsView));
   const b = res.best;
   // the light curve folded at the period found (the scan's best, when the
   //   period was scanned), the box and the window about it
@@ -949,7 +968,10 @@ function drawTransit(res, c) {
       + ` ${t('ts_folded')} ${fmt(P, 5)} d${b && b.period_offset !== undefined ? ` (${b.period_offset >= 0 ? '+' : ''}${fmt(b.period_offset, 1)}\u03c3)` : ''}` : '');
   const div = $('tsplot');
   div.classList.add('on');
+  div.classList.toggle('series', tsView === 'series');
   if (!window.Plotly) return;
+  if (tsView === 'series') { drawTransitSeries(res); return; }
+  div.style.height = '';
   // the phase at the bottom (0 at the transit expected, or found), the
   //   hours from it on top
   const ph = (h) => h / (P * 24);
@@ -1019,6 +1041,71 @@ function drawTransit(res, c) {
       Plotly.relayout(div, { 'xaxis2.tickvals': tk.tickvals, 'xaxis2.ticktext': tk.ticktext });
     });
   });
+}
+
+// the high-passed light curve of each sector on its own, each putative
+//   transit shaded with the fitted box on it and its own depth: whether
+//   the transits agree, or one event makes the fold
+function drawTransitSeries(res) {
+  const div = $('tsplot');
+  const sectors = [...new Set(res.sector || [])].sort((p, q) => p - q);
+  if (!sectors.length) { Plotly.purge(div); return; }
+  const cols = sectors.length > 1 ? 2 : 1, rows = Math.ceil(sectors.length / cols);
+  div.style.height = `${170 * rows + 80}px`;
+  const fit = res.fit, b = res.best;
+  const depth = fit ? fit.depth : b ? b.depth : 0;
+  const width = (fit ? fit.duration : b ? b.duration : res.duration) / 24;
+  // one y range for all: the fold's
+  const fl = (res.flux || []).slice().sort((p, q) => p - q);
+  const q = (f) => fl[Math.min(fl.length - 1, Math.max(0, Math.floor(f * fl.length)))];
+  const lo = Math.min(q(0.005), -1.6 * depth), hi = q(0.995);
+  const traces = [], shapes = [], notes = [], layout = {};
+  const axis = { gridcolor: 'rgba(200,220,255,0.10)', zerolinecolor: 'rgba(200,220,255,0.25)', color: '#7a8597' };
+  sectors.forEach((sec, k) => {
+    const xa = k ? `x${k + 1}` : 'x', ya = k ? `y${k + 1}` : 'y';
+    const idx = res.sector.map((v, i) => (v === sec ? i : -1)).filter((i) => i >= 0);
+    const tt = idx.map((i) => res.time[i]), ff = idx.map((i) => res.flux[i]);
+    traces.push({ x: tt, y: ff, xaxis: xa, yaxis: ya, type: 'scattergl', mode: 'markers', showlegend: k === 0, name: t('ts_points'),
+      legendgroup: 'pts', marker: { size: 2, color: 'rgba(170,185,210,0.35)' }, hoverinfo: 'skip' });
+    // medians in bins of an hour
+    const bins = new Map();
+    tt.forEach((x, i) => { const key = Math.floor(x * 24); if (!bins.has(key)) bins.set(key, []); bins.get(key).push([x, ff[i]]); });
+    const mx = [], my = [];
+    let prev = null;
+    [...bins.keys()].sort((p, r) => p - r).forEach((key) => {
+      const v = bins.get(key);
+      if (v.length < 5) return;
+      // the line broken across a gap (more than two hours without a bin)
+      if (prev !== null && key - prev > 2) { mx.push(null); my.push(null); }
+      prev = key;
+      const ys = v.map((p) => p[1]).sort((p, r) => p - r);
+      mx.push(v.reduce((acc, p) => acc + p[0], 0) / v.length); my.push(ys[Math.floor(ys.length / 2)]);
+    });
+    traces.push({ x: mx, y: my, xaxis: xa, yaxis: ya, type: 'scatter', mode: 'lines', showlegend: k === 0, name: t('ts_bins_hour'),
+      legendgroup: 'bins', line: { color: '#62c2ff', width: 1 }, hovertemplate: '%{x:.3f}<br>%{y:.3f} ppt<extra></extra>' });
+    const t0 = Math.min(...tt), t1 = Math.max(...tt);
+    // each putative transit of the sector: shaded, the fitted box on it,
+    //   its own depth
+    (res.events || []).filter((e) => e.time >= t0 - width && e.time <= t1 + width).forEach((e, j) => {
+      shapes.push({ type: 'rect', xref: xa, yref: `${ya} domain`, x0: e.time - width / 2, x1: e.time + width / 2, y0: 0, y1: 1,
+        fillcolor: 'rgba(245,165,36,0.14)', line: { width: 0 } });
+      const h = width / 2;
+      traces.push({ x: [e.time - 3 * h, e.time - h, e.time - h, e.time + h, e.time + h, e.time + 3 * h],
+        y: [e.level, e.level, e.level - depth, e.level - depth, e.level, e.level], xaxis: xa, yaxis: ya, type: 'scatter', mode: 'lines',
+        showlegend: k === 0 && j === 0, legendgroup: 'box', name: t('ts_fitname'), line: { color: '#f5a524', width: 1.4 }, hoverinfo: 'skip' });
+      notes.push({ xref: xa, yref: `${ya} domain`, x: e.time, y: 0.02, text: `${e.depth.toFixed(2)}`, showarrow: false, yanchor: 'bottom',
+        font: { size: 9, color: e.depth > 0.5 * depth ? '#f5a524' : '#7a8597' } });
+    });
+    notes.push({ xref: `${xa} domain`, yref: `${ya} domain`, x: 0.01, y: 0.98, text: `${t('ts_sector')} ${sec}`, showarrow: false,
+      xanchor: 'left', yanchor: 'top', font: { size: 10, color: '#a8b4ca' } });
+    layout[k ? `xaxis${k + 1}` : 'xaxis'] = { ...axis, tickformat: '.0f', exponentformat: 'none', nticks: 6 };
+    layout[k ? `yaxis${k + 1}` : 'yaxis'] = { ...axis, range: [lo, hi], title: k % cols === 0 ? 'ppt' : '' };
+  });
+  Plotly.newPlot(div, traces, {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(4,8,16,0.35)', font: { family: 'Space Grotesk, sans-serif', color: '#e8eef8' },
+    margin: { l: 56, r: 12, t: 40, b: 30 }, legend: { orientation: 'h', x: 0, y: 1, yref: 'container', yanchor: 'top' },
+    grid: { rows, columns: cols, pattern: 'independent', xgap: 0.06, ygap: 0.28 }, shapes, annotations: notes, ...layout,
+  }, { responsive: true, displaylogo: false });
 }
 
 // the ticks of the hours on top of a fold in phase: a round step for the
@@ -1496,6 +1583,7 @@ function resetPage() {
   $('ident').innerHTML = '';
   $('targetsrc').textContent = '';
   starNow = {};
+  daceSeen.clear();
   $('rvnote').textContent = '';
   $('rvtable').innerHTML = '';
   if (window.Plotly) Plotly.purge($('rvplot'));
@@ -1619,6 +1707,8 @@ async function recallResult(id) {
 async function applyRecall(res) {
   showTab('analysis');
   resetPage();
+  // a result recalled keeps the instruments it had
+  (res.rv && res.rv.instruments || []).forEach((inst) => daceSeen.add(inst.name));
   const page = res.page;
   $('target').value = page.target || '';
   $('root').value = page.root || 'archives';
@@ -1714,7 +1804,25 @@ function objectCell(item) {
   const from = s.source === 'OBJECT column' ? `OBJECT ${s.raw}` : `${t('file_name')} ${s.raw}`;
   const tip = s.apero ? `${from} \u2192 ${s.apero} (APERO${s.status ? `, ${s.status}` : ''}), ${s.target} ${t('for_simbad')}`
     : `${from} (${t('not_apero')})`;
-  return `<span title="${esc(tip)}">${esc(objectName(item))}</span>${s.spt ? ` <span class="hint">${esc(s.spt)}</span>` : ''}`;
+  // its known planets (their periods) and candidate TOIs, in short; their
+  //   names under the cursor
+  const per = (p) => (p >= 100 ? p.toFixed(0) : p >= 10 ? p.toFixed(1) : p.toFixed(2));
+  const pl = s.planets || [], ct = s.tois || [];
+  const which = (pl.length ? `<span title="${esc(pl.map((p) => `${p.name}: ${per(p.P)} d`).join('\n'))}">\u2605 ${pl.map((p) => per(p.P)).join(', ')} d</span>` : '')
+    + (pl.length && ct.length ? ' \u00b7 ' : '')
+    + (ct.length ? `<span title="${esc(ct.map((c) => `TOI-${c.toi} (${c.disposition}): ${per(c.P)} d`).join('\n'))}">\u25d0 ${ct.map((c) => per(c.P)).join(', ')} d</span>` : '');
+  return `<span title="${esc(tip)}">${esc(objectName(item))}</span>${s.spt ? ` <span class="hint">${esc(s.spt)}</span>` : ''}`
+    + (which ? `<div class="hint planets">${which}</div>` : '');
+}
+// the best period of a line on a known planet's (\u2605) or a TOI's
+//   (\u25d0): within the width of a peak (1 / the span, in frequency)
+function periodMark(r) {
+  const s = r.star || {};
+  if (!r.period) return '';
+  const near = (P) => Math.abs(1 / r.period - 1 / P) <= 1 / Math.max(r.baseline || 1, 1);
+  if ((s.planets || []).some((p) => near(p.P))) return ' \u2605';
+  if ((s.tois || []).some((c) => near(c.P))) return ' \u25d0';
+  return '';
 }
 // the transit in TESS of a line (its best peak, when its FIP is below 1 %):
 //   flagged when plausible, its depth, radius and signal-to-noise ratio
@@ -1761,18 +1869,20 @@ function renderBatch() {
       if (r.note) state += ` <span class="hint" title="${esc(r.note)}">\u24d8</span>`;
       const nights = batch.archives ? `<td class="insts">${r.n ? `<b>${r.n}</b>` : ''}${instCell(r)}</td>` : `<td class="num">${r.n ?? ''}</td>`;
       return `<tr><td class="bname" title="${esc(r.path)}">${esc(r.name).replace(/_/g, '_<wbr>')}</td><td>${objectCell(r)}</td>${nights}<td class="num">${num(r.baseline, 0)}</td>`
-        + `<td class="num">${num(r.period, 4)}</td><td class="num">${fipCell(r.fip)}</td><td class="num">${fipCell(r.fip_alone)}</td>`
+        + `<td class="num">${num(r.period, 4)}${periodMark(r)}</td><td class="num">${fipCell(r.fip)}</td><td class="num">${fipCell(r.fip_alone)}</td>`
         + `<td class="num">${r.K !== null && r.K !== undefined ? `${r.K.toFixed(2)} \u00b1 ${r.K_err.toFixed(2)}` : ''}</td><td class="num">${num(r.rms, 2)}</td>`
         + `<td class="num">${acc}</td><td class="num">${num(r.accel_sigma, 1)}</td><td>${transitCell(r.transit)}</td>`
         + `<td>${state}${r.status === 'done' ? `<button type="button" class="small go" data-bopen="${r.i}">${esc(t('open'))}</button>` : ''}</td></tr>`;
     }).join('') + '</table></div>';
 }
 function batchCsv() {
-  const head = ['file', 'path', 'object', 'apero_name', 'simbad_name', 'nights', 'instruments', 'baseline_d', 'period_d', 'fip', 'fip_alone', 'K_ms', 'K_err_ms', 'rms_ms', 'dvdt_msyr', 'dvdt_err_msyr', 'dvdt_sigma',
+  const head = ['file', 'path', 'object', 'apero_name', 'simbad_name', 'known_planets_d', 'candidate_tois_d', 'nights', 'instruments', 'baseline_d', 'period_d', 'fip', 'fip_alone', 'K_ms', 'K_err_ms', 'rms_ms', 'dvdt_msyr', 'dvdt_err_msyr', 'dvdt_sigma',
     'transit_plausible', 'transit_snr', 'transit_depth_ppt', 'transit_radius_earth', 'transit_note', 'status'];
   const tr = (r, key) => (r.transit ? r.transit[key] : null);
   const insts = (r) => (r.instruments ? Object.entries(r.instruments).map(([k, n]) => `${k} ${n}`).join('; ') : '');
+  const plist = (r, key, nm) => (r.star && r.star[key] ? r.star[key].map((p) => `${nm(p)} ${p.P}`).join('; ') : '');
   const lines = [head.join(',')].concat(batchRows().map((r) => [r.name, r.path, r.star ? r.star.raw : '', r.star ? r.star.apero : '', r.star ? r.star.target : '',
+    plist(r, 'planets', (p) => p.name), plist(r, 'tois', (p) => `TOI-${p.toi}`),
     r.n, insts(r), r.baseline, r.period, r.fip, r.fip_alone, r.K, r.K_err,
     r.rms, r.accel, r.accel_err, r.accel_sigma, tr(r, 'plausible'), tr(r, 'snr'), tr(r, 'depth'), tr(r, 'radius'), tr(r, 'why'),
     r.status].map((v) => (v === null || v === undefined ? '' : `"${String(v).replace(/"/g, '""')}"`)).join(',')));
@@ -2008,6 +2118,13 @@ document.addEventListener('click', async (e) => {
   if (e.target.id === 'batchstop' && batch) api('/api/batchstop', { id: batch.id }).catch(() => {});
   const ts = e.target.closest('[data-tsearch]');
   if (ts) showTransit(ts.dataset.tsearch, true);
+  const tv = e.target.closest('[data-tsview]');
+  if (tv) {
+    tsView = tv.dataset.tsview;
+    try { localStorage.setItem('koloa-tsview', tsView); } catch (err) { /* no storage */ }
+    if (tsLast) drawTransit(tsLast.res, tsLast.c);
+    else document.querySelectorAll('[data-tsview]').forEach((x) => x.classList.toggle('on', x.dataset.tsview === tsView));
+  }
   if (e.target.id === 'tsfetch' && tsShown) showTransit(tsShown, true);
   if (e.target.id === 'batchcsv') batchCsv();
   const open = e.target.closest('[data-bopen]');
