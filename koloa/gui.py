@@ -488,14 +488,18 @@ def _pick_files(start: str) -> Dict[str, Any]:
 
 
 def list_files(folder: str, pattern: str = '*.rdb') -> Dict[str, Any]:
-    """the files of a folder that match a pattern (the batch FIP)"""
+    """the files of a folder that match a pattern, or any of several
+    (separated by spaces or commas: 'GL*nightly.rdb GJ*nightly.rdb'), each
+    file once (the batch FIP)"""
     import glob
     folder = os.path.expanduser(folder or '.')
     if not os.path.isdir(folder):
         raise ValueError(f'no folder {folder}')
-    found = sorted(path for path in glob.glob(os.path.join(
-        folder, pattern or '*.rdb')) if os.path.isfile(path))
-    return dict(paths=[os.path.abspath(path) for path in found])
+    found = set()
+    for one in re.split(r'[\s,;]+', (pattern or '').strip()) or ['*.rdb']:
+        found.update(path for path in glob.glob(os.path.join(
+            folder, one or '*.rdb')) if os.path.isfile(path))
+    return dict(paths=[os.path.abspath(path) for path in sorted(found)])
 
 
 def pick(kind: str = 'file', start: str = '') -> Dict[str, Any]:

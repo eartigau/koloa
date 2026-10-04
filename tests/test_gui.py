@@ -9,6 +9,7 @@ Created on 2026-10-01
 @author: artigau
 """
 import json
+import os
 import threading
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -739,6 +740,13 @@ def test_a_batch_fip(tmp_path, monkeypatch):
     (tmp_path / 'empty.csv').write_text('rjd,vrad,svrad\n')
     monkeypatch.setattr(gui, 'QUICK', dict(kmax=1, nsweep=150, nburn=80))
     assert len(gui.list_files(str(tmp_path), '*.csv')['paths']) == 3
+    # several patterns (spaces or commas between them), each file once
+    names = lambda pattern: [os.path.basename(path) for path in
+                             gui.list_files(str(tmp_path), pattern)['paths']]
+    assert names('star3* star4*') == ['star3.csv', 'star4.csv']
+    assert names('star*.csv, empty.csv star3.csv') == [
+        'empty.csv', 'star3.csv', 'star4.csv']
+    assert names('nothing*') == []
     paths = [str(tmp_path / name) for name in ('star3.csv', 'empty.csv',
                                                'star4.csv')]
     state = gui.batch_fip(paths, dict(trend=True))
