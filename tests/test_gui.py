@@ -485,6 +485,28 @@ def test_the_fold_carries_its_solution_dates_and_berv(tmp_path):
     assert len(shown['berv']) == shown['n'] and shown['berv'][0] is not None
 
 
+def test_a_period_refined_within_its_peak():
+    """a sinusoid over 20 years folded at a grid point of its peak (off by
+    a tenth of a resolution element, a tenth of a cycle over the series):
+    refined, its period found again, within its error; as asked, left"""
+    import numpy as np
+    from koloa.data import RVData
+    rng = np.random.default_rng(8)
+    true = 2.64390
+    time = np.sort(rng.uniform(52000, 59300, 300))
+    rv = 15.0 * np.sin(2 * np.pi * time / true) + rng.normal(0, 3.0, 300)
+    data = RVData(time, rv, np.full(300, 3.0))
+    asked = 1.0 / (1.0 / true - 0.1 / np.ptp(time))
+    fixed = gui.fold(data, asked)
+    assert fixed['period'] == asked and fixed['P_err'] is None
+    refined = gui.fold(data, asked, refine=True)
+    assert refined['asked'] == asked
+    assert abs(refined['period'] - true) < 4 * refined['P_err']
+    assert refined['P_err'] < 0.2 * abs(asked - true)
+    # its phase no longer drifts: a smaller scatter about the sinusoid
+    assert refined['rms'] < 3.2 < fixed['rms']
+
+
 def test_a_fold_asked_its_keplerian_and_the_residuals(tmp_path, monkeypatch):
     """a fold at a period clicked (moved to the dip nearest), its Keplerian
     orbit, and the FIP of the residuals once its signal is subtracted: the
@@ -525,6 +547,10 @@ def test_a_fold_asked_its_keplerian_and_the_residuals(tmp_path, monkeypatch):
     orbit = kep['kepler']
     assert orbit['kind'] == 'kepler' and orbit['e'] < 0.3
     assert abs(orbit['K'] - 9.0) < 4 * orbit['K_err']
+    # its BIC: far better than no planet, a circular orbit as good (the
+    #   simulated one is circular: e and omega do not earn their place)
+    assert orbit['bic']['d_none'] > 50
+    assert orbit['bic']['d_circular'] < 6
     assert abs(orbit['period'] - 5.3) < 0.01
     # the 1-sigma envelope of each fit, and draws of its solution
     assert len(got['curve']['lo']) == len(got['curve']['rv'])

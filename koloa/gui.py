@@ -42,7 +42,7 @@ import urllib.parse
 import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -999,8 +999,45 @@ def _listed(values: np.ndarray, digits: int) -> List[Optional[float]]:
             for val in values]
 
 
+#: the periods tried within a peak to refine the period of a sinusoid
+REFINE_STEPS = 41
+
+
+def _refined_period(solve, period: float, width: float, dof: float):
+    """
+    The period of a sinusoid within its peak: the least chi^2 within a
+    width in frequency each side of the period given (the FIP's grid point,
+    a fraction of a peak away from the least chi^2 of a sinusoid: over a
+    long baseline, a sinusoid at it drifts in phase from one end to the
+    other), a parabola through the three best; its error where the chi^2
+    (scaled by the reduced chi^2 when above one) rises by one. The other
+    signals are fitted with it there (the FIP fits them together; left
+    out, they would pull it)
+
+    :param solve: callable, period -> chi^2 of the weighted fit at it
+    :param width: float, the half-width of the range tried [1/d]
+    :param dof: float, the degrees of freedom of the fit
+
+    :return: (period, its error or None at the edge of the range tried)
+    """
+    freqs = 1.0 / period + np.linspace(-1.0, 1.0, REFINE_STEPS) * width
+    chis = np.array([solve(1.0 / freq) for freq in freqs])
+    best = int(np.argmin(chis))
+    if not 0 < best < REFINE_STEPS - 1:
+        return float(1.0 / freqs[best]), None
+    curv, slope, _ = np.polyfit(freqs[best - 1:best + 2] - freqs[best],
+                                chis[best - 1:best + 2], 2)
+    if curv <= 0:
+        return float(1.0 / freqs[best]), None
+    freq = freqs[best] - slope / (2 * curv)
+    scale = max(float(chis[best]) / max(dof, 1.0), 1.0)
+    return float(1.0 / freq), float(np.sqrt(scale / curv) / freq ** 2)
+
+
 def fold(data, period: float, valid: Optional[np.ndarray] = None,
-         trend: int = 1) -> Dict[str, Any]:
+         trend: int = 1, refine: bool = False,
+         width: Optional[float] = None,
+         others: Sequence[float] = ()) -> Dict[str, Any]:
     """
     The series folded at a period: a sinusoid fitted with an offset per
     instrument and a trend (weighted least squares, the errors of K scaled
@@ -1013,29 +1050,61 @@ def fold(data, period: float, valid: Optional[np.ndarray] = None,
                   it is given back with the points
     :param trend: int, the order of the trend fitted with it (0: none, 1: an
                   acceleration, 2: and its change)
+    :param refine: bool, the period refined within its peak first (the
+                   least chi^2 within the width; a peak of the FIP), else
+                   the period as it is (typed, a known planet, a transit)
+    :param width: float or None, the half-width in frequency of that
+                  search [1/d]; None, half a resolution element (0.5 / the
+                  baseline), the half-width of a peak
+    :param others: the periods of the other signals (the other peaks),
+                   fitted with it while its period is refined (the FIP
+                   fits them together; left out, they would pull it), not
+                   in the fold shown
 
-    :return: dict, period, K, K_err, tc, rms, the points of each instrument
-             (about its offset and the trend, with their time, their BERV
-             when the series has it, and their probability to be valid when
-             given), the curve, and the model (its offsets, trend and
-             sinusoid, to draw it on the series)
+    :return: dict, period (and P_err and the period asked, refined), K,
+             K_err, tc, rms, the points of each instrument (about its
+             offset and the trend, with their time, their BERV when the
+             series has it, and their probability to be valid when given),
+             the curve, and the model (its offsets, trend and sinusoid, to
+             draw it on the series)
     """
     time_ = data.time
     tref = float(np.median(time_))
     insts = list(data.instruments)
-    cols = [(data.inst == inst).astype(float) for inst in insts]
-    cols += [((time_ - tref) / 365.25) ** order
+    base = [(data.inst == inst).astype(float) for inst in insts]
+    base += [((time_ - tref) / 365.25) ** order
              for order in range(1, trend + 1)]
-    arg = 2 * np.pi * (time_ - tref) / period
-    cols += [np.cos(arg), np.sin(arg)]
-    design = np.column_stack(cols)
     good = (np.ones(data.n) if valid is None
             else np.clip(np.asarray(valid, float), 1e-6, 1.0))
     wgt = good / data.err ** 2
-    amat = design.T @ (design * wgt[:, None])
-    coef = np.linalg.solve(amat, design.T @ (data.rv * wgt))
+    dof = float(np.sum(good)) - len(base) - 2
+
+    def solve(per, extra=()):
+        arg = 2 * np.pi * (time_ - tref) / per
+        design = np.column_stack(base + list(extra)
+                                 + [np.cos(arg), np.sin(arg)])
+        amat = design.T @ (design * wgt[:, None])
+        coef = np.linalg.solve(amat, design.T @ (data.rv * wgt))
+        resid = data.rv - design @ coef
+        return design, amat, coef, resid
+
+    asked, period_err = float(period), None
+    span = max(float(np.ptp(time_)), 1.0)
+    # the other signals, each a sinusoid at its period (not one within
+    #   the same peak)
+    extra = []
+    for other in others or ():
+        if other and abs(1.0 / other - 1.0 / period) > 1.0 / span:
+            arg = 2 * np.pi * (time_ - tref) / other
+            extra += [np.cos(arg), np.sin(arg)]
+    if refine and data.n > len(base) + len(extra) + 3:
+        if not width:
+            width = 0.5 / span
+        period, period_err = _refined_period(
+            lambda per: float(np.sum(solve(per, extra)[3] ** 2 * wgt)),
+            period, width, dof - len(extra))
+    design, amat, coef, resid = solve(period)
     cov = np.linalg.inv(amat)
-    resid = data.rv - design @ coef
     chi2 = float(np.sum(resid ** 2 * wgt)) / max(np.sum(good) - len(coef),
                                                  1)
     cov *= max(chi2, 1.0)
@@ -1061,7 +1130,7 @@ def fold(data, period: float, valid: Optional[np.ndarray] = None,
     curve = -amp * np.sin(2 * np.pi * grid)
     sig = np.sqrt(np.einsum('ik,ij,jk->k', gvec, cov[-2:, -2:], gvec))
     out = dict(period=float(period), K=amp, K_err=kerr, tc=float(tc),
-               tc_err=tc_err,
+               tc_err=tc_err, P_err=period_err, asked=asked,
                rms=float(np.std(resid[good >= 0.5])), chi2=chi2,
                curve=dict(phase=grid.tolist(), rv=np.round(curve, 4).tolist(),
                           lo=np.round(curve - sig, 4).tolist(),
@@ -1292,7 +1361,10 @@ def _run_quick(qid: str, data, target: str, trend: int = 1,
                 valid = None
             _QUICK_DATA[qid] = dict(nights=nights, valid=valid, trend=trend,
                                     res=res)
-            folds = [dict(fold(nights, pk['period'], valid, trend),
+            folds = [dict(fold(nights, pk['period'], valid, trend,
+                               refine=True,
+                               others=[one['period'] for one in named
+                                       if one is not pk]),
                           id=pk['id'])
                      for pk in named]
             job['result'] = dict(
@@ -1447,12 +1519,17 @@ def fold_request(qid: str, opts: Dict[str, Any], period: Optional[float] = None,
             raise ValueError(f'not a period to fold at: {period}')
         if snap and series['res'] is not None:
             period = _snap(series['res'], period, nights.baseline)
-        # a period already folded: that fold
+        # a period already folded (as asked, or once refined): that fold
         item = next((item for item in folds
-                     if abs(item['period'] / period - 1) < 1e-7), None)
+                     if min(abs(item['period'] / period - 1),
+                            abs(item.get('asked', item['period']) / period
+                                - 1)) < 1e-7), None)
         if item is None:
             item = dict(fold(nights, period, series['valid'],
-                             series['trend']),
+                             series['trend'], refine=bool(snap),
+                             others=[pk['period'] for pk in
+                                     job['result'].get('peak_list') or []
+                                     if pk.get('named')]),
                         id=max([item['id'] for item in folds] + [0]) + 1,
                         forced=True)
             folds.append(item)
@@ -1806,7 +1883,8 @@ def _batch_transit(batch: Dict[str, Any], item: Dict[str, Any],
     item['stage'] = 'tess'
     try:
         res = transit_check(dict(
-            target=target, root=batch['root'], period=peak['period'],
+            target=target, root=batch['root'],
+            period=shown.get('period') or peak['period'],
             tc=shown.get('tc'), tc_err=shown.get('tc_err'),
             p_err=peak['period'] ** 2 / (4 * max(data.baseline, 1.0)),
             fetch=True, name=f'#{peak["id"]}', kind='rv'))
@@ -2064,7 +2142,10 @@ def fold_kepler(data, period: float, trend: int = 1,
                     priors, and phase 0 at its transit nearest the data
 
     :return: dict, as fold() gives, with kind='kepler', the orbit (P, e,
-             omega, tp) and the errors of P, K and e
+             omega, tp), the errors of P, K and e, and bic: the BIC of the
+             orbit (kepler), of a circular one and of no planet, and
+             d_circular and d_none, theirs minus the orbit's (positive: the
+             orbit is the better model)
     """
     from koloa import kepler
     from koloa.fit import RVModel
@@ -2085,6 +2166,20 @@ def fold_kepler(data, period: float, trend: int = 1,
                     seq_jitter=seq_jitter)
     res = model.fit(nstart=4, quiet=True)
     per, tperi, ecc, omega, amp = model.orbit(res.theta, 0)
+    # its BIC against a circular orbit (the same without e and omega) and
+    #   against no planet: the same nights, noise and trend
+    bic = dict(kepler=res.bic())
+    for key, orbits_ in (('circular', [dict(orbit, eccentric=False)]),
+                         ('none', [])):
+        try:
+            other = RVModel(data, orbits_, likelihood='mixture', unit='both',
+                            trend=trend, seq_jitter=seq_jitter)
+            bic[key] = other.fit(nstart=2 if orbits_ else 1,
+                                 quiet=True).bic()
+            # positive: this orbit is the better model
+            bic[f'd_{key}'] = bic[key] - bic['kepler']
+        except Exception as err:  # the orbit is shown without it
+            bic[f'{key}_error'] = f'{type(err).__name__}: {err}'
     # the errors: the orbit of draws of the Laplace covariance
     errs = dict(P=np.nan, K=np.nan, e=np.nan)
     draws, orbits = None, None
@@ -2121,7 +2216,7 @@ def fold_kepler(data, period: float, trend: int = 1,
     out = dict(kind='kepler', period=float(per), P_err=errs['P'],
                K=float(amp), K_err=errs['K'], e=float(ecc),
                e_err=errs['e'], omega=float(np.degrees(omega) % 360),
-               tp=float(tperi), tc=float(tconj),
+               tp=float(tperi), tc=float(tconj), bic=bic,
                rms=float(np.std(resid[good] if good.any() else resid)),
                curve=dict(phase=grid.tolist(), rv=np.round(best, 4).tolist(),
                           lo=np.round(low, 4).tolist(),
@@ -2856,6 +2951,14 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _home_short(path: str) -> str:
+    """a path as shown on the page: the home folder as ~"""
+    home = os.path.expanduser('~')
+    if path == home or path.startswith(home + os.sep):
+        return '~' + path[len(home):]
+    return path
+
+
 # =============================================================================
 # The results remembered: a quick look kept, to be recalled as it was
 # =============================================================================
@@ -3194,6 +3297,7 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == '/api/info':
                 from koloa.archive import fetched
                 return self._json(dict(cwd=os.getcwd(),
+                                       cwd_shown=_home_short(os.getcwd()),
                                        python=sys.executable,
                                        defaults=DEFAULTS,
                                        archive=fetched()))

@@ -140,7 +140,7 @@ function showCwd() {
 async function refreshInfo() {
   try {
     const info = await api('/api/info');
-    cwd = info.cwd; archiveDate = info.archive; showCwd();
+    cwd = info.cwd_shown || info.cwd; archiveDate = info.archive; showCwd();
   } catch (err) { /* later */ }
 }
 
@@ -205,15 +205,32 @@ function teqText(P, star) {
   return ` <span class="massnote">T<sub>${esc(t('teq_sub'))}</sub> \u2248 <b>${teq.toFixed(0)} K</b> (A = 0) \u00b7 ${(teq * 0.7 ** 0.25).toFixed(0)} K (A = 0.3)`
     + ` <span class="hint">(a = ${(a / 1.495978707e11).toFixed(3)} au, T\u2605 = ${T.toFixed(0)} K, R\u2605 = ${R.toFixed(3)} R\u2609)</span></span>`;
 }
+// the BIC of a Keplerian orbit against no planet and against a circular
+//   orbit (theirs minus its own: positive, the orbit is the better model);
+//   in words, the scale of Kass & Raftery (1995): 2 to 6 positive, 6 to 10
+//   strong, above 10 very strong
+function bicText(f) {
+  const b = f.bic;
+  if (!b || !Number.isFinite(b.d_none)) return '';
+  const fmt = (v) => `${v >= 0 ? '+' : '\u2212'}${Math.abs(v).toFixed(1)}`;
+  const word = (v) => t(v > 10 ? 'bic_very' : v > 6 ? 'bic_strong' : v > 2 ? 'bic_positive' : v >= -2 ? 'bic_none' : 'bic_against');
+  return `<span class="massnote">\u0394BIC = <b>${fmt(b.d_none)}</b> ${esc(t('bic_vs_none'))}`
+    + (Number.isFinite(b.d_circular) ? ` \u00b7 <b>${fmt(b.d_circular)}</b> ${esc(t('bic_vs_circ'))} (${esc(word(b.d_circular))})` : '')
+    + ` <span class="hint">${esc(t('bic_sign'))}</span></span>`;
+}
 // an asymmetric error, the + over the - after the value
 const pmStack = (lo, hi) => `<span class="pm"><span>+${hi}</span><span>\u2212${lo}</span></span>`;
+// an error after its value: one value after a +- when its two sides are
+//   within 5 % of each other, else the + over the -
+const pmErr = (lo, hi, fmt) => (Math.abs(lo - hi) <= 0.05 * Math.max(lo, hi)
+  ? ` \u00b1 ${fmt(0.5 * (lo + hi))}` : pmStack(fmt(lo), fmt(hi)));
 function massText(f) {
   const mm = minimumMass(f);
   if (!mm) return `<span class="massnote hint">${esc(t('no_mstar'))}</span>`;
   const fmt = (v) => (v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v.toPrecision(2));
   const units = [['M\u2295', 1], ['M\u2646', MNEP_MEARTH], ['M\u2643', MJUP_MEARTH]];
   const what = f.transit ? t('mass_transit') : 'm sin i';
-  return `<span class="massnote">${esc(what)} = ` + units.map(([u, s]) => `<b>${fmt(mm.best / s)}</b>${pmStack(fmt(mm.lo / s), fmt(mm.hi / s))} ${u}`).join(' = ')
+  return `<span class="massnote">${esc(what)} = ` + units.map(([u, s]) => `<b>${fmt(mm.best / s)}</b>${pmErr(mm.lo / s, mm.hi / s, fmt)} ${u}`).join(' = ')
     + ` <span class="hint">(M\u2605 = ${mm.M.toFixed(3)} \u00b1 ${mm.Merr.toFixed(3)} M\u2609)</span></span>`;
 }
 
@@ -425,6 +442,11 @@ async function drawVelocities(res, extra) {
         tickmode: 'array', tickvals: [], ticktext: [], ticks: 'outside', ticklen: 4 },
     }, { responsive: true, displaylogo: false });
     div.removeAllListeners && div.removeAllListeners('plotly_relayout');
+    // a legend of several rows (many instruments, a solution added): the
+    //   dates of the top axis under it, after every redraw
+    await roomForLegend(div);
+    div.removeAllListeners && div.removeAllListeners('plotly_afterplot');
+    div.on('plotly_afterplot', () => setTimeout(() => roomForLegend(div), 0));
     div.on('plotly_relayout', fromZoom);
   }
   view = null;
@@ -462,6 +484,13 @@ async function drawVelocities(res, extra) {
 //   the 3 to 97 percentile range, and the instruments kept
 // -----------------------------------------------------------------------------
 const PLOT_MARGIN = { l: 62, r: 12, t: 60, b: 48 };
+// the top margin of the series as tall as its legend, the dates under it
+function roomForLegend(div) {
+  const full = div._fullLayout;
+  if (!full || !full.legend || !full.margin) return null;
+  const want = Math.max(PLOT_MARGIN.t, Math.ceil(full.legend._height || 0) + 26);
+  return Math.abs(full.margin.t - want) > 2 ? Plotly.relayout(div, { 'margin.t': want }) : null;
+}
 let rvRight = PLOT_MARGIN.r;   // the right margin of the series (its colour bar)
 let lastRes = null;            // the velocities drawn, to draw them again
 let seriesColour = 'inst';     // the series by instrument or by BERV
@@ -777,7 +806,7 @@ function fipSummary(r, elapsed) {
   const best = r.peaks[0];
   return `<p class="hint">${r.n} ${esc(t('nights'))} (${esc(insts)}); ${esc(t('no_gp'))}, ${r.settings.kmax} ${esc(t('signals_word'))}, `
     + `${r.settings.nsweep} ${esc(t('sweeps_word'))}, ${r.passes} ${esc(t('passes'))} \u00b7 ${clock(elapsed)}`
-    + (best ? ` \u00b7 ${esc(t('strongest'))}: <b>${best.period.toFixed(4)} d</b>, FIP ${best.family.toExponential(1)}` : '') + '</p>'
+    + (best ? ` \u00b7 ${esc(t('strongest'))}: <b>${best.period.toFixed(4)} d</b>, FIP ${fipExp(best.family)}` : '') + '</p>'
     + `<p class="hint accel">${accelText(r)}</p>`
     + ((r.subtracted || []).length ? `<p class="resid"><b>${esc(t('residuals_of'))}</b> ${r.subtracted.map((s) => esc(s.label)).join(' ; ')}`
       + ` <button type="button" id="unsubtract" class="small">${esc(t('back_series'))}</button></p>` : '');
@@ -786,8 +815,7 @@ function fipSummary(r, elapsed) {
 // the acceleration of the star the quick look measured (and its change)
 function accelValue(v, unit) {
   const [val, lo, hi] = v;
-  const sym = Math.abs(lo - hi) < 0.05 * Math.max(lo, hi);
-  const err = sym ? ` \u00b1 ${(0.5 * (lo + hi)).toPrecision(2)}` : pmStack(lo.toPrecision(2), hi.toPrecision(2));
+  const err = pmErr(lo, hi, (x) => x.toPrecision(2));
   return `${val >= 0 ? '+' : '\u2212'}${Math.abs(val).toPrecision(3)}${err} ${unit}`;
 }
 function accelText(r) {
@@ -821,11 +849,16 @@ function drawFip(r, each) {
     notes.push({ x: Math.log10(pl.P), y: 0.92, xref: 'x', yref: 'paper', text: pl.name, showarrow: false, xanchor: 'left', font: { size: 10, color: '#e66767' } });
   }
   lines.push({ type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: 2, y1: 2, line: { color: '#a8b4ca', width: 1, dash: 'dot' } });
-  // the numbered peaks
+  // the numbered peaks; two labels too close to read, one above the other
+  const placed = [];
   for (const pk of r.peak_list.filter((p) => p.named)) {
-    notes.push({ x: Math.log10(pk.period), y: -Math.log10(Math.max(pk.family, 1e-15)), xref: 'x', yref: 'y',
-      text: `<b>#${pk.id}</b>`, showarrow: true, arrowhead: 0, ax: 0, ay: -22, font: { size: 12, color: '#ffffff' },
-      arrowcolor: '#a8b4ca', hovertext: `#${pk.id}: ${pk.period.toFixed(4)} d, FIP ${pk.family.toExponential(1)}` });
+    const x = Math.log10(pk.period);
+    let ay = -22;
+    while (placed.some((q) => Math.abs(q.x - x) < 0.08 && q.ay === ay)) ay -= 16;
+    placed.push({ x, ay });
+    notes.push({ x, y: -Math.log10(Math.max(pk.family, 1e-15)), xref: 'x', yref: 'y',
+      text: `<b>#${pk.id}</b>`, showarrow: true, arrowhead: 0, ax: 0, ay, font: { size: 12, color: '#ffffff' },
+      arrowcolor: '#a8b4ca', hovertext: `#${pk.id}: ${pk.period.toFixed(4)} d, FIP ${fipExp(pk.family)}` });
   }
   const traces = [
     { x: r.period, y: r.alone, name: t('alone'), type: 'scatter', mode: 'lines', line: { color: '#8a93a3', width: 1 },
@@ -898,7 +931,7 @@ function transitCandidates() {
   // a peak below a FIP of 10 %: a transit found would make it strong
   (r.peak_list || []).filter((pk) => pk.family < TRANSIT_FIP).forEach((pk) => {
     const f = (r.folds || []).find((x) => x.id === pk.id) || {};
-    out.push({ key: `p${pk.id}`, label: `#${pk.id} \u00b7 ${pk.period.toFixed(4)} d`, period: pk.period, tc: f.tc, tc_err: f.tc_err,
+    out.push({ key: `p${pk.id}`, label: `#${pk.id} \u00b7 ${pk.period.toFixed(4)} d`, period: f.period || pk.period, tc: f.tc, tc_err: f.tc_err,
       p_err: pk.period ** 2 / (4 * span), name: `#${pk.id}`, kind: 'rv' });
   });
   (r.transits || []).forEach((tr, i) => {
@@ -1133,11 +1166,15 @@ function showFipView() {
 }
 
 // a button per fold: the numbered peaks, then the periods asked
+// a fold by its name: its transiting planet or TOI, its known planet, or
+//   its peak
+const foldLabel = (f) => (f.transit ? `\u25d0 ${esc(f.transit.name)}` : f.known ? `\u2605 ${esc(f.known.name)}` : `#${f.id}`);
+
 function renderFoldButtons() {
   const folds = (quick && quick.result && quick.result.folds) || [];
   const known = (quick && quick.result && quick.result.known) || [];
   const transits = (quick && quick.result && quick.result.transits) || [];
-  const label = (f) => (f.transit ? `\u25d0 ${esc(f.transit.name)}` : f.known ? `\u2605 ${esc(f.known.name)}` : `#${f.id}`);
+  const label = foldLabel;
   $('foldbuttons').innerHTML = folds.map((f) => `<button type="button" class="small${f.forced ? ' forced' : ''}${f.known ? ' known' : ''}${f.transit ? ' transit' : ''}" data-fold="${f.id}"`
     + `${f.forced ? ` title="${esc(t('asked'))}"` : ''}>${label(f)} \u00b7 ${f.period.toFixed(4)} d</button>`).join('')
     // the known planets, at their published period whatever the FIP says
@@ -1204,7 +1241,7 @@ function drawEach(each) {
   $('fipeach').innerHTML = `<table class="mini"><tr><th>${esc(t('each_title'))}</th><th>${esc(t('nights'))}</th><th>${esc(t('best_peaks'))}</th></tr>`
     + each.map((one) => `<tr><td><span class="swatch" style="background:${instColour(one.name)}"></span>${esc(one.name)}</td>`
       + `<td class="num">${one.n}</td><td class="peaks">${one.skipped ? `<span class="hint">${esc(t('few_nights'))}</span>`
-        : (one.peaks || []).map((pk) => `${pk.period.toFixed(4)} (${pk.family.toExponential(1)})`).join(' \u00b7 ') || esc(t('none_found'))}</td></tr>`).join('')
+        : (one.peaks || []).map((pk) => `${pk.period.toFixed(4)} (${fipExp(pk.family)})`).join(' \u00b7 ') || esc(t('none_found'))}</td></tr>`).join('')
     + '</table>';
 }
 
@@ -1257,16 +1294,16 @@ function showFold(id) {
   const pubNote = f.published ? ` \u00b7 <span class="pubnote">\u2605 ${esc(t('published'))} (${esc(f.published.reference)}): `
     + `P = ${f.published.period.toFixed(4)} d, K = ${f.published.K.toFixed(2)} m/s, e = ${f.published.e.toFixed(2)}</span>` : '';
   $('foldnote').innerHTML = f.kind === 'kepler'
-    ? `<b>#${f.id}</b> ${esc(t('fmodel_kepler_short'))}: P = ${pm(f.period, f.P_err, 4)} d, K = ${pm(f.K, f.K_err, 2)} m/s, `
+    ? `<b>${foldLabel(base)}</b> ${esc(t('fmodel_kepler_short'))}: P = ${pm(f.period, f.P_err, 4)} d, K = ${pm(f.K, f.K_err, 2)} m/s, `
       + `e = ${pm(f.e, f.e_err, 2)}, \u03c9 = ${f.omega.toFixed(0)}\u00b0, rms ${f.rms.toFixed(2)} m/s \u00b7 ${esc(t('fold_note_kep'))}`
-    : `<b>#${f.id}</b>: P = ${f.period.toFixed(4)} d, K = ${f.K.toFixed(2)} \u00b1 ${f.K_err.toFixed(2)} m/s, `
+    : `<b>${foldLabel(base)}</b>: P = ${f.P_err ? pm(f.period, f.P_err, Math.min(8, Math.max(4, 1 - Math.floor(Math.log10(f.P_err))))) : f.period.toFixed(4)} d, K = ${f.K.toFixed(2)} \u00b1 ${f.K_err.toFixed(2)} m/s, `
       + `rms ${f.rms.toFixed(2)} m/s \u00b7 ${esc(t('fold_note'))}`;
   $('foldnote').innerHTML += pubNote + transitNote(f)
     // the minimum mass of a Keplerian orbit; the mass of a transiting one
     // m sin i: of the sinusoid (a circular orbit), the Keplerian or the
     //   transit's orbit, with the mass of the star of the card; the
     //   equilibrium temperature
-    + massText(f) + teqText(f.period, starNow);
+    + bicText(f) + massText(f) + teqText(f.period, starNow);
   // the colour of the points: their instrument, their date, or their BERV
   //   (when the series has it), on one scale for all
   const hasBerv = f.instruments.some((inst) => inst.berv);
@@ -1673,7 +1710,7 @@ async function loadRemembered() {
 function renderRemembered() {
   const box = $('remlist');
   if (!rememberedList.length) { box.innerHTML = `<p class="hint">${esc(t('no_remembered'))}</p>`; return; }
-  const exp = (v) => (+v).toExponential(1);
+  const exp = fipExp;
   box.innerHTML = `<div class="remwrap"><table class="mini"><tr><th>${esc(t('col_target'))}</th><th>${esc(t('col_when'))}</th>`
     + `<th>${esc(t('col_nights'))}</th><th>${esc(t('col_peaks'))}</th><th>dv/dt [m/s/yr]</th><th>${esc(t('col_known'))}</th>`
     + `<th>${esc(t('col_each'))}</th><th>${esc(t('col_data'))}</th><th></th></tr>`
@@ -1783,9 +1820,9 @@ async function pollBatch(id) {
   if (batch.status === 'running') setTimeout(() => pollBatch(id), 1500);
 }
 
-// a FIP: green below 1 %; one too small for a float, below 1e-300
+// a FIP: green below 1 %
 const fipCell = (v) => (v === null || v === undefined ? ''
-  : `<span class="${v < 0.01 ? 'ok' : ''}">${v > 0 ? v.toExponential(1) : '&lt; 1e-300'}</span>`);
+  : `<span class="${v < 0.01 ? 'ok' : ''}">${fipExp(v)}</span>`);
 function batchRows() {
   const rows = batch.items.map((item, i) => ({ ...item, i, ...(item.summary || {}), object: objectName(item),
     // a plausible transit first, then by its signal-to-noise ratio
