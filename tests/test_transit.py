@@ -146,3 +146,24 @@ def test_a_conjunction_from_the_velocities():
         2.644 * 0.1 / np.pi)
     assert transit.conjunction_error(0.3, 2.644) == pytest.approx(
         np.hypot(0.3, 2.644 * 0.1 / np.pi))
+
+
+def test_the_box_fitted_to_the_medians():
+    """a 1.2 ppt, 2.4 h transit: the box fitted to the medians gives its
+    depth and duration (the search's box, the deepest of many, may not),
+    and the gaps of TESS split the light curve, their ramps left out"""
+    lc = _light_curve(seed=8, transits=[(4.3, 58002.1, 1.2, 2.4)])
+    res = transit.search(lc, 4.3, 58002.1, 0.01, 1e-5, mstar=0.5,
+                         rstar=0.5, ntrial=5)
+    fit = res['fit']
+    assert res['plausible'], res['why']
+    assert fit['depth'] == pytest.approx(1.2, abs=0.15)
+    assert fit['duration'] == pytest.approx(2.4, abs=0.5)
+    assert abs(fit['centre']) < 0.5
+    assert fit['radius'] == pytest.approx(transit.radius_of(1.2, 0.5),
+                                          rel=0.1)
+    trimmed = transit.trim_edges(lc)
+    # each sector starts again twice (at its start, after its gap): 0.25 d
+    #   left out each time
+    assert len(lc['time']) - len(trimmed['time']) == pytest.approx(
+        4 * 0.25 * 720, abs=8)

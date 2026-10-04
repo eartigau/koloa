@@ -364,6 +364,11 @@ def resolve_star(name: str, root: str = '', refresh: bool = False
         rad = stellar_radius(out, known.get('star'), entry)
         out['star'].update(radius=rad['radius'], radius_err=rad['radius_err'],
                            radius_source=rad['source'])
+        # its effective temperature, for the equilibrium temperature of a
+        #   planet
+        from koloa.stars import stellar_teff
+        temp = stellar_teff(out, known.get('star'), entry)
+        out['star'].update(teff=temp['teff'], teff_source=temp['source'])
     except Exception as err:  # a help, not a need
         out['star'].update(radius=None, radius_error=str(err))
     return out
@@ -1636,7 +1641,8 @@ def transit_check(opts: Dict[str, Any]) -> Dict[str, Any]:
                          float(rstar), others=others)
     res.update(lc=where, name=opts.get('name'), star=dict(
         mass=float(mstar), radius=float(rstar),
-        radius_source=star.get('radius_source') or 'its mass (R ~ M^0.9)'))
+        radius_source=star.get('radius_source') or 'its mass (R ~ M^0.9)',
+        teff=star.get('teff'), teff_source=star.get('teff_source')))
     return _finite(res)
 
 
@@ -1774,11 +1780,14 @@ def _batch_transit(batch: Dict[str, Any], item: Dict[str, Any],
         summ['transit'] = dict(status='no TESS', why=res.get('lc'))
         return
     best = res.get('best') or {}
+    # the depth and radius of the box fitted to the medians, when there is
+    #   one (the search's box is its deepest few points)
+    fit = res.get('fit') or best
     summ['transit'] = dict(
         status='plausible' if res['plausible'] else 'none',
         plausible=bool(res['plausible']), why=res['why'],
-        snr=best.get('snr'), depth=best.get('depth'),
-        depth_err=best.get('depth_err'), radius=best.get('radius'),
+        snr=best.get('snr'), depth=fit.get('depth'),
+        depth_err=fit.get('depth_err'), radius=fit.get('radius'),
         ntransits=best.get('ntransits'), sectors=res.get('sectors'),
         period=float(peak['period']))
 

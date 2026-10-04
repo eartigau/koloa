@@ -9,6 +9,7 @@ Created on 2026-10-03
 @author: artigau
 """
 import numpy as np
+import pytest
 
 from koloa import kepler, stars
 
@@ -48,3 +49,18 @@ def test_the_masses_of_the_planets():
     # its error, mostly the mass of the star's: (2/3) 10 %
     assert abs(0.5 * (got['earth'][1] + got['earth'][2]) / best
                - np.hypot(2 / 3 * 0.1, 0.22 / 17.09)) < 0.01
+
+
+def test_the_equilibrium_temperature():
+    """the Earth about the Sun: 278 K with no albedo, 255 K with 0.3; the
+    effective temperature of a dwarf from its type (Pecaut & Mamajek)"""
+    from koloa import stars
+    assert stars.equilibrium_temperature(5772, 1.0, 1.0, 365.25) == \
+        pytest.approx(278, abs=1)
+    assert stars.equilibrium_temperature(5772, 1.0, 1.0, 365.25, 0.3) == \
+        pytest.approx(255, abs=1)
+    assert stars.teff_from_spectral_type('M2V') == 3560
+    assert stars.teff_from_spectral_type('G2V') == 5770
+    assert stars.stellar_teff(dict(sptype='K5V'), tic=False)['teff'] == 4440
+    assert stars.stellar_teff(dict(sptype='K5V'), dict(teff=4500.0),
+                              tic=False)['source'] == 'NASA Exoplanet Archive'

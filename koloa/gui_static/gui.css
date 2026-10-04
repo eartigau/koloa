@@ -232,6 +232,8 @@ main[hidden] { display: none !important; }
 #foldnote .trnote { display: block; margin-top: 4px; color: #8eeac0; }
 ol.steps .result { grid-column: 2 / 4; font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; color: var(--text); opacity: 0.85; }
 .massrow input { width: 6.5em; flex: 0 0 auto !important; }
+/* an asymmetric error: + over -, after the value */
+.pm { display: inline-flex; flex-direction: column; vertical-align: middle; font-size: 0.7em; line-height: 1.05; margin: 0 1px 0 2px; text-align: left; }
 .starmain .massrow { flex-wrap: wrap; }
 .starmain .massrow label { flex: 1 0 100%; }
 .massrow { font-size: 0.85rem; color: var(--muted); }

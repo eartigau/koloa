@@ -13,7 +13,8 @@ there is one. The masses of the Earth and Jupiter are the IAU 2015 nominal
 values; Neptune's, its GM from JPL Horizons (6835099.97 km^3/s^2, the planet
 without Triton).
 
-The radius, best guess first: the NASA Exoplanet Archive's for a planet
+The radius and the effective temperature (for the equilibrium temperature
+of a planet), best guess first: the NASA Exoplanet Archive's for a planet
 host, the TESS Input Catalog's (v8, MAST: Gaia, and the relations of Mann
 et al. for the cool dwarfs), APERO's (Mann et al. 2015 from M_Ks), the
 same table's by spectral type (its R_Rsun), or the mass's (R ~ M^0.9).
@@ -157,6 +158,32 @@ SPT_RADIUS: List[Tuple[str, float]] = [
     ('L1V', 0.0995), ('L2V', 0.097)]
 #: the rough relative error of a radius from a spectral type
 SPT_RADIUS_ERR = 0.10
+#: the effective temperature of a dwarf by spectral type [K]: the same
+#: table (its Teff), for the same types
+SPT_TEFF: List[Tuple[str, int]] = [
+    ('O3V', 44900), ('O4V', 42900), ('O5V', 41400), ('O5.5V', 40500),
+    ('O6V', 39500), ('O6.5V', 38300), ('O7V', 37100), ('O7.5V', 36100),
+    ('O8V', 35100), ('O8.5V', 34300), ('O9V', 33300), ('O9.5V', 31900),
+    ('B0V', 31400), ('B0.5V', 29000), ('B1V', 26000), ('B1.5V', 24500),
+    ('B2V', 20600), ('B2.5V', 18500), ('B3V', 17000), ('B4V', 16400),
+    ('B5V', 15700), ('B6V', 14500), ('B7V', 14000), ('B8V', 12300),
+    ('B9V', 10700), ('B9.5V', 10400), ('A0V', 9700), ('A1V', 9300),
+    ('A2V', 8800), ('A3V', 8600), ('A4V', 8250), ('A5V', 8100),
+    ('A6V', 7910), ('A7V', 7760), ('A8V', 7590), ('A9V', 7400),
+    ('F0V', 7220), ('F1V', 7020), ('F2V', 6820), ('F3V', 6750),
+    ('F4V', 6670), ('F5V', 6550), ('F6V', 6350), ('F7V', 6280),
+    ('F8V', 6180), ('F9V', 6050), ('F9.5V', 5990), ('G0V', 5930),
+    ('G1V', 5860), ('G2V', 5770), ('G3V', 5720), ('G4V', 5680),
+    ('G5V', 5660), ('G6V', 5600), ('G7V', 5550), ('G8V', 5480),
+    ('G9V', 5380), ('K0V', 5270), ('K1V', 5170), ('K2V', 5100),
+    ('K3V', 4830), ('K4V', 4600), ('K5V', 4440), ('K6V', 4300),
+    ('K7V', 4100), ('K8V', 3990), ('K9V', 3930), ('M0V', 3850),
+    ('M0.5V', 3770), ('M1V', 3660), ('M1.5V', 3620), ('M2V', 3560),
+    ('M2.5V', 3470), ('M3V', 3430), ('M3.5V', 3270), ('M4V', 3210),
+    ('M4.5V', 3110), ('M5V', 3060), ('M5.5V', 2930), ('M6V', 2810),
+    ('M6.5V', 2740), ('M7V', 2680), ('M7.5V', 2630), ('M8V', 2570),
+    ('M8.5V', 2420), ('M9V', 2380), ('M9.5V', 2350), ('L0V', 2270),
+    ('L1V', 2160), ('L2V', 2060)]
 #: where the TIC's answers are kept
 TIC_CACHE = os.path.join(os.path.expanduser('~'), '.cache', 'koloa', 'tic')
 #: the masses of Neptune and Jupiter in Earth masses (GM ratios: Neptune's
@@ -261,6 +288,67 @@ def radius_from_spectral_type(sptype: Any
         return None
     radius = float(np.interp(code, codes, radii))
     return radius, SPT_RADIUS_ERR * radius
+
+
+def teff_from_spectral_type(sptype: Any) -> Optional[float]:
+    """the rough effective temperature of a dwarf from its spectral type
+    (Pecaut & Mamajek 2013), interpolated in the subclass [K], or None"""
+    code = spectral_code(sptype)
+    if code is None:
+        return None
+    codes = np.array([spectral_code(spt) for spt, _ in SPT_TEFF])
+    temps = np.array([float(teff) for _, teff in SPT_TEFF])
+    if code < codes.min() - 1 or code > codes.max() + 1:
+        return None
+    return float(np.interp(code, codes, temps))
+
+
+def stellar_teff(ident: Dict[str, Any],
+                 archive_star: Optional[Dict[str, Any]] = None,
+                 apero: Optional[Dict[str, Any]] = None,
+                 tic: bool = True) -> Dict[str, Any]:
+    """
+    The best guess at the effective temperature of a star, in the order of
+    the radius (stellar_radius): the NASA Exoplanet Archive's, the TESS
+    Input Catalog's, APERO's, its spectral type's
+
+    :return: dict, teff [K] and source (None where there is none)
+    """
+    archive_star = archive_star or {}
+    if archive_star.get('teff'):
+        return dict(teff=float(archive_star['teff']),
+                    source='NASA Exoplanet Archive')
+    if tic and ident.get('tic'):
+        found = tic_star(ident['tic'])
+        if found.get('teff'):
+            return dict(teff=float(found['teff']),
+                        source='TESS Input Catalog v8')
+    if apero and apero.get('teff'):
+        return dict(teff=float(apero['teff']), source='APERO')
+    found = teff_from_spectral_type(ident.get('sptype'))
+    if found is not None:
+        return dict(teff=found,
+                    source='its spectral type (Pecaut & Mamajek 2013)')
+    return dict(teff=None, source=None)
+
+
+def equilibrium_temperature(teff: float, rstar: float, mstar: float,
+                            period: float, albedo: float = 0.0) -> float:
+    """
+    The equilibrium temperature of a planet [K]: Teff sqrt(R* / 2a)
+    (1 - A)^(1/4), the heat spread over the whole planet, a from Kepler's
+    third law (a circular orbit, the planet's mass neglected)
+
+    :param teff: float, the star's effective temperature [K]
+    :param rstar: float, its radius [solar radii]
+    :param mstar: float, its mass [solar masses]
+    :param period: float, the orbit's period [days]
+    :param albedo: float, the planet's Bond albedo
+    """
+    sec = period * kepler.DAY
+    axis = (kepler.GM_SUN * mstar * sec ** 2 / (4 * np.pi ** 2)) ** (1 / 3)
+    return float(teff * np.sqrt(rstar * 6.957e8 / (2 * axis))
+                 * (1 - albedo) ** 0.25)
 
 
 def tic_star(tic: Any, timeout: float = 30.0) -> Dict[str, Any]:

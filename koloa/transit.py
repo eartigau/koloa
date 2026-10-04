@@ -11,8 +11,10 @@ the transit would be
     res['best']['snr'], res['best']['depth'], res['plausible']
 
 - The light curve: each sector's flux [ppt] (koloa.gather, phot/tess.csv;
-  or koloa.tess.light_curves), split where it has a gap of more than half
-  a day; flares clipped (more than 4 sigma above a running median); the
+  or koloa.tess.light_curves), split where it has a gap of more than 0.2
+  day (a running median across the jump of the flux at a gap would make a
+  dip beside it), the first 0.25 day after each gap left out (the ramp of
+  the flux as TESS starts again); flares clipped (more than 4 sigma above a running median); the
   rest high-passed, a running median of a window three times the expected
   transit (at least half a day) taken out, so that a transit stays and the
   spots and the systematics of TESS go.
@@ -60,7 +62,11 @@ the transit would be
   is below 1 %
   (an active star, its flares and spots, makes dips as deep as a planet's
   at any period: then the light curve cannot tell).
-- The radius of the planet from the depth, Rp = R* sqrt(depth), and the
+- The depth, the duration and the centre of the transit: a box fitted to
+  the medians of the folded light curve in fine bins about the box found
+  (the search picks the deepest of many boxes, its depth the deepest few
+  points; the fit's is the transit's mean level).
+- The radius of the planet from the fitted depth, Rp = R* sqrt(depth), and the
   depths of a 1 Earth-radius and a 1 Jupiter-radius planet before the star
   (the IAU 2015 nominal radii) for the plot.
 
@@ -90,8 +96,12 @@ SNR_PLAUSIBLE = 7.0
 MIN_TRANSITS = 2
 #: as deep as a planet can make it: Rp below this [Jupiter radii]
 RP_MAX_RJ = 2.5
-#: a gap that splits a light curve [days]
-GAP = 0.5
+#: a gap that splits a light curve [days]: a running median across a jump
+#: at a gap (TESS's downlinks) would make a dip on one side of it
+GAP = 0.2
+#: the first hours of each stretch left out [days]: the ramp of TESS's
+#: flux as it starts again after a gap (a few ppt, decaying over hours)
+EDGE = 0.25
 #: the shortest high-pass window [days]
 WINDOW_MIN = 0.5
 #: the durations of the boxes, in expected durations
@@ -272,6 +282,17 @@ def bin_light_curve(lc: Dict[str, np.ndarray], width: float
     out = {key: np.concatenate(val) for key, val in keep.items()}
     order = np.argsort(out['time'])
     return {key: val[order] for key, val in out.items()}
+
+
+def trim_edges(lc: Dict[str, np.ndarray], edge: float = EDGE
+               ) -> Dict[str, np.ndarray]:
+    """the light curve without the first edge [days] of each stretch (a
+    sector, split at its gaps): the ramp of the flux of TESS as it starts
+    again after a gap, which a high-pass turns into a dip and a bump"""
+    keep = np.zeros(len(lc['time']), bool)
+    for seg in _segments(lc['time'], lc['sector']):
+        keep[seg] = lc['time'][seg] >= lc['time'][seg].min() + edge
+    return {key: val[keep] for key, val in lc.items()}
 
 
 def red_noise(lc: Dict[str, np.ndarray], width: float) -> float:
@@ -571,6 +592,85 @@ def null_trials(lc: Dict[str, np.ndarray], period: float, half: float,
     return out
 
 
+def fit_box(hours: np.ndarray, flux: np.ndarray, centre: float,
+            width: float, expected: float) -> Optional[Dict[str, Any]]:
+    """
+    A box fitted to the medians of the folded light curve about a transit
+    found: the light curve in bins of a tenth of the expected duration
+    within three widths of the centre, the median of each (its error from
+    its scatter); for each centre (a quarter of a bin apart, within a width
+    of the one found) and duration (half a bin apart, a quarter to three
+    times the expected one), the depth and the level out of transit fitted
+    by least squares, each bin weighed by the part of it in the box; the
+    best chi-square kept. The search picks the deepest of many boxes, and
+    its depth is the deepest few points; the fit's is the transit's mean
+    level
+
+    :param hours: np.ndarray, the hours of each point from the centre shown
+    :param flux: np.ndarray, its flux [ppt]
+    :param centre: float, the centre of the box found [hours, same origin]
+    :param width: float, its duration [hours]
+    :param expected: float, the duration of a central transit [hours]
+
+    :return: dict, centre [hours], duration [hours], depth, depth_err,
+             level [ppt], chi2 (reduced), bins (hours, median, error); or
+             None
+    """
+    step = max(expected / 10.0, 2.0 / 60.0)
+    span = 3.0 * max(width, expected)
+    near = np.abs(hours - centre) <= span + step
+    if near.sum() < 20:
+        return None
+    edges = np.arange(centre - span, centre + span + step, step)
+    which = np.digitize(hours[near], edges) - 1
+    xs, ys, es = [], [], []
+    for k in range(len(edges) - 1):
+        vals = flux[near][which == k]
+        if len(vals) >= 3:
+            med = float(np.median(vals))
+            mad = 1.4826 * float(np.median(np.abs(vals - med)))
+            xs.append(0.5 * (edges[k] + edges[k + 1]))
+            ys.append(med)
+            es.append(max(1.2533 * mad / math.sqrt(len(vals)), 1e-6))
+    if len(xs) < 8:
+        return None
+    xs, ys, es = np.array(xs), np.array(ys), np.array(es)
+    wts = 1.0 / es ** 2
+    best = None
+    for dur in np.arange(max(0.25 * expected, step), 3.0 * expected + step,
+                         0.5 * step):
+        for mid in np.arange(centre - width, centre + width + step,
+                             0.25 * step):
+            # the part of each bin in the box
+            part = np.clip((np.minimum(xs + 0.5 * step, mid + 0.5 * dur)
+                            - np.maximum(xs - 0.5 * step, mid - 0.5 * dur))
+                           / step, 0.0, 1.0)
+            if part.sum() < 1.0 or (1.0 - part).sum() < 3.0:
+                continue
+            # flux = level - depth * part, weighted least squares
+            design = np.array([np.ones(len(xs)), -part]).T
+            normal = design.T @ (design * wts[:, None])
+            try:
+                cov = np.linalg.inv(normal)
+            except np.linalg.LinAlgError:
+                continue
+            coef = cov @ (design.T @ (wts * ys))
+            chi2 = float(np.sum(wts * (ys - design @ coef) ** 2))
+            if best is None or chi2 < best['chi2']:
+                best = dict(centre=float(mid), duration=float(dur),
+                            level=float(coef[0]), depth=float(coef[1]),
+                            depth_err=float(math.sqrt(cov[1, 1])), chi2=chi2)
+    if best is None:
+        return None
+    dof = max(len(xs) - 4, 1)
+    best['chi2'] = best['chi2'] / dof
+    # the error scaled by the reduced chi-square when it is above one
+    best['depth_err'] *= math.sqrt(max(best['chi2'], 1.0))
+    best['bins'] = [[float(x), float(y), float(e)] for x, y, e
+                    in zip(xs, ys, es)]
+    return best
+
+
 def search(lc: Dict[str, np.ndarray], period: float,
            t0: Optional[float] = None, t0_err: Optional[float] = None,
            period_err: Optional[float] = None, mstar: float = 1.0,
@@ -623,6 +723,8 @@ def search(lc: Dict[str, np.ndarray], period: float,
                        - 0.5) * other['P'] <= 0.75 * width + 0.02
     if skip.any():
         lc = {key: val[~skip] for key, val in lc.items()}
+    # the ramps after the gaps out
+    lc = trim_edges(lc)
     # the search on the light curve in bins of a twelfth of the duration
     #   (the 2-minute points kept for the plot)
     full = lc
@@ -761,6 +863,17 @@ def search(lc: Dict[str, np.ndarray], period: float,
             bins.append([float(np.mean(hours[which == k])), med,
                          1.2533 * mad / math.sqrt(len(vals))])
     out['bins'] = bins
+    # the box fitted to the medians about the box found: its depth, the
+    #   transit's mean level (the search's is its deepest few points), its
+    #   duration and centre; the radius from it
+    out['fit'] = None
+    if best is not None:
+        off = (((best['centre'] - centre) / fold + 0.5) % 1.0 - 0.5) \
+            * fold * 24.0
+        fit = fit_box(hours, flux, off, best['duration'], dur_h)
+        if fit is not None and fit['depth'] > 0:
+            fit['radius'] = radius_of(fit['depth'], rstar)
+            out['fit'] = fit
     return out
 
 

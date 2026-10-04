@@ -186,13 +186,30 @@ function minimumMass(f) {
   vals.sort((a, b) => a - b);
   return { best, lo: best - percentile(vals, 15.87), hi: percentile(vals, 84.13) - best, M, Merr };
 }
+// the star of the page (its radius and effective temperature, for the
+//   equilibrium temperature of a planet)
+let starNow = {};
+// the equilibrium temperature of a planet: Teff sqrt(R* / 2a) (1 - A)^(1/4),
+//   the heat spread over the planet, a from the period and the mass of the
+//   star of the card; for a Bond albedo of 0 and of 0.3
+function teqText(P, star) {
+  const M = +$('mstar').value || (star && star.mass);
+  const R = star && star.radius, T = star && star.teff;
+  if (!(M > 0 && R > 0 && T > 0 && P > 0)) return '';
+  const a = Math.cbrt(GM_SUN * M * (P * 86400) ** 2 / (4 * Math.PI ** 2));
+  const teq = T * Math.sqrt(R * 6.957e8 / (2 * a));
+  return ` <span class="massnote">T<sub>${esc(t('teq_sub'))}</sub> \u2248 <b>${teq.toFixed(0)} K</b> (A = 0) \u00b7 ${(teq * 0.7 ** 0.25).toFixed(0)} K (A = 0.3)`
+    + ` <span class="hint">(a = ${(a / 1.495978707e11).toFixed(3)} au, T\u2605 = ${T.toFixed(0)} K, R\u2605 = ${R.toFixed(3)} R\u2609)</span></span>`;
+}
+// an asymmetric error, the + over the - after the value
+const pmStack = (lo, hi) => `<span class="pm"><span>+${hi}</span><span>\u2212${lo}</span></span>`;
 function massText(f) {
   const mm = minimumMass(f);
   if (!mm) return `<span class="massnote hint">${esc(t('no_mstar'))}</span>`;
   const fmt = (v) => (v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v.toPrecision(2));
   const units = [['M\u2295', 1], ['M\u2646', MNEP_MEARTH], ['M\u2643', MJUP_MEARTH]];
   const what = f.transit ? t('mass_transit') : 'm sin i';
-  return `<span class="massnote">${esc(what)} = ` + units.map(([u, s]) => `<b>${fmt(mm.best / s)}</b> \u2212${fmt(mm.lo / s)} +${fmt(mm.hi / s)} ${u}`).join(' = ')
+  return `<span class="massnote">${esc(what)} = ` + units.map(([u, s]) => `<b>${fmt(mm.best / s)}</b>${pmStack(fmt(mm.lo / s), fmt(mm.hi / s))} ${u}`).join(' = ')
     + ` <span class="hint">(M\u2605 = ${mm.M.toFixed(3)} \u00b1 ${mm.Merr.toFixed(3)} M\u2609)</span></span>`;
 }
 
@@ -269,6 +286,7 @@ async function resolveStar(refresh) {
     }
     const carm = id.carmenes ? `${esc(id.carmenes.carmenes_id)}, ${esc(id.carmenes.nobs)} ${esc(t('points'))}` : esc(t('not_in'));
     setMass(id.star);
+    starNow = id.star || {};
     const star = id.star || {};
     const typeTile = `${esc(star.sptype || id.sptype || '-')}` + (star.mass ? ` \u00b7 ${star.mass.toFixed(2)} \u00b1 ${(star.mass_err || 0).toFixed(2)} M\u2609` : '');
     box.innerHTML = '<div class="stats-grid">'
@@ -755,9 +773,9 @@ function fipSummary(r, elapsed) {
 // the acceleration of the star the quick look measured (and its change)
 function accelValue(v, unit) {
   const [val, lo, hi] = v;
-  const err = Math.abs(lo - hi) < 0.05 * Math.max(lo, hi) ? `\u00b1 ${(0.5 * (lo + hi)).toPrecision(2)}`
-    : `\u2212${lo.toPrecision(2)} +${hi.toPrecision(2)}`;
-  return `${val >= 0 ? '+' : '\u2212'}${Math.abs(val).toPrecision(3)} ${err} ${unit}`;
+  const sym = Math.abs(lo - hi) < 0.05 * Math.max(lo, hi);
+  const err = sym ? ` \u00b1 ${(0.5 * (lo + hi)).toPrecision(2)}` : pmStack(lo.toPrecision(2), hi.toPrecision(2));
+  return `${val >= 0 ? '+' : '\u2212'}${Math.abs(val).toPrecision(3)}${err} ${unit}`;
 }
 function accelText(r) {
   const order = (r.settings || {}).trend;
@@ -919,8 +937,11 @@ function drawTransit(res, c) {
   const fmt = (v, d) => (v === null || v === undefined ? '?' : (+v).toFixed(d));
   const verdict = res.plausible ? `<span class="ok">\u2691 ${esc(t('ts_plausible'))}</span>` : `<span class="hint">${esc(t('ts_not'))}</span>`;
   $('tsnote').innerHTML = `${verdict}: ${esc(res.why)}.`
-    + (b ? ` ${esc(t('ts_box'))} ${fmt(b.depth, 3)} \u00b1 ${fmt(b.depth_err, 3)} ppt, ${fmt(b.duration, 1)} h, Rp \u2248 ${fmt(b.radius, 2)} R\u2295` : '')
+    // the depth, duration and radius of the box fitted to the medians
+    + (res.fit ? ` ${esc(t('ts_fit'))} ${fmt(res.fit.depth, 3)} \u00b1 ${fmt(res.fit.depth_err, 3)} ppt, ${fmt(res.fit.duration, 1)} h, Rp \u2248 ${fmt(res.fit.radius, 2)} R\u2295`
+      : b ? ` ${esc(t('ts_box'))} ${fmt(b.depth, 3)} \u00b1 ${fmt(b.depth_err, 3)} ppt, ${fmt(b.duration, 1)} h, Rp \u2248 ${fmt(b.radius, 2)} R\u2295` : '')
     + ` \u00b7 R\u2605 ${fmt(res.star.radius, 3)} R\u2609 (${esc(res.star.radius_source)}), ${t('ts_expected')} ${fmt(res.duration, 1)} h`
+    + (teqText(P, res.star) ? ` \u00b7${teqText(P, res.star)}` : '')
     + ` \u00b7 TESS ${esc((res.sectors || []).join(', '))} (${esc(res.lc)})`
     + (res.window ? ` \u00b7 ${t('ts_window')} \u00b1${fmt(res.window, 1)} h` : ` \u00b7 ${t('ts_whole')}`)
     // the period scanned: how many, and where the box is best
@@ -929,18 +950,30 @@ function drawTransit(res, c) {
   const div = $('tsplot');
   div.classList.add('on');
   if (!window.Plotly) return;
-  const traces = [{ x: res.hours, y: res.flux, type: 'scattergl', mode: 'markers', name: t('ts_points'),
+  // the phase at the bottom (0 at the transit expected, or found), the
+  //   hours from it on top
+  const ph = (h) => h / (P * 24);
+  const traces = [{ x: res.hours.map(ph), y: res.flux, type: 'scattergl', mode: 'markers', name: t('ts_points'),
     marker: { size: 3, color: 'rgba(170,185,210,0.35)' }, hoverinfo: 'skip' }];
   const bins = res.bins || [];
-  traces.push({ x: bins.map((v) => v[0]), y: bins.map((v) => v[1]), type: 'scatter', mode: 'markers+lines', name: t('ts_bins'),
+  traces.push({ x: bins.map((v) => ph(v[0])), y: bins.map((v) => v[1]), type: 'scatter', mode: 'markers+lines', name: t('ts_bins'),
     error_y: { type: 'data', array: bins.map((v) => v[2]), visible: true, thickness: 1, width: 0, color: '#62c2ff' },
-    marker: { size: 6, color: '#62c2ff' }, line: { color: '#62c2ff', width: 1 },
-    hovertemplate: '%{x:.2f} h<br>%{y:.3f} ppt<extra></extra>' });
-  // the box found, about the centre shown
-  if (b) {
+    marker: { size: 6, color: '#62c2ff' }, line: { color: '#62c2ff', width: 1 }, customdata: bins.map((v) => v[0]),
+    hovertemplate: `${t('ts_phase')} %{x:.4f} \u00b7 %{customdata:.2f} h<br>%{y:.3f} ppt<extra></extra>` });
+  // nothing to see on the axis of the hours: Plotly draws an axis a trace uses
+  traces.push({ x: [-0.5, 0.5], y: [null, null], xaxis: 'x2', type: 'scatter', mode: 'markers', showlegend: false, hoverinfo: 'skip',
+    marker: { opacity: 0 } });
+  // the box fitted to the medians (else the box of the search), about the
+  //   centre shown
+  if (res.fit) {
+    const f = res.fit, h = f.duration / 2;
+    traces.push({ x: [f.centre - 3 * h, f.centre - h, f.centre - h, f.centre + h, f.centre + h, f.centre + 3 * h].map(ph),
+      y: [f.level, f.level, f.level - f.depth, f.level - f.depth, f.level, f.level], type: 'scatter',
+      mode: 'lines', name: t('ts_fitname'), line: { color: '#f5a524', width: 1.6 }, hoverinfo: 'skip' });
+  } else if (b) {
     const off = (((b.centre - res.shown_centre) / P + 0.5) % 1 + 1) % 1 * P * 24 - 0.5 * P * 24;
     const h = b.duration / 2;
-    traces.push({ x: [off - 3 * h, off - h, off - h, off + h, off + h, off + 3 * h], y: [0, 0, -b.depth, -b.depth, 0, 0], type: 'scatter',
+    traces.push({ x: [off - 3 * h, off - h, off - h, off + h, off + h, off + 3 * h].map(ph), y: [0, 0, -b.depth, -b.depth, 0, 0], type: 'scatter',
       mode: 'lines', name: t('ts_boxname'), line: { color: '#f5a524', width: 1.6 }, hoverinfo: 'skip' });
   }
   // the depths of a 1 Earth-radius and a 1 Jupiter-radius planet
@@ -948,7 +981,7 @@ function drawTransit(res, c) {
   const xr = [-Math.min(span, P * 12), Math.min(span, P * 12)];
   const vis = bins.filter((v) => v[0] >= xr[0] && v[0] <= xr[1]);
   const err = vis.length ? vis.map((v) => v[2]).sort((p, q) => p - q)[Math.floor(vis.length / 2)] : 0.1;
-  let lo = Math.min(...vis.map((v) => v[1]), -(b ? b.depth : 0)) - 4 * err, hi = Math.max(...vis.map((v) => v[1]), 0) + 4 * err;
+  let lo = Math.min(...vis.map((v) => v[1]), -(res.fit ? res.fit.depth : b ? b.depth : 0)) - 4 * err, hi = Math.max(...vis.map((v) => v[1]), 0) + 4 * err;
   lo = Math.min(lo, -1.25 * res.depth_earth);
   const lines = [[res.depth_earth, '1 R\u2295'], [res.depth_jupiter, '1 R\u2643']];
   const shapes = [], notes = [];
@@ -963,16 +996,42 @@ function drawTransit(res, c) {
   // where the transit is expected (the ephemeris carried to TESS), shaded
   if (res.window && res.t0 !== null && res.t0 !== undefined) {
     const at = (((res.t0 - res.shown_centre) / P + 0.5) % 1 + 1) % 1 * P * 24 - 0.5 * P * 24;
-    shapes.push({ type: 'rect', xref: 'x', yref: 'paper', x0: at - res.window, x1: at + res.window, y0: 0, y1: 1,
+    shapes.push({ type: 'rect', xref: 'x', yref: 'paper', x0: ph(at - res.window), x1: ph(at + res.window), y0: 0, y1: 1,
       fillcolor: 'rgba(98,194,255,0.06)', line: { width: 0 } });
   }
   const axis = { gridcolor: 'rgba(200,220,255,0.10)', zerolinecolor: 'rgba(200,220,255,0.25)', color: '#7a8597' };
   Plotly.newPlot(div, traces, {
     paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(4,8,16,0.35)', font: { family: 'Space Grotesk, sans-serif', color: '#e8eef8' },
-    margin: { ...PLOT_MARGIN, t: 30 }, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, shapes, annotations: notes,
-    xaxis: { ...axis, title: t(res.plausible ? 'ts_axis_found' : 'ts_axis'), range: xr },
+    margin: { ...PLOT_MARGIN, t: 92 }, legend: { orientation: 'h', x: 0, y: 1, yref: 'container', yanchor: 'top' }, shapes, annotations: notes,
+    xaxis: { ...axis, title: t('ts_phase'), range: xr.map(ph) },
+    xaxis2: { ...axis, title: { text: t(res.plausible ? 'ts_axis_found' : 'ts_axis'), standoff: 4 }, overlaying: 'x', matches: 'x', side: 'top',
+      showgrid: false, zeroline: false, tickmode: 'array', ...hourTicks(xr.map(ph), P) },
     yaxis: { ...axis, title: t('ts_flux'), range: [lo, hi] },
-  }, { responsive: true, displaylogo: false });
+  }, { responsive: true, displaylogo: false }).then(() => {
+    // the hours on top follow a zoom
+    div.removeAllListeners && div.removeAllListeners('plotly_relayout');
+    div.on('plotly_relayout', (ev) => {
+      // a zoom (not the ticks set here)
+      if (ev['xaxis2.tickvals'] !== undefined) return;
+      if (!['xaxis.range', 'xaxis.range[0]', 'xaxis.autorange', 'xaxis2.range[0]', 'xaxis2.autorange'].some((key) => ev[key] !== undefined)) return;
+      const r = div.layout.xaxis.range.map(Number);
+      const tk = hourTicks(r, P);
+      Plotly.relayout(div, { 'xaxis2.tickvals': tk.tickvals, 'xaxis2.ticktext': tk.ticktext });
+    });
+  });
+}
+
+// the ticks of the hours on top of a fold in phase: a round step for the
+//   hours shown, at their phase
+function hourTicks(range, P) {
+  const h0 = range[0] * P * 24, h1 = range[1] * P * 24;
+  const step = [0.25, 0.5, 1, 2, 3, 6, 12, 24, 48, 96, 168, 336, 720].find((k) => (h1 - h0) / k <= 10) || 1440;
+  const tickvals = [], ticktext = [];
+  for (let h = Math.ceil(h0 / step) * step; h <= h1 + 1e-9; h += step) {
+    tickvals.push(h / (P * 24));
+    ticktext.push(step < 1 ? h.toFixed(2) : String(Math.round(h)));
+  }
+  return { tickvals, ticktext };
 }
 
 // the FIP: the period alone and with its aliases, or each instrument too
@@ -1117,7 +1176,10 @@ function showFold(id) {
       + `rms ${f.rms.toFixed(2)} m/s \u00b7 ${esc(t('fold_note'))}`;
   $('foldnote').innerHTML += pubNote + transitNote(f)
     // the minimum mass of a Keplerian orbit; the mass of a transiting one
-    + (f.kind === 'kepler' || f.transit ? massText(f) : '');
+    // m sin i: of the sinusoid (a circular orbit), the Keplerian or the
+    //   transit's orbit, with the mass of the star of the card; the
+    //   equilibrium temperature
+    + massText(f) + teqText(f.period, starNow);
   // the colour of the points: their instrument, their date, or their BERV
   //   (when the series has it), on one scale for all
   const hasBerv = f.instruments.some((inst) => inst.berv);
@@ -1433,6 +1495,7 @@ function resetPage() {
   renderFiles();
   $('ident').innerHTML = '';
   $('targetsrc').textContent = '';
+  starNow = {};
   $('rvnote').textContent = '';
   $('rvtable').innerHTML = '';
   if (window.Plotly) Plotly.purge($('rvplot'));
