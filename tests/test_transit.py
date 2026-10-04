@@ -99,6 +99,37 @@ def test_another_planet_left_out():
     assert not res['plausible'], res['why']
 
 
+def test_a_deep_transit_of_a_faint_m_dwarf():
+    """GJ 1214 b as TESS would see it (TESS has not: no sector holds the
+    star): 13.5 ppt, 52 minutes, every 1.58 d, on a faint M dwarf (3.5 ppt
+    a point, a slow rotation). Found at its ephemeris, about a conjunction
+    as the velocities give one (its period then scanned across sectors two
+    years apart) and over the whole phase, at its depth and radius"""
+    period, tzero, depth, dur = 1.580404531, 59001.1, 13.5, 0.87
+    lc = _light_curve(seed=3, sectors=((59000.0, 27.0), (59750.0, 27.0)),
+                      spots=0.0, white=3.5,
+                      transits=[(period, tzero, depth, dur)])
+    lc['flux'] = lc['flux'] + 3.0 * np.sin(2 * np.pi * lc['time'] / 40.0)
+    asked = ((tzero, 0.002, 1e-7),
+             (tzero + 0.04, transit.conjunction_error(0.02, period),
+              period ** 2 / (4 * 3000.0)),
+             (None, None, None))
+    for t0, t0_err, perr in asked:
+        res = transit.search(lc, period, t0, t0_err, perr, mstar=0.18,
+                             rstar=0.215, ntrial=10)
+        assert res['plausible'], res['why']
+        assert res['best']['snr'] > 40 and res['best']['ntransits'] > 25
+        fit = res['fit']
+        assert fit['depth'] == pytest.approx(depth, abs=1.0)
+        assert fit['duration'] == pytest.approx(dur, abs=0.25)
+        # 2.7 Earth radii before a 0.215 Rsun star
+        assert fit['radius'] == pytest.approx(
+            transit.radius_of(depth, 0.215), rel=0.06)
+        assert res['fold_period'] == pytest.approx(period, abs=2e-4)
+    # no deeper than Jupiter's: nothing rules it out as a planet
+    assert res['depth_jupiter'] > depth
+
+
 def test_the_light_curve_of_the_archives(tmp_path):
     """phot/tess.csv as koloa.gather writes it"""
     lc = _light_curve(seed=5)

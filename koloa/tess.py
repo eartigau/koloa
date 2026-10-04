@@ -52,6 +52,8 @@ from koloa.periodogram import gls
 # Define variables
 # =============================================================================
 MAST = 'https://mast.stsci.edu/api/v0/invoke'
+#: which sectors' full frames hold a position (MAST's TESScut)
+TESSCUT = 'https://mast.stsci.edu/tesscut/api/v0.1/sector'
 DOWNLOAD = 'https://mast.stsci.edu/api/v0.1/Download/file?uri='
 #: where the light curves are kept (they are public, and shared by runs)
 CACHE = os.path.join(os.path.expanduser('~'), '.cache', 'koloa', 'tess')
@@ -111,6 +113,33 @@ def tic_number(name: Union[str, int]) -> int:
     return int(tic.split()[-1])
 
 
+def sectors_at(ra: Optional[float], dec: Optional[float],
+               timeout: float = 30.0) -> Optional[List[int]]:
+    """
+    The sectors of TESS whose full frames hold a position (MAST's TESScut):
+    none means TESS has not looked there (its sectors leave gaps: GJ 1214,
+    at an ecliptic latitude of 28 deg, is in one)
+
+    :param ra: float, right ascension [deg, J2000]
+    :param dec: float, declination [deg, J2000]
+
+    :return: list of int (empty: not observed), or None when it could not
+             be asked (no position, no network)
+    """
+    if ra is None or dec is None:
+        return None
+    url = TESSCUT + '?' + urllib.parse.urlencode(dict(
+        ra=f'{ra:.5f}', dec=f'{dec:.5f}', radius='0.01'))
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            rows = json.loads(resp.read()).get('results') or []
+    except Exception as err:  # not asked: unknown
+        log(f'TESS: the sectors at this position could not be asked ({err})',
+            'warn')
+        return None
+    return sorted({int(row['sector']) for row in rows})
+
+
 def _choose(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """one observation per sector, the best provenance"""
     best = {}
@@ -166,7 +195,9 @@ def light_curves(name: Union[str, int], folder: Optional[str] = None,
     :param timeout: float [s], of each download
 
     :return: dict, tic, sectors (list of dict: sector, provenance, exposure,
-             file, column, time, flux, err)
+             file, column, time, flux, err) and, when MAST has no light
+             curve, observed: the sectors whose full frames hold the star
+             (empty: TESS has not looked at it; None: not asked)
     """
     tic = tic_number(name)
     folder = folder or os.path.join(CACHE, str(tic))
@@ -178,7 +209,23 @@ def light_curves(name: Union[str, int], folder: Optional[str] = None,
     chosen = _choose(rows)[-max_sectors:]
     out = dict(tic=tic, sectors=[])
     if not chosen:
-        log(f'TESS: no light curve of TIC {tic} at MAST', 'warn')
+        # not observed at all, or in the full frames only?
+        try:
+            from koloa.archive import resolve
+            ident = resolve(name if not str(name).strip().isdigit()
+                            else f'TIC {name}')
+            out['observed'] = sectors_at(ident.get('ra'), ident.get('dec'))
+        except Exception:  # its position not known: not asked
+            out['observed'] = None
+        if out['observed'] == []:
+            log(f'TESS has not observed TIC {tic}: no sector holds its '
+                f'position', 'warn')
+        elif out['observed']:
+            log(f'TESS: no light curve of TIC {tic} at MAST (in the full '
+                f'frames of sectors '
+                f'{", ".join(map(str, out["observed"]))} only)', 'warn')
+        else:
+            log(f'TESS: no light curve of TIC {tic} at MAST', 'warn')
         return out
     os.makedirs(folder, exist_ok=True)
     files = _mast('Mast.Caom.Products', dict(

@@ -1645,6 +1645,8 @@ def apero_refresh() -> Dict[str, Any]:
 
 #: the TESS light curves read this session, by the folder of the star
 TESS_LC: Dict[str, Any] = {}
+#: why a star has no TESS light curve, once MAST was asked
+TESS_WHY: Dict[str, Dict[str, Any]] = {}
 #: a transit is looked for at a peak whose FIP (of the period or any
 #: alias) is below this: a transit found would make a weak signal strong
 TRANSIT_FIP = 0.1
@@ -1675,10 +1677,35 @@ def tess_light(target: str, root: str = '', fetch: bool = False):
     if not fetch:
         return None, 'not gathered'
     from koloa import tess
-    lc = transit.from_light_curves(tess.light_curves(target))
-    TESS_LC[key] = (lc, 'MAST (koloa.tess)' if lc is not None else
-                    'no light curve at MAST')
+    lcs = tess.light_curves(target)
+    lc = transit.from_light_curves(lcs)
+    where = 'MAST (koloa.tess)'
+    if lc is None:
+        # why: TESS never looked at the star, or its full frames only
+        seen = lcs.get('observed')
+        if seen == []:
+            where = 'TESS has not observed this star'
+            TESS_WHY[key] = dict(reason='unobserved')
+        elif seen:
+            where = ('no light curve at MAST: in the full frames of '
+                     f'sectors {", ".join(map(str, seen))} only')
+            TESS_WHY[key] = dict(reason='frames', sectors=seen)
+        else:
+            where = 'no light curve at MAST'
+            TESS_WHY[key] = dict(reason='none')
+    TESS_LC[key] = (lc, where)
     return TESS_LC[key]
+
+
+def tess_why(target: str, root: str = '') -> Dict[str, Any]:
+    """why a star has no TESS light curve (tess_light asked MAST): reason
+    ('unobserved': no sector holds it; 'frames': in the full frames only,
+    with sectors; 'none'), or nothing when not asked"""
+    from koloa.gather import folder_name
+    if not target.strip():
+        return {}
+    return TESS_WHY.get(os.path.abspath(os.path.join(
+        root or 'archives', folder_name(target), 'phot', 'tess.csv')), {})
 
 
 def transit_check(opts: Dict[str, Any]) -> Dict[str, Any]:
@@ -1701,7 +1728,8 @@ def transit_check(opts: Dict[str, Any]) -> Dict[str, Any]:
     lc, where = tess_light(target, opts.get('root') or '',
                            bool(opts.get('fetch')))
     if lc is None:
-        return dict(lc=where, missing=True, name=opts.get('name'))
+        return dict(tess_why(target, opts.get('root') or ''), lc=where,
+                    missing=True, name=opts.get('name'))
     ident = resolve_star(target, opts.get('root') or '')
     star = ident.get('star') or {}
     mstar = _number(opts.get('mstar')) or star.get('mass') or 0.5
@@ -1895,7 +1923,9 @@ def _batch_transit(batch: Dict[str, Any], item: Dict[str, Any],
     finally:
         item['stage'] = None
     if res.get('missing'):
-        summ['transit'] = dict(status='no TESS', why=res.get('lc'))
+        summ['transit'] = dict(status='not observed' if res.get('reason')
+                               == 'unobserved' else 'no TESS',
+                               why=res.get('lc'))
         return
     best = res.get('best') or {}
     # the depth and radius of the box fitted to the medians, when there is

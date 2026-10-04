@@ -966,7 +966,11 @@ async function showTransit(key, fetch) {
       tc: c.tc, tc_err: c.tc_err, p_err: c.p_err, name: c.name, kind: c.kind, fetch: !!fetch, mstar: +$('mstar').value || null } });
     if (tsShown !== key) return;
     if (res.missing) {
-      note.innerHTML = `${esc(t('ts_missing'))} (${esc(res.lc || '')}) <button type="button" class="small" id="tsfetch">${esc(t('ts_fetch'))}</button>`;
+      // TESS never looked at the star (nothing to fetch), has it in its
+      //   full frames only, or its light curve is not on this machine yet
+      note.innerHTML = res.reason === 'unobserved' ? `<span>${esc(t('ts_unobserved'))}</span>`
+        : res.reason === 'frames' ? `<span>${esc(t('ts_frames'))} ${esc((res.sectors || []).join(', '))}</span>`
+          : `${esc(t('ts_missing'))} (${esc(res.lc || '')}) <button type="button" class="small" id="tsfetch">${esc(t('ts_fetch'))}</button>`;
       $('tsplot').classList.remove('on');
       return;
     }
@@ -1870,7 +1874,7 @@ function transitCell(tr) {
     return `<span class="ok" title="${tip}">\u2691 ${tr.depth.toFixed(2)} ppt \u00b7 ${tr.radius.toFixed(1)} R\u2295 \u00b7 ${tr.snr.toFixed(1)}\u03c3</span>`;
   }
   if (tr.status === 'none') return `<span class="hint" title="${tip}">${tr.snr !== null && tr.snr !== undefined ? `${tr.snr.toFixed(1)}\u03c3` : '-'}</span>`;
-  return `<span class="hint" title="${tip}">${esc(tr.status === 'no TESS' ? t('ts_no_tess') : tr.status)}</span>`;
+  return `<span class="hint" title="${tip}">${esc(tr.status === 'no TESS' ? t('ts_no_tess') : tr.status === 'not observed' ? t('ts_not_observed') : tr.status)}</span>`;
 }
 // the instruments of a line (nights of each), their sources in the tip
 function instCell(r) {

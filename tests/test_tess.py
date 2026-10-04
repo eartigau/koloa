@@ -70,3 +70,41 @@ def test_duck_test_takes_light_curves(tmp_path):
     # offline by default without a report
     report = duck_test(sim['data'], 4.0, gp=False, quiet=True)
     assert 'photometry' not in [chk['name'] for chk in report.checks]
+
+
+def test_a_star_tess_has_not_observed(monkeypatch):
+    """GJ 1214: MAST has no light curve of it and no sector holds its
+    position; said as such, not as a transit not found. A star in the full
+    frames only is told apart (its sectors given)"""
+    import io
+    import json
+    from koloa import archive, gui
+    asked = []
+
+    def urlopen(url, timeout=None):
+        asked.append(url)
+        # TESScut: no sector at GJ 1214, two at the other star
+        rows = ([] if 'ra=258.82' in url else
+                [dict(sector='0022'), dict(sector='0049')])
+        return io.BytesIO(json.dumps(dict(results=rows)).encode())
+    monkeypatch.setattr(tess, '_mast', lambda service, params, timeout=60:
+                        [])
+    monkeypatch.setattr(tess.urllib.request, 'urlopen', urlopen)
+    monkeypatch.setattr(archive, 'resolve', lambda name, **kwargs: (
+        dict(tic='TIC 467929202', ra=258.8289, dec=4.9639)
+        if '1214' in name else dict(tic='TIC 1', ra=175.5, dec=26.7)))
+    assert tess.sectors_at(258.8289, 4.9639) == []
+    assert tess.sectors_at(None, 4.9639) is None
+    out = tess.light_curves('GJ 1214')
+    assert out['sectors'] == [] and out['observed'] == []
+    assert tess.light_curves('Other star')['observed'] == [22, 49]
+    # the page: nothing to look for a transit in, and why
+    monkeypatch.setattr(gui, 'TESS_LC', {})
+    monkeypatch.setattr(gui, 'TESS_WHY', {})
+    res = gui.transit_check(dict(target='GJ 1214', root='nowhere',
+                                 period=1.5804, fetch=True, name='#1'))
+    assert res['missing'] and res['reason'] == 'unobserved'
+    assert 'not observed' in res['lc']
+    res = gui.transit_check(dict(target='Other star', root='nowhere',
+                                 period=1.5804, fetch=True, name='#1'))
+    assert res['reason'] == 'frames' and res['sectors'] == [22, 49]
