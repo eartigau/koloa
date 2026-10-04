@@ -136,7 +136,8 @@ button.info { display: inline-flex; align-items: center; justify-content: center
   margin-left: 2px; border-radius: 50%; font: italic 700 0.72rem/1 Georgia, serif; color: var(--accent);
   background: rgba(98, 194, 255, 0.10); border: 1px solid rgba(98, 194, 255, 0.45); cursor: help; vertical-align: 1px; }
 button.info:hover, button.info:focus-visible { background: rgba(98, 194, 255, 0.28); color: #fff; outline: none; }
-#tip { position: absolute; z-index: 50; display: none; padding: 10px 12px; border-radius: 10px; font-size: 0.84rem; line-height: 1.45;
+#tip { position: absolute; z-index: 50; display: none; padding: 12px 16px; border-radius: 10px; font-size: 0.84rem; line-height: 1.5;
+  white-space: pre-line; max-height: 85vh; overflow-y: auto;
   color: var(--text); background: #0b1526; border: 1px solid rgba(98, 194, 255, 0.45); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5); }
 .check { display: inline-flex; align-items: center; gap: 2px; }
 h2 .hint { font-weight: 400; font-size: 0.85rem; }
