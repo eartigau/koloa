@@ -197,11 +197,12 @@ of one's own instead; reading it needs PyYAML, `pip install pyyaml`).
 The Batch FIP tab runs the quick FIP of many files: the object of each
 (its APERO name) in the table, and with every archive ticked, each star's
 archives (DACE, CARMENES DR1, VizieR) gathered and put with its file, the
-nights of each instrument in the table; a best peak with a FIP below 1 %
+nights of each instrument in the table; a best peak with a FIP below 10 %
 is looked for in TESS (the star's light curve, high-passed and folded at
 its period, about the conjunction of its fold: `koloa.transit`), and a
 plausible transit flagged. The Analysis tab shows the same search for
-each peak below 1 % and each TOI or transiting planet of the star: every
+each peak below 10 % (a transit found would make a weak signal strong)
+and each TOI or transiting planet of the star: every
 point, their medians in bins, the box found, and the depths of a 1 Earth
 and a 1 Jupiter radius planet before the star (its radius the best guess:
 the NASA Exoplanet Archive, the TESS Input Catalog, APERO, the spectral

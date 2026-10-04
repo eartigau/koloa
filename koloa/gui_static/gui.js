@@ -855,6 +855,7 @@ function drawFip(r, each) {
 //   and folded, its points and their medians in bins, the depths of a
 //   1 Earth-radius and a 1 Jupiter-radius planet
 // -----------------------------------------------------------------------------
+const TRANSIT_FIP = 0.1;       // a transit looked for below this FIP
 let tsShown = null;            // the candidate shown
 let tsOf = null;               // the quick FIP its candidates are of
 function transitCandidates() {
@@ -863,7 +864,8 @@ function transitCandidates() {
   const times = (lastRV || []).flatMap((inst) => inst.time);
   const span = times.length ? Math.max(1, Math.max(...times) - Math.min(...times)) : 1000;
   const out = [];
-  (r.peak_list || []).filter((pk) => pk.family < 0.01).forEach((pk) => {
+  // a peak below a FIP of 10 %: a transit found would make it strong
+  (r.peak_list || []).filter((pk) => pk.family < TRANSIT_FIP).forEach((pk) => {
     const f = (r.folds || []).find((x) => x.id === pk.id) || {};
     out.push({ key: `p${pk.id}`, label: `#${pk.id} \u00b7 ${pk.period.toFixed(4)} d`, period: pk.period, tc: f.tc, tc_err: f.tc_err,
       p_err: pk.period ** 2 / (4 * span), name: `#${pk.id}`, kind: 'rv' });

@@ -1563,6 +1563,9 @@ def apero_refresh() -> Dict[str, Any]:
 
 #: the TESS light curves read this session, by the folder of the star
 TESS_LC: Dict[str, Any] = {}
+#: a transit is looked for at a peak whose FIP (of the period or any
+#: alias) is below this: a transit found would make a weak signal strong
+TRANSIT_FIP = 0.1
 
 
 def tess_light(target: str, root: str = '', fetch: bool = False):
@@ -1740,11 +1743,12 @@ def _batch_archives(batch: Dict[str, Any], item: Dict[str, Any]):
 def _batch_transit(batch: Dict[str, Any], item: Dict[str, Any],
                    result: Dict[str, Any], data) -> None:
     """a transit in TESS at the best peak of a file of a batch, when its
-    FIP (of the period or any alias) is below 1 %: its light curve (the
+    FIP (of the period or any alias) is below TRANSIT_FIP (10 %): a transit
+    found would make a weak signal strong; its light curve (the
     archives of its star, else MAST), searched about the conjunction of
     its fold (koloa.transit); its line says whether one is plausible"""
     summ = item['summary']
-    if summ.get('fip') is None or summ['fip'] >= 0.01:
+    if summ.get('fip') is None or summ['fip'] >= TRANSIT_FIP:
         return
     target = (item.get('star') or {}).get('target') or ''
     if not target:
