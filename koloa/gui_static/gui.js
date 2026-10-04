@@ -897,7 +897,7 @@ async function showTransit(key, fetch) {
   note.innerHTML = `<span class="spin"></span> ${esc(t(fetch ? 'ts_fetching' : 'ts_searching'))}`;
   try {
     const res = await api('/api/transit', { options: { target: $('target').value.trim(), root: $('root').value.trim(), period: c.period,
-      tc: c.tc, tc_err: c.tc_err, p_err: c.p_err, name: c.name, fetch: !!fetch, mstar: +$('mstar').value || null } });
+      tc: c.tc, tc_err: c.tc_err, p_err: c.p_err, name: c.name, kind: c.kind, fetch: !!fetch, mstar: +$('mstar').value || null } });
     if (tsShown !== key) return;
     if (res.missing) {
       note.innerHTML = `${esc(t('ts_missing'))} (${esc(res.lc || '')}) <button type="button" class="small" id="tsfetch">${esc(t('ts_fetch'))}</button>`;
@@ -911,6 +911,9 @@ async function showTransit(key, fetch) {
 }
 function drawTransit(res, c) {
   const b = res.best;
+  // the light curve folded at the period found (the scan's best, when the
+  //   period was scanned), the box and the window about it
+  const P = res.fold_period || res.period;
   const fmt = (v, d) => (v === null || v === undefined ? '?' : (+v).toFixed(d));
   const verdict = res.plausible ? `<span class="ok">\u2691 ${esc(t('ts_plausible'))}</span>` : `<span class="hint">${esc(t('ts_not'))}</span>`;
   $('tsnote').innerHTML = `${verdict}: ${esc(res.why)}.`
@@ -924,9 +927,6 @@ function drawTransit(res, c) {
   const div = $('tsplot');
   div.classList.add('on');
   if (!window.Plotly) return;
-  // the light curve folded at the period found (the scan's best, when the
-  //   period was scanned), the box and the window about it
-  const P = res.fold_period || res.period;
   const traces = [{ x: res.hours, y: res.flux, type: 'scattergl', mode: 'markers', name: t('ts_points'),
     marker: { size: 3, color: 'rgba(170,185,210,0.35)' }, hoverinfo: 'skip' }];
   const bins = res.bins || [];

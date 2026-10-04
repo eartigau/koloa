@@ -1623,8 +1623,12 @@ def transit_check(opts: Dict[str, Any]) -> Dict[str, Any]:
     rstar = star.get('radius') or (float(mstar) ** 0.9)
     period = float(opts['period'])
     others = transits_of(target, known_periods(target))
-    res = transit.search(lc, period, _number(opts.get('tc')),
-                         _number(opts.get('tc_err')),
+    # a conjunction from the velocities (a sinusoid): its error with the
+    #   offset an eccentric orbit gives it
+    tc_err = _number(opts.get('tc_err'))
+    if opts.get('kind') == 'rv' and _number(opts.get('tc')) is not None:
+        tc_err = transit.conjunction_error(tc_err, period)
+    res = transit.search(lc, period, _number(opts.get('tc')), tc_err,
                          _number(opts.get('p_err')), float(mstar),
                          float(rstar), others=others)
     res.update(lc=where, name=opts.get('name'), star=dict(
@@ -1755,7 +1759,7 @@ def _batch_transit(batch: Dict[str, Any], item: Dict[str, Any],
             target=target, root=batch['root'], period=peak['period'],
             tc=shown.get('tc'), tc_err=shown.get('tc_err'),
             p_err=peak['period'] ** 2 / (4 * max(data.baseline, 1.0)),
-            fetch=True, name=f'#{peak["id"]}'))
+            fetch=True, name=f'#{peak["id"]}', kind='rv'))
     except Exception as err:  # a transit not searched is no failure
         summ['transit'] = dict(status='error',
                                why=f'{type(err).__name__}: {err}')

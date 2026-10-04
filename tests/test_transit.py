@@ -137,3 +137,12 @@ def test_the_chance_of_the_null():
     null = [3.1, 4.0, 3.5, 2.8, 4.4, 3.9, 3.0, 3.6, 4.1, 3.3]
     assert transit.null_chance(12.0, null) < 1e-6
     assert transit.null_chance(4.0, null) > 0.1
+
+
+def test_a_conjunction_from_the_velocities():
+    """a sinusoid's conjunction: its own error, and the offset an eccentric
+    orbit gives it (P e / pi), in quadrature"""
+    assert transit.conjunction_error(0.0, 2.644) == pytest.approx(
+        2.644 * 0.1 / np.pi)
+    assert transit.conjunction_error(0.3, 2.644) == pytest.approx(
+        np.hypot(0.3, 2.644 * 0.1 / np.pi))

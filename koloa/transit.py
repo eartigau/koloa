@@ -159,6 +159,23 @@ def radius_of(depth: float, rstar: float) -> float:
     return math.sqrt(max(depth, 0.0) / 1e3) * rstar * R_SUN / R_EARTH
 
 
+#: the eccentricity a conjunction from a sinusoid is allowed for: the
+#: sinusoid's falling zero sits up to P e / pi from the transit of an
+#: eccentric orbit
+ECC_CONJUNCTION = 0.1
+
+
+def conjunction_error(tc_err: Optional[float], period: float,
+                      ecc: float = ECC_CONJUNCTION) -> float:
+    """
+    The error of a conjunction put by a sinusoid fitted to the velocities:
+    its own, and the offset an eccentric orbit gives it (the sinusoid's
+    falling zero up to P e / pi from the transit, to first order in e),
+    in quadrature [days]
+    """
+    return math.hypot(tc_err or 0.0, period * ecc / math.pi)
+
+
 def duration(period: float, mstar: float, rstar: float) -> float:
     """
     The duration [hours] of a central transit: P / pi * asin(R* / a), a
