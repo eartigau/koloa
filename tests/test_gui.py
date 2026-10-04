@@ -590,6 +590,37 @@ def test_a_fold_asked_its_keplerian_and_the_residuals(tmp_path, monkeypatch):
     assert abs(side['period'] / 13.7 - 1) < 0.003
     again = gui.fold_request(qid, opts, period=13.47, snap=True)['fold']
     assert again['id'] in (side['id'], 2)
+    # a signal ticked on the page: the other folds are fitted on the series
+    #   without it (the 13.7 d one without the 5.3 d one: far less scatter,
+    #   its K), again only when what they are without changes
+    first = next(item for item in state['result']['folds']
+                 if abs(item['period'] / 5.3 - 1) < 0.01)
+    second = gui.fold_request(qid, opts, period=13.7)['fold']
+    raw = second['rms']
+    clean = gui.fold_request(qid, opts, fid=second['id'],
+                             minus=[first['model']], minus_tag='1s')['fold']
+    assert clean['id'] == second['id'] and clean['minus_tag'] == '1s'
+    assert clean['rms'] < 0.6 * raw
+    assert abs(clean['K'] - 4.0) < 4 * clean['K_err']
+    kept = clean['rms']
+    assert gui.fold_request(qid, opts, fid=second['id'],
+                            minus=[first['model']],
+                            minus_tag='1s')['fold']['rms'] == kept
+    back = gui.fold_request(qid, opts, fid=second['id'], minus=[],
+                            minus_tag='')['fold']
+    assert back['minus_tag'] == '' and abs(back['rms'] - raw) < 1e-9
+    # the FIP of what is left, beside the FIP of the series: no FIP of
+    #   each instrument, and no other quick FIP stopped for it
+    other = gui.quick_fip(opts)
+    stage = gui.quick_fip(dict(opts, subtract=[dict(first['model'],
+                                                    label='#1')],
+                               stage=True))
+    assert gui.QUICKS[stage['id']]['stage']
+    assert not gui.QUICKS[other['id']].get('cancel')
+    left = done(stage)
+    assert left['each'] == []
+    assert abs(left['result']['peaks'][0]['period'] / 13.7 - 1) < 0.01
+    done(other)
     # a quick FIP recalled has no series kept: the page's is read again
     gui._QUICK_DATA.pop(qid)
     assert gui.fold_request(qid, opts, period=13.7)['fold']['period'] == 13.7

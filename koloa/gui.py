@@ -1389,7 +1389,7 @@ def _run_quick(qid: str, data, target: str, trend: int = 1,
                                refine=True,
                                others=[one['period'] for one in named
                                        if one is not pk]),
-                          id=pk['id'])
+                          id=pk['id'], refined=True)
                      for pk in named]
             job['result'] = dict(
                 _fip_curves(res), known=known, window=WINDOW, passes=passes,
@@ -1486,14 +1486,40 @@ def _snap(res, period: float, baseline: float) -> float:
     return float(1.0 / freq[idx[np.argmin(np.asarray(res.fip)[idx])]])
 
 
+def _nights_minus(nights, minus: Optional[List[Dict[str, Any]]]):
+    """the nightly means without some signals (the solutions of the other
+    folds ticked on the page: their sinusoid or Keplerian orbit, not their
+    offsets and trend); the series itself is left as it is"""
+    if not minus:
+        return nights
+    import copy
+    out = copy.copy(nights)
+    out.rv = np.array(nights.rv, float)
+    for mod in minus:
+        out.rv = out.rv - signal_at(mod, out.time)
+    return out
+
+
 def fold_request(qid: str, opts: Dict[str, Any], period: Optional[float] = None,
                  fid: Optional[int] = None, kind: str = 'sine',
                  snap: bool = False, known: str = '',
-                 transit: str = '') -> Dict[str, Any]:
+                 transit: str = '',
+                 minus: Optional[List[Dict[str, Any]]] = None,
+                 minus_tag: Optional[str] = None,
+                 snapq: str = '') -> Dict[str, Any]:
     """
     A fold the page asks for: at a period of its own (clicked on the FIP,
     then moved to the dip nearest; or typed, as it is), or the Keplerian
     orbit of a fold already there; kept with the quick FIP (its PDF has it)
+
+    :param minus: list of dict or None, the solutions of the other folds
+                  ticked on the page (their models): the fold is fitted on
+                  the series without their signals, and shows it so
+    :param minus_tag: str or None, what the page calls that set: a fold
+                      already there is fitted again when its own differs
+    :param snapq: str, the quick FIP whose dips a click is moved to (the
+                  FIP of the residuals, when signals are ticked); the one
+                  folded when empty
 
     :return: dict, fold (with its Keplerian, when asked)
     """
@@ -1501,15 +1527,44 @@ def fold_request(qid: str, opts: Dict[str, Any], period: Optional[float] = None,
     if not job or not job.get('result'):
         raise ValueError('no quick FIP to fold')
     series = _quick_series(qid, opts)
+    if minus_tag is not None:
+        # the same series, without the other ticked signals
+        series = dict(series, nights=_nights_minus(series['nights'], minus))
     nights = series['nights']
     folds = job['result'].setdefault('folds', [])
+    tag = minus_tag or ''
+
+    def again(item):
+        """a fold already there fitted again on the series as it is now
+        (without the signals ticked): its sinusoid, at its period refined
+        when it was, or on its transit ephemeris"""
+        if minus_tag is None or item.get('minus_tag', '') == tag:
+            return
+        if item.get('transit'):
+            eph = next((one for one in job['result'].get('transits') or []
+                        if one['name'] == item['transit']['name']), None)
+            new = (fold_transit(nights, eph, series['valid'],
+                                series['trend']) if eph else None)
+        else:
+            new = fold(nights, item.get('asked') or item['period'],
+                       series['valid'], series['trend'],
+                       refine=bool(item.get('refined')),
+                       others=[pk['period'] for pk in
+                               job['result'].get('peak_list') or []
+                               if pk.get('named')])
+        if new is None:
+            return
+        keep = {key: item[key] for key in ('id', 'forced', 'known',
+                                           'refined') if key in item}
+        item.clear()
+        item.update(new, **keep)
+        item['minus_tag'] = tag
     if transit:
         # a transit ephemeris: phase 0 at its transit, its period
         eph = next((item for item in job['result'].get('transits') or []
                     if item['name'] == transit), None)
         if eph is None:
             raise ValueError(f'no transit ephemeris {transit}')
-        series = _quick_series(qid, opts)
         item = next((item for item in folds
                      if (item.get('transit') or {}).get('name') == transit),
                     None)
@@ -1517,8 +1572,9 @@ def fold_request(qid: str, opts: Dict[str, Any], period: Optional[float] = None,
             item = dict(fold_transit(series['nights'], eph, series['valid'],
                                      series['trend']),
                         id=max([item['id'] for item in folds] + [0]) + 1,
-                        forced=True)
+                        forced=True, minus_tag=tag)
             folds.append(item)
+        again(item)
         if kind == 'kepler' and 'kepler' not in item:
             item['kepler'] = fold_kepler(series['nights'], eph['P'],
                                          series['trend'],
@@ -1537,12 +1593,23 @@ def fold_request(qid: str, opts: Dict[str, Any], period: Optional[float] = None,
         item = next((item for item in folds if item['id'] == int(fid)), None)
         if item is None:
             raise ValueError(f'no fold #{fid}')
+        if item.get('transit') and not transit:
+            # a fold on a transit ephemeris asked by its number
+            return fold_request(qid, opts, kind=kind,
+                                transit=item['transit']['name'], minus=minus,
+                                minus_tag=minus_tag)
+        again(item)
     else:
         period = float(period)
         if not 0.05 < period < 1e6:
             raise ValueError(f'not a period to fold at: {period}')
-        if snap and series['res'] is not None:
-            period = _snap(series['res'], period, nights.baseline)
+        # a click is moved to the dip nearest: of the FIP of the residuals
+        #   when the page shows one, else of the FIP folded
+        dips = (_QUICK_DATA.get(snapq) or {}).get('res') if snapq else None
+        if dips is None:
+            dips = series['res']
+        if snap and dips is not None:
+            period = _snap(dips, period, nights.baseline)
         # a period already folded (as asked, or once refined): that fold
         item = next((item for item in folds
                      if min(abs(item['period'] / period - 1),
@@ -1555,8 +1622,10 @@ def fold_request(qid: str, opts: Dict[str, Any], period: Optional[float] = None,
                                      job['result'].get('peak_list') or []
                                      if pk.get('named')]),
                         id=max([item['id'] for item in folds] + [0]) + 1,
-                        forced=True)
+                        forced=True, refined=bool(snap), minus_tag=tag)
             folds.append(item)
+        else:
+            again(item)
     if planet is not None:
         item['known'] = planet
     if kind == 'kepler' and 'kepler' not in item:
@@ -1573,13 +1642,18 @@ def quick_fip(opts: Dict[str, Any]) -> Dict[str, Any]:
     if data is None:
         raise ValueError('no velocities to look at')
     data = subtracted(data, opts)
+    # a stage: the FIP of what is left once the signals ticked on the page
+    #   are taken out, beside the FIP of the series and the other stages
+    #   (none is stopped, and it has no FIP of each instrument)
+    stage = bool(opts.get('stage'))
     # the quick FIPs before it are out of date: stopped, not waited for
     for other in QUICKS.values():
-        if other.get('status') == 'running' and not other.get('batch'):
+        if other.get('status') == 'running' and not other.get('batch') \
+                and not stage:
             other['cancel'] = True
     qid = uuid.uuid4().hex[:8]
     QUICKS[qid] = dict(id=qid, status='running', step='waiting',
-                       step_detail='', each=[],
+                       step_detail='', each=[], stage=stage,
                        subtracted=[dict(kind=mod.get('kind', 'sine'),
                                         period=mod.get('period'),
                                         label=mod.get('label', ''))
@@ -1590,7 +1664,7 @@ def quick_fip(opts: Dict[str, Any]) -> Dict[str, Any]:
     threading.Thread(target=_run_quick, args=(qid, data,
                                               opts.get('target', ''),
                                               trend_order(opts)),
-                     daemon=True).start()
+                     kwargs=dict(each=not stage), daemon=True).start()
     return quick_state(qid)
 
 
@@ -3508,7 +3582,9 @@ class Handler(BaseHTTPRequestHandler):
                     body.get('quick', ''), body.get('options', {}),
                     body.get('period'), body.get('id'),
                     body.get('kind') or 'sine', bool(body.get('snap')),
-                    body.get('known') or '', body.get('transit') or ''))
+                    body.get('known') or '', body.get('transit') or '',
+                    body.get('minus'), body.get('minus_tag'),
+                    body.get('snapq') or ''))
             if path == '/api/remember':
                 return self._json(remember(body.get('page', {}),
                                            body.get('quick', ''),

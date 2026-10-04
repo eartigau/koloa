@@ -221,6 +221,12 @@ main[hidden] { display: none !important; }
 .foldat .check { gap: 6px; flex-wrap: wrap; }
 [data-fmodel].on { background: rgba(98, 194, 255, 0.35); border-color: var(--accent); color: #fff; position: relative; }
 [data-fold].forced { border-style: dashed; }
+/* a fold with its tick: ticked, the colour of its subtraction */
+.foldpick { display: inline-flex; align-items: center; gap: 3px; }
+.foldpick input { margin: 0; accent-color: var(--tick, #62c2ff); cursor: pointer; }
+.foldpick.ticked [data-fold] { border-color: var(--tick); box-shadow: inset 0 -2px 0 var(--tick); }
+#stagestatus p.stageline { margin: 2px 0; }
+.stagechip { border-left: 3px solid var(--tick); padding-left: 6px; color: var(--tick); font-weight: 600; }
 #fipstatus p.resid { color: #ffc66d; font-size: 0.88rem; }
 #fipplot { cursor: crosshair; }
 [data-scol].on { background: rgba(98, 194, 255, 0.35); border-color: var(--accent); color: #fff; position: relative; }

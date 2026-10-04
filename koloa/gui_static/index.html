@@ -108,6 +108,7 @@
     <section class="card bleed" id="fipcard">
       <h2><span data-i18n="quick_title">Quick FIP</span> <button type="button" class="info" data-help="quickfip" aria-label="?">i</button></h2>
       <div id="fipstatus"></div>
+      <div id="stagestatus"></div>
       <div class="row fipview"><span class="seg"><button type="button" class="small on" data-fipview="joint" data-i18n="fipview_joint">the period alone, and with its aliases</button><button type="button" class="small" data-fipview="each" id="fipv-each" data-i18n="fipview_each">each instrument too</button></span>
         <button type="button" class="info" data-help="fip_view" aria-label="?">i</button></div>
       <div id="fipplot" class="plot"></div>
@@ -135,7 +136,7 @@
         <span class="check"><span class="seg"><button type="button" class="small on" data-fmodel="sine" data-i18n="fmodel_sine">sinusoid</button><button type="button" class="small" data-fmodel="kepler" data-i18n="fmodel_kepler">Keplerian (e free)</button></span>
           <button type="button" class="info" data-help="fold_model" aria-label="?">i</button></span>
         <span class="check"><label><input type="checkbox" id="foldoverlay"> <span data-i18n="overlay">the solution on the time series</span></label><button type="button" class="info" data-help="overlay" aria-label="?">i</button></span>
-        <span class="check"><button type="button" id="subtract" class="small" data-i18n="subtract">Subtract this solution, FIP of the residuals</button><button type="button" class="info" data-help="subtract" aria-label="?">i</button></span>
+        <span class="check"><span class="hint" data-i18n="tick_hint">tick a signal to take it out</span><button type="button" class="info" data-help="subtract" aria-label="?">i</button></span>
       </div>
       <p class="hint" id="foldnote"></p>
       <div id="foldplot" class="plot"></div>

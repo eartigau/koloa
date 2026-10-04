@@ -745,6 +745,7 @@ function shownOptions() {
 // several instruments: the quick FIP waits to be asked for
 function quickPrompt() {
   if (quick && quick.status === 'running') api('/api/quickstop', { id: quick.id }).catch(() => {});
+  clearTicks();
   quick = null;
   pview = null;
   foldShown = null; foldShownObj = null;
@@ -761,6 +762,7 @@ function quickPrompt() {
 }
 
 async function startQuick() {
+  clearTicks();
   $('fipcard').classList.add('on');
   $('fipstale').textContent = '';
   $('remember').disabled = true;
@@ -915,7 +917,9 @@ function drawFip(r, each) {
       if (ev['xaxis.autorange']) pview.p = pview.dom.slice();
       syncPeriods();
     });
+    drawStages();
   });
+  fipNotes = notes;
   const per = r.period;
   pview = { of: quick.id, dom: [per[0], per[per.length - 1]], p: keepView || [per[0], per[per.length - 1]] };
   syncPeriods();
@@ -1195,8 +1199,12 @@ function renderFoldButtons() {
   const known = (quick && quick.result && quick.result.known) || [];
   const transits = (quick && quick.result && quick.result.transits) || [];
   const label = foldLabel;
-  $('foldbuttons').innerHTML = folds.map((f) => `<button type="button" class="small${f.forced ? ' forced' : ''}${f.known ? ' known' : ''}${f.transit ? ' transit' : ''}" data-fold="${f.id}"`
-    + `${f.forced ? ` title="${esc(t('asked'))}"` : ''}>${label(f)} \u00b7 ${f.period.toFixed(4)} d</button>`).join('')
+  // a tick takes the signal out: the colour of its subtraction
+  const order = (f) => ticked.findIndex((tk) => tk.id === f.id);
+  $('foldbuttons').innerHTML = folds.map((f) => `<span class="foldpick${order(f) >= 0 ? ' ticked' : ''}"${order(f) >= 0 ? ` style="--tick:${stageColour(order(f))}"` : ''}>`
+    + `<input type="checkbox" data-tick="${f.id}"${order(f) >= 0 ? ' checked' : ''} title="${esc(t('tick_tip'))}">`
+    + `<button type="button" class="small${f.forced ? ' forced' : ''}${f.known ? ' known' : ''}${f.transit ? ' transit' : ''}" data-fold="${f.id}"`
+    + `${f.forced ? ` title="${esc(t('asked'))}"` : ''}>${label(f)} \u00b7 ${f.period.toFixed(4)} d</button></span>`).join('')
     // the known planets, at their published period whatever the FIP says
     + known.filter((pl) => !folds.some((f) => f.known && f.known.name === pl.name))
       .map((pl) => `<button type="button" class="small known" data-known="${esc(pl.name)}" title="${esc(t('known_fold'))}">`
@@ -1214,8 +1222,10 @@ async function forceFold(period, snap, known, transit) {
   if (!quick || !quick.result || !(period > 0 || known || transit)) return;
   $('foldnote').innerHTML = `<span class="spin"></span> ${esc(t('folding'))}`;
   try {
+    const last = lastStage();
     const res = await api('/api/fold', { quick: quick.id, period, snap: !!snap, kind: foldModel, options: shownOptions(),
-      known: known || '', transit: transit || '' });
+      known: known || '', transit: transit || '', minus: ticked.map(tickModel).filter(Boolean), minus_tag: tickKey(ticked),
+      snapq: last && last.job.id ? last.job.id : '' });
     const folds = quick.result.folds = quick.result.folds || [];
     const old = folds.findIndex((x) => x.id === res.fold.id);
     if (old >= 0) folds[old] = res.fold; else folds.push(res.fold);
@@ -1235,7 +1245,7 @@ async function keplerOf(base) {
   $('foldnote').innerHTML = `<span class="spin"></span> ${esc(t('fitting_kepler'))}`;
   try {
     const res = await api('/api/fold', { quick: quick.id, id: base.transit ? undefined : base.id, kind: 'kepler', options: shownOptions(),
-      transit: base.transit ? base.transit.name : '' });
+      transit: base.transit ? base.transit.name : '', ...minusOf(base.id) });
     base.kepler = res.fold.kepler;
     if (foldShown === base.id || foldShown === null) showFold(base.id);
   } catch (err) {
@@ -1245,15 +1255,6 @@ async function keplerOf(base) {
   }
 }
 
-// the signal of the fold shown taken out of the series, and the FIP again
-function subtractFold() {
-  const f = currentFold();
-  if (!f || !f.model) return;
-  const kind = f.kind === 'kepler' ? `${t('fmodel_kepler_short')}, e ${f.e.toFixed(2)}` : t('fmodel_sine');
-  subtractList = subtractList.concat([{ ...f.model, period: f.period,
-    label: `#${f.id} ${f.period.toFixed(4)} d (${kind}, K ${f.K.toFixed(2)} m/s)` }]);
-  startQuick();
-}
 
 // each instrument's nights and best peaks, under the FIP
 function drawEach(each) {
@@ -1275,7 +1276,159 @@ const dateText = (r) => `${rjdDate(r).toISOString().slice(0, 16).replace('T', ' 
 
 let foldModel = 'sine';  // the fold's sinusoid, or its Keplerian orbit
 try { foldModel = localStorage.getItem('koloa-foldmodel') || 'sine'; } catch (err) { /* no storage */ }
-let subtractList = [];   // the solutions taken out of the series
+let subtractList = [];   // the solutions taken out of the series (a result recalled from before the ticks)
+// the signals ticked in the list of folds: taken out one after the other in
+//   the order ticked, their sum drawn on the series, and the FIP of what is
+//   left after each drawn over the FIP of the series, each in its colour
+let ticked = [];             // [{ id, kind }], kind: 'sine' or 'kepler'
+const stages = new Map();    // the FIPs of the residuals: key -> { key, ids, label, job, error }
+const STAGE_COLOURS = ['#f5a524', '#62c2ff', '#7ee787', '#ff7b72', '#d2a8ff', '#ffd866'];
+const foldById = (id) => ((quick && quick.result && quick.result.folds) || []).find((x) => x.id === +id);
+// a fold by its name, as text (a legend, a note)
+const plainLabel = (f) => (!f ? '?' : f.transit ? `◐ ${f.transit.name}` : f.known ? `★ ${f.known.name}` : `#${f.id}`);
+// the fold of a ticked signal as ticked: its Keplerian orbit, or its sinusoid
+const tickFold = (tk) => { const f = foldById(tk.id); return !f ? null : tk.kind === 'kepler' && f.kepler ? { ...f.kepler, id: f.id } : f; };
+// its solution, as the server takes it out (its signal, not its offsets and trend)
+function tickModel(tk) {
+  const f = tickFold(tk);
+  if (!f || !f.model) return null;
+  const kind = f.kind === 'kepler' ? `${t('fmodel_kepler_short')}, e ${f.e.toFixed(2)}` : t('fmodel_sine');
+  return { ...f.model, period: f.model.period || f.period, label: `${plainLabel(foldById(tk.id))} ${f.period.toFixed(4)} d (${kind}, K ${f.K.toFixed(2)} m/s)` };
+}
+const tickKey = (list) => list.map((tk) => `${tk.id}${tk.kind === 'kepler' ? 'k' : 's'}`).join('+');
+// what a fold is fitted without: the ticked signals other than itself
+const othersOf = (id) => ticked.filter((tk) => tk.id !== +id);
+const minusOf = (id) => { const o = othersOf(id); return { minus: o.map(tickModel).filter(Boolean), minus_tag: tickKey(o) }; };
+// the consecutive subtractions: the first ticked, the first two, ...
+const stageLists = () => ticked.map((_, k) => ticked.slice(0, k + 1));
+const stageColour = (k) => STAGE_COLOURS[k % STAGE_COLOURS.length];
+const lastStage = () => { const done = stageLists().map((l) => stages.get(tickKey(l))).filter((st) => st && st.job && st.job.result); return done.length ? done[done.length - 1] : null; };
+
+// a fold fitted again on the series without the other ticked signals (the
+//   server keeps what it was fitted without: nothing is done when the same)
+async function refitFold(id, kind) {
+  const base = foldById(id);
+  if (!base || !quick) return;
+  const want = tickKey(othersOf(id));
+  if ((base.minus_tag || '') === want && (kind !== 'kepler' || base.kepler)) return;
+  try {
+    const res = await api('/api/fold', { quick: quick.id, id: +id, kind: kind === 'kepler' ? 'kepler' : 'sine', options: shownOptions(), ...minusOf(id) });
+    const folds = quick.result.folds;
+    const at = folds.findIndex((x) => x.id === +id);
+    res.fold.minus_tag = want;
+    if (at >= 0) folds[at] = res.fold;
+  } catch (err) {
+    base.minus_tag = want;   // not asked again and again
+    $('foldnote').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
+  }
+}
+// each ticked signal fitted without the others (one pass, in the order ticked)
+async function refitTicked() {
+  for (const tk of ticked.slice()) await refitFold(tk.id, tk.kind);
+}
+
+// a signal ticked or unticked: the folds fitted again without the others,
+//   the FIP of what is left after each, the sum on the series
+let tickBusy = false;
+async function toggleTick(id) {
+  id = +id;
+  if (tickBusy || !foldById(id)) { renderFoldButtons(); return; }
+  tickBusy = true;
+  const at = ticked.findIndex((tk) => tk.id === id);
+  if (at >= 0) ticked.splice(at, 1);
+  else ticked.push({ id, kind: foldModel === 'kepler' ? 'kepler' : 'sine' });
+  renderFoldButtons();
+  $('stagestatus').innerHTML = `<p class="hint"><span class="spin"></span> ${esc(t('tick_fitting'))}</p>`;
+  try {
+    await refitTicked();
+    updateStages();
+  } finally {
+    tickBusy = false;
+  }
+  if (foldShown !== null && foldById(foldShown)) showFold(foldShown);
+  else if ($('foldoverlay').checked) redrawSeries();
+}
+
+// the FIP of what is left after each consecutive subtraction: asked once
+//   (kept by what was ticked), followed until done
+function updateStages() {
+  if (!quick || !quick.result) return;
+  for (const list of stageLists()) {
+    const key = tickKey(list);
+    if (stages.has(key)) continue;
+    const models = list.map(tickModel);
+    if (models.some((m) => !m)) continue;
+    const st = { key, ids: list.map((tk) => tk.id), label: list.map((tk) => plainLabel(foldById(tk.id))).join(' + '), job: null, error: null };
+    stages.set(key, st);
+    api('/api/quickfip', { options: { ...shownOptions(), subtract: models, stage: true } })
+      .then((job) => { st.job = job; pollStage(st); })
+      .catch((err) => { st.error = err.message; drawStages(); });
+  }
+  drawStages();
+}
+async function pollStage(st) {
+  if (stages.get(st.key) !== st || !st.job) return;
+  let state;
+  try { state = await api(`/api/quickfip?id=${st.job.id}`); } catch (err) { return; }
+  if (stages.get(st.key) !== st) return;
+  Object.assign(st.job, state);
+  drawStages();
+  if (state.status === 'running') setTimeout(() => pollStage(st), 2000);
+}
+// the ticks and the FIPs of the residuals forgotten (a new FIP of the
+//   series, another star): those still running are stopped
+function clearTicks() {
+  for (const st of stages.values()) {
+    if (st.job && st.job.status === 'running' && st.job.id) api('/api/quickstop', { id: st.job.id }).catch(() => {});
+  }
+  stages.clear();
+  ticked = [];
+  if ($('stagestatus')) $('stagestatus').innerHTML = '';
+}
+
+// the FIPs of the residuals over the FIP of the series, each in the colour
+//   of its subtraction, and where each stands (a line under the summary)
+let fipNotes = [];   // the annotations of the FIP of the series
+function drawStages() {
+  const div = $('fipplot');
+  const lists = stageLists();
+  const lines = [];
+  const traces = [];
+  let notes = [];
+  lists.forEach((list, k) => {
+    const st = stages.get(tickKey(list));
+    const colour = stageColour(k);
+    const name = `${t('without')} ${st ? st.label : ''}`;
+    const chip = `<span class="stagechip" style="--tick:${colour}">${esc(name)}</span>`;
+    if (!st) return;
+    const job = st.job || {};
+    if (st.error || job.status === 'failed') { lines.push(`${chip} <span class="bad">${esc(st.error || job.error || 'failed')}</span>`); return; }
+    const res = job.result;
+    if (job.status === 'running' || !st.job) {
+      const p = job.progress;
+      const frac = p ? Math.min(1, p.done / Math.max(p.total, 1)) : 0;
+      lines.push(`${chip} <span class="spin"></span> ${esc(t('stage_running'))}${p ? ` ${Math.round(100 * frac)} %` : ''}${job.elapsed ? ` · ${clock(job.elapsed)}` : ''}`);
+    } else if (res) {
+      const best = (res.peaks || [])[0];
+      lines.push(`${chip} ${best ? `${esc(t('strongest'))}: <b>${best.period.toFixed(4)} d</b>, FIP ${fipExp(best.family)}` : esc(t('none_found'))}`);
+    } else if (job.status === 'stopped') lines.push(`${chip} ${esc(t('fip_stopped'))}`);
+    if (res && res.period) {
+      traces.push({ x: res.period, y: res.family, name, type: 'scatter', mode: 'lines', uid: `stage-${k}`, line: { color: colour, width: 1.5 },
+        legendrank: 3 + k, hovertemplate: `${esc(name)}<br>%{x:.4f} d<br>-log10 FIP %{y:.2f}<extra></extra>` });
+      // the peaks of what is left after the last subtraction, at their periods
+      if (k === lists.length - 1) {
+        notes = (res.peak_list || []).filter((p) => p.named).map((pk) => ({ x: Math.log10(pk.period), y: -Math.log10(Math.max(pk.family, 1e-15)),
+          xref: 'x', yref: 'y', text: `${pk.period.toFixed(pk.period < 100 ? 2 : 0)} d`, showarrow: true, arrowhead: 0, ax: 0, ay: -16,
+          font: { size: 10, color: colour }, arrowcolor: colour, hovertext: `${pk.period.toFixed(4)} d, FIP ${fipExp(pk.family)}` }));
+      }
+    }
+  });
+  if ($('stagestatus')) $('stagestatus').innerHTML = lines.map((l) => `<p class="hint stageline">${l}</p>`).join('');
+  if (!window.Plotly || !div.data) return;
+  const old = div.data.map((d, k) => (String(d.uid || '').startsWith('stage-') ? k : -1)).filter((k) => k >= 0);
+  const done = () => { if (traces.length) Plotly.addTraces(div, traces); Plotly.relayout(div, { annotations: fipNotes.concat(notes) }); };
+  if (old.length) Plotly.deleteTraces(div, old).then(done); else done();
+}
 let foldShownObj = null; // the fold shown, as shown (sinusoid or Keplerian)
 
 function currentFold() {
@@ -1308,6 +1461,13 @@ function showFold(id) {
   foldShown = base.id;
   document.querySelectorAll('[data-fold]').forEach((b) => b.classList.toggle('on', +b.dataset.fold === base.id));
   document.querySelectorAll('[data-fmodel]').forEach((b) => b.classList.toggle('on', b.dataset.fmodel === foldModel));
+  // fitted without the other ticked signals: asked of the server when
+  //   what it was fitted without is not that
+  if ((base.minus_tag || '') !== tickKey(othersOf(base.id))) {
+    $('foldnote').innerHTML = `<span class="spin"></span> ${esc(t('folding'))}`;
+    refitFold(base.id, foldModel).then(() => { if (foldShown === base.id) showFold(base.id); });
+    return;
+  }
   if (foldModel === 'kepler' && !base.kepler) { keplerOf(base); return; }
   const f = foldModel === 'kepler' ? { ...base.kepler, id: base.id, forced: base.forced, transit: base.transit } : base;
   foldShownObj = f;
@@ -1323,6 +1483,7 @@ function showFold(id) {
     // m sin i: of the sinusoid (a circular orbit), the Keplerian or the
     //   transit's orbit, with the mass of the star of the card; the
     //   equilibrium temperature
+    + (othersOf(base.id).length ? `<span class="massnote hint">${esc(t('fold_minus'))} ${esc(othersOf(base.id).map((tk) => plainLabel(foldById(tk.id))).join(', '))}</span>` : '')
     + bicText(f) + massText(f) + teqText(f.period, starNow);
   // the colour of the points: their instrument, their date, or their BERV
   //   (when the series has it), on one scale for all
@@ -1490,6 +1651,24 @@ function fitAt(tm, tt, sig = true) {
 //   covariance of its fit) for the 1-sigma envelope
 function seriesCurve() {
   const f = $('foldoverlay').checked ? currentFold() : null;
+  // the signals ticked: their sum, on the trend of the fold shown when it
+  //   is one of them (else of the first ticked)
+  const picks = $('foldoverlay').checked ? ticked.map(tickFold).filter((x) => x && x.model) : [];
+  if (picks.length) {
+    const ref = picks.find((x) => f && x.id === f.id) || picks[0];
+    const per = (x, m) => m.period || x.model.period || x.period;
+    const sigOf = (x, m, tt) => curveAt(m, per(x, m), tt, true) - curveAt(m, per(x, m), tt, false);
+    const nd = Math.min(...picks.map((x) => (x.draws || []).length));
+    const draws = [];
+    for (let j = 0; j < nd; j++) {
+      draws.push((tt, sig = true) => curveAt(ref.draws[j], per(ref, ref.draws[j]), tt, false)
+        + (sig ? picks.reduce((acc, x) => acc + sigOf(x, x.draws[j], tt), 0) : 0));
+    }
+    return { name: picks.map((x) => `${plainLabel(foldById(x.id))} \u00b7 ${x.period.toFixed(4)} d`).join(' + '),
+      shortest: Math.min(...picks.map((x) => x.period)),
+      at: (tt, sig = true) => curveAt(ref.model, per(ref, ref.model), tt, false) + (sig ? picks.reduce((acc, x) => acc + sigOf(x, x.model, tt), 0) : 0),
+      draws, pub: null };
+  }
   if (f && f.model) {
     const m = f.model, p = m.period || f.period;
     const pub = f.published && f.published.model;
@@ -1525,6 +1704,33 @@ function showModel() {
   if (xr) { lo = Math.max(lo, xr[0]); hi = Math.min(hi, xr[1]); }
   if (!(hi > lo)) return;
   const sig = (hi - lo) / curve.shortest <= MODEL_CYCLES;
+  if (!sig && Number.isFinite(curve.shortest)) {
+    // too many cycles to draw each: the range of the solution in each
+    //   step of time (what its ups and downs would fill), its trend dashed
+    const nb = 720, ns = 32, bx = [], blo = [], bhi = [], bmid = [];
+    const dt = (hi - lo) / nb;
+    // each step looked at over one cycle of the shortest period at least:
+    //   the range the solution fills there, not a part of a cycle
+    const wide = Math.max(dt, curve.shortest);
+    for (let k = 0; k < nb; k++) {
+      const mid = lo + dt * (k + 0.5);
+      let mn = Infinity, mx = -Infinity;
+      for (let j = 0; j < ns; j++) {
+        // times spread without a regular spacing (which a period could match)
+        const v = curve.at(mid + wide * (((0.5 + j * 0.6180339887) % 1) - 0.5), true);
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+      }
+      bx.push(mid); blo.push(mn); bhi.push(mx); bmid.push(curve.at(mid, false));
+    }
+    Plotly.addTraces(div, [
+      { x: bx, y: blo, type: 'scatter', mode: 'lines', uid: 'model-lo', line: { width: 0 }, showlegend: false, hoverinfo: 'skip' },
+      { x: bx, y: bhi, type: 'scatter', mode: 'lines', uid: 'model-hi', line: { width: 0 }, fill: 'tonexty', fillcolor: 'rgba(232,238,248,0.20)',
+        name: `${curve.name} (${t('band_note')})`, hoverinfo: 'skip' },
+      { x: bx, y: bmid, type: 'scatter', mode: 'lines', uid: 'model-best', showlegend: false, line: { color: '#e8eef8', width: 1.2, dash: 'dash' },
+        opacity: 0.85, hoverinfo: 'skip' }]);
+    return;
+  }
   const n = sig ? Math.round(Math.min(2500, Math.max(300, 30 * (hi - lo) / curve.shortest))) : 300;
   const draws = curve.draws.slice(0, 120);
   const x = [], y = [], ylo = [], yhi = [], yp = [];
@@ -1666,6 +1872,7 @@ function resetPage() {
   foldShown = null;
   foldShownObj = null;
   subtractList = [];
+  clearTicks();
   delete $('mstar').dataset.typed;
   $('mstarsrc').textContent = '';
   showDiskPoints();
@@ -1702,6 +1909,10 @@ function showTab(name) {
 function pageState() {
   return { target: $('target').value.trim(), files: filesNow(), root: $('root').value.trim(), outdir: $('outdir').value.trim(),
     detailed: readOptions('detailed'), clip: $('clip').checked, subtract: subtractList,
+    // the signals ticked, and the FIP of what is left after each (its curve and its peaks)
+    ticks: ticked.slice(), stages: stageLists().map((list) => stages.get(tickKey(list))).filter((st) => st && st.job && st.job.result)
+      .map((st) => ({ key: st.key, ids: st.ids, label: st.label, period: st.job.result.period, family: st.job.result.family,
+        peaks: st.job.result.peaks, peak_list: st.job.result.peak_list })),
     view: view ? { x: view.x.slice(), y: view.y.slice() } : null, periods: pview ? pview.p.slice() : null };
 }
 
@@ -1780,6 +1991,12 @@ async function applyRecall(res) {
   syncMirrors();
   $('clip').checked = !!page.clip;
   subtractList = page.subtract || [];
+  clearTicks();
+  ticked = page.ticks || [];
+  for (const st of page.stages || []) {
+    stages.set(st.key, { key: st.key, ids: st.ids, label: st.label, error: null,
+      job: { status: 'done', result: { period: st.period, family: st.family, peaks: st.peaks, peak_list: st.peak_list } } });
+  }
   if (page.target) resolveStar();
   checkArchives();
   updateCommands();
@@ -2071,7 +2288,7 @@ document.addEventListener('click', (e) => {
   showFipView();
 });
 $('foldp').addEventListener('keydown', (e) => { if (e.key === 'Enter') forceFold(+$('foldp').value, false); });
-$('subtract').addEventListener('click', subtractFold);
+document.addEventListener('change', (e) => { const b = e.target.closest('[data-tick]'); if (b) toggleTick(b.dataset.tick); });
 document.addEventListener('click', (e) => { if (e.target.id === 'unsubtract') { subtractList = []; startQuick(); } });
 $('fullrange').addEventListener('click', () => { $('clip').checked = false; view = null; refitY(); });
 window.addEventListener('resize', () => { if (view) setTimeout(() => { syncSliders(); dateAxis(); }, 100); });
