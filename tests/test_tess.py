@@ -98,13 +98,16 @@ def test_a_star_tess_has_not_observed(monkeypatch):
     out = tess.light_curves('GJ 1214')
     assert out['sectors'] == [] and out['observed'] == []
     assert tess.light_curves('Other star')['observed'] == [22, 49]
+    # the sectors to come, when tess-point is there to say
+    monkeypatch.setattr(tess, 'planned_sectors', lambda ra, dec: [118, 131])
+    assert tess.light_curves('GJ 1214')['planned'] == [118, 131]
     # the page: nothing to look for a transit in, and why
     monkeypatch.setattr(gui, 'TESS_LC', {})
     monkeypatch.setattr(gui, 'TESS_WHY', {})
     res = gui.transit_check(dict(target='GJ 1214', root='nowhere',
                                  period=1.5804, fetch=True, name='#1'))
     assert res['missing'] and res['reason'] == 'unobserved'
-    assert 'not observed' in res['lc']
+    assert 'not observed' in res['lc'] and res['planned'] == [118, 131]
     res = gui.transit_check(dict(target='Other star', root='nowhere',
                                  period=1.5804, fetch=True, name='#1'))
     assert res['reason'] == 'frames' and res['sectors'] == [22, 49]

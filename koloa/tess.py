@@ -140,6 +140,28 @@ def sectors_at(ra: Optional[float], dec: Optional[float],
     return sorted({int(row['sector']) for row in rows})
 
 
+def planned_sectors(ra: Optional[float], dec: Optional[float]
+                    ) -> Optional[List[int]]:
+    """
+    The sectors whose pointing holds a position, those to come too (the
+    mission's pointing table, tess-point, when it is installed: pip install
+    tess-point): GJ 1214, which no sector held before, is in sectors 118
+    and 131
+
+    :return: list of int, or None without tess-point (or a position)
+    """
+    if ra is None or dec is None:
+        return None
+    try:
+        from tess_stars2px import tess_stars2px_function_entry as entry
+    except ImportError:
+        return None
+    try:
+        return sorted({int(sec) for sec in entry(0, ra, dec)[3] if sec > 0})
+    except Exception:  # a help, not a need
+        return None
+
+
 def _choose(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """one observation per sector, the best provenance"""
     best = {}
@@ -197,7 +219,8 @@ def light_curves(name: Union[str, int], folder: Optional[str] = None,
     :return: dict, tic, sectors (list of dict: sector, provenance, exposure,
              file, column, time, flux, err) and, when MAST has no light
              curve, observed: the sectors whose full frames hold the star
-             (empty: TESS has not looked at it; None: not asked)
+             (empty: TESS has not looked at it yet; None: not asked), and
+             planned: the sectors its pointings hold it in (tess-point)
     """
     tic = tic_number(name)
     folder = folder or os.path.join(CACHE, str(tic))
@@ -215,11 +238,17 @@ def light_curves(name: Union[str, int], folder: Optional[str] = None,
             ident = resolve(name if not str(name).strip().isdigit()
                             else f'TIC {name}')
             out['observed'] = sectors_at(ident.get('ra'), ident.get('dec'))
+            if out['observed'] == []:
+                out['planned'] = planned_sectors(ident.get('ra'),
+                                                 ident.get('dec'))
         except Exception:  # its position not known: not asked
             out['observed'] = None
         if out['observed'] == []:
-            log(f'TESS has not observed TIC {tic}: no sector holds its '
-                f'position', 'warn')
+            log(f'TESS has not observed TIC {tic} yet: no sector at MAST '
+                f'holds its position'
+                + (f' (its pointings hold it in sectors '
+                   f'{", ".join(map(str, out["planned"]))})'
+                   if out.get('planned') else ''), 'warn')
         elif out['observed']:
             log(f'TESS: no light curve of TIC {tic} at MAST (in the full '
                 f'frames of sectors '

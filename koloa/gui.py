@@ -1787,8 +1787,9 @@ def tess_light(target: str, root: str = '', fetch: bool = False):
         # why: TESS never looked at the star, or its full frames only
         seen = lcs.get('observed')
         if seen == []:
-            where = 'TESS has not observed this star'
-            TESS_WHY[key] = dict(reason='unobserved')
+            where = 'TESS has not observed this star yet'
+            TESS_WHY[key] = dict(reason='unobserved',
+                                 planned=lcs.get('planned'))
         elif seen:
             where = ('no light curve at MAST: in the full frames of '
                      f'sectors {", ".join(map(str, seen))} only')

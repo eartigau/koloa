@@ -988,7 +988,7 @@ async function showTransit(key, fetch) {
     if (res.missing) {
       // TESS never looked at the star (nothing to fetch), has it in its
       //   full frames only, or its light curve is not on this machine yet
-      note.innerHTML = res.reason === 'unobserved' ? `<span>${esc(t('ts_unobserved'))}</span>`
+      note.innerHTML = res.reason === 'unobserved' ? `<span>${esc(t('ts_unobserved'))}${(res.planned || []).length ? ` ${esc(t('ts_planned'))} ${esc(res.planned.join(', '))}.` : ''}</span>`
         : res.reason === 'frames' ? `<span>${esc(t('ts_frames'))} ${esc((res.sectors || []).join(', '))}</span>`
           : `${esc(t('ts_missing'))} (${esc(res.lc || '')}) <button type="button" class="small" id="tsfetch">${esc(t('ts_fetch'))}</button>`;
       $('tsplot').classList.remove('on');
