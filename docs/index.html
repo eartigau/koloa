@@ -268,7 +268,7 @@
 <ul class="nav-top">
 <li><a href="#overview">Overview</a></li>
 <li><a href="#install">Install and run</a></li>
-<li class="nav-group" data-group="gui"><a href="#gui">The GUI</a><ul class="nav-sub"><li class="nav-label">the page, part by part</li><li><a href="#gui-panel-start">Starting it</a></li><li><a href="#gui-panel-star">The star</a></li><li><a href="#gui-panel-velocities">The velocities</a></li><li><a href="#gui-panel-gather">Gathering the archives</a></li><li><a href="#gui-panel-quickfip">The quick FIP</a></li><li><a href="#gui-panel-folds">The folds</a></li><li><a href="#gui-panel-tess">A transit in TESS</a></li><li><a href="#gui-panel-report">The report and the script</a></li><li><a href="#gui-panel-remembered">Remembered targets</a></li><li><a href="#gui-panel-batch">The batch FIP</a></li><li class="nav-label">walk-throughs</li><li><a href="#gui-walk-gj436">GJ 436 from its name</a></li><li><a href="#gui-walk-batch">Five stars in one batch</a></li><li><a href="#gui-walk-file">A file of your own</a></li></ul></li>
+<li class="nav-group" data-group="gui"><a href="#gui">The GUI</a><ul class="nav-sub"><li class="nav-label">the page, part by part</li><li><a href="#gui-panel-start">Starting it</a></li><li><a href="#gui-panel-star">The star</a></li><li><a href="#gui-panel-velocities">The velocities</a></li><li><a href="#gui-panel-gather">Gathering the archives</a></li><li><a href="#gui-panel-quickfip">The quick FIP</a></li><li><a href="#gui-panel-folds">The folds</a></li><li><a href="#gui-panel-tess">A transit in TESS</a></li><li><a href="#gui-panel-report">The report and the script</a></li><li><a href="#gui-panel-remembered">Remembered targets</a></li><li><a href="#gui-panel-batch">The batch FIP</a></li><li><a href="#gui-panel-survey">A survey, and its batch on a server</a></li><li class="nav-label">walk-throughs</li><li><a href="#gui-walk-gj436">GJ 436 from its name</a></li><li><a href="#gui-walk-batch">Five stars in one batch</a></li><li><a href="#gui-walk-file">A file of your own</a></li></ul></li>
 <li><a href="#how">How it works</a></li>
 <li><a href="#outliers">Understanding outliers</a></li>
 <li class="nav-group" data-group="usecases"><a href="#usecases">Use cases, as tests</a><ul class="nav-sub"><li class="nav-label">simulated</li><li><a href="#uc-panel-nofalse">No planet</a></li><li><a href="#uc-panel-recovery">A planet behind outliers</a></li><li><a href="#uc-panel-posterior">Orbit posteriors</a></li><li><a href="#uc-panel-twoplanets">Two planets</a></li><li><a href="#uc-panel-gpjoint">Activity and a planet</a></li><li><a href="#uc-panel-contamination">How many outliers</a></li><li><a href="#uc-panel-completeness">Recovery maps</a></li><li><a href="#uc-panel-campaign">The campaign</a></li><li><a href="#uc-panel-acceleration">A star's acceleration</a></li><li class="nav-label">real stars</li><li><a href="#uc-panel-toi2120">TOI-2120 b</a></li><li><a href="#uc-panel-dace">HD 69830 from DACE</a></li><li><a href="#uc-panel-kepler21">Kepler-21 b</a></li><li><a href="#uc-panel-gl725">GL 725 A and B</a></li><li><a href="#uc-panel-rotation">Rotation from DTEMP</a></li><li><a href="#uc-panel-mdwarfs">M dwarfs, PCA2D</a></li></ul></li>
@@ -426,7 +426,7 @@ koloa &quot;GJ 436&quot; --gather archives</div>
       what to look at.</p>
       <ul class="page-index">
         <li class="page-index-label">the page, part by part</li>
-        <li><a href="#gui-panel-start">Starting it</a><span>The command, the three tabs, the language, the help of every control.</span></li>
+        <li><a href="#gui-panel-start">Starting it</a><span>The command, the four tabs, the language, the help of every control.</span></li>
         <li><a href="#gui-panel-star">The star</a><span>SIMBAD, its known planets and TOIs, its mass, radius and temperature; the star of a file from its APERO name.</span></li>
         <li><a href="#gui-panel-velocities">The velocities</a><span>Your files and the archives, the plot of the series, the instruments kept or left out, the zero of each.</span></li>
         <li><a href="#gui-panel-gather">Gathering the archives</a><span>DACE, CARMENES DR1, VizieR source by source, TESS, Kepler, K2 and CoRoT; the runs and their logs.</span></li>
@@ -436,6 +436,7 @@ koloa &quot;GJ 436&quot; --gather archives</div>
         <li><a href="#gui-panel-report">The report and the script</a><span>The detailed report and its options; the analysis as a commented script, its data with it.</span></li>
         <li><a href="#gui-panel-remembered">Remembered targets</a><span>A result kept, with its data, to come back to.</span></li>
         <li><a href="#gui-panel-batch">The batch FIP</a><span>Many files at once: their stars, their best peaks, their accelerations, their transits.</span></li>
+        <li><a href="#gui-panel-survey">A survey, and its batch on a server</a><span>A sample from SIMBAD by its constraints, what the archives have of it, its batch packed for another machine, a terminal to get there.</span></li>
         <li class="page-index-label">walk-throughs</li>
         <li><a href="#gui-walk-gj436">GJ 436 from its name</a><span>No file at all: its public archives, its planet found, its orbit, its transit in TESS.</span></li>
         <li><a href="#gui-walk-batch">Five stars in one batch</a><span>Five files of public HARPS velocities in one run: their stars, their best peaks, their transits.</span></li>
@@ -455,10 +456,11 @@ koloanui</div>
       <p>The server runs from the folder you start it in: relative paths (the archives folder, the report folder,
       your files) start there, and the page says where. It answers this machine only and runs nothing but koloa.
       After an update of koloa, start it again: the page and the server go together.</p>
-      <p>The page has three tabs. <b>Analysis</b> is one star: its name, its velocities, the quick FIP, the
+      <p>The page has four tabs. <b>Analysis</b> is one star: its name, its velocities, the quick FIP, the
       folds, a transit in TESS, the archives to gather and the detailed report. <b>Remembered targets</b> lists
       the results kept, each to be recalled as it was. <b>Batch FIP</b> runs the quick FIP of many files, one after
-      the other, into a table. <b>New target</b>, at the top, empties the page as a new session would (a run that
+      the other, into a table. <b>Survey</b> starts from a sample of stars asked of SIMBAD, and makes their batch,
+      here or for a server. <b>New target</b>, at the top, empties the page as a new session would (a run that
       still runs goes on); <b>EN/FR</b> switches the language of the page, and it is kept.</p>
       <figure class="lecture-figure">
         <img class="shot" src="figures/gui/help.png" alt="A help bubble of the GUI, the explanation of the transit search">
@@ -519,16 +521,47 @@ koloanui</div>
       <figure class="lecture-figure">
         <img class="shot" src="figures/gui/velocities.png" alt="The velocities card with the archives of GJ 436 ticked">
         <figcaption>No file: GJ 436 from its archives alone, DACE, CARMENES DR1 and the velocities published
-        on VizieR ticked. The note under Plot says where each came from and how many spectra two sources share
-        (each spectrum is kept once).</figcaption>
+        on VizieR ticked. The note under Plot says where each came from.</figcaption>
       </figure>
       <figure class="lecture-figure">
         <img class="shot" src="figures/gui/series.png" alt="The plot of the series of GJ 436, every instrument, with its table">
         <figcaption>The series, each instrument in its colour: the calendar dates on top, sliders along both axes
         (the y one in asinh, fine about the bulk of the points and coarse towards the outliers), twice the 3 to
         97 percentile range or everything, a red triangle at an edge for a point beyond it. The table under it:
-        each instrument, its source, its points and rms; untick one (or click it in the legend) to leave it out
-        of the quick FIP and the report.</figcaption>
+        each instrument, its source, its points and rms, and what the rules do with it by default; untick one
+        (or click it in the legend) to leave it out of the quick FIP and the report.</figcaption>
+      </figure>
+      <h3 id="gui-datasets">Which datasets are used</h3>
+      <p>The archives of a star often hold the same spectra more than once (HARPS through the ESO pipeline on
+      DACE and through SERVAL on VizieR, HIRES in three surveys), and old velocities too imprecise to constrain
+      anything. Everything is gathered, kept on disk, plotted and listed; the table unticks what two rules leave
+      out, and says why beside each dataset.</p>
+      <ul>
+        <li><b>The releases of the same spectra</b>: a spectrum that several datasets have is taken from the most
+        precise of them. On the spectra two releases share, the star does the same in both, so their difference
+        is noise alone, and the covariance of each with that difference is its own noise: no model of the star is
+        needed (its strongest signals are taken out of both first, which only sharpens the comparison; a release
+        binned by night is compared bin for bin). When the noises cannot be told apart, a dataset that names its
+        spectrograph comes before a table that names none, then the latest release, then the one with the more
+        spectra. A release left with nothing of its own is unticked; one with spectra the better release lacks
+        keeps those (its points used of its points, in the table).</li>
+        <li><b>The datasets that constrain nothing</b>: a line is fitted to the nightly means, an offset per
+        dataset and one slope; a dataset is unticked when taking it away makes the error of the mean and that of
+        the slope grow by less than 1&nbsp;%, the weakest first. The error of a night holds what the star does
+        about a line, the same for every instrument, so a few nights among hundreds weigh little whatever their
+        precision.</li>
+      </ul>
+      <p>Tick a dataset to ask it back: a release asked back is preferred to the others for the spectra they
+      share, and the one used before it is unticked in its turn. The datasets of your own files are never left
+      out. The report, the batch and the analysis script make the same choice
+      (<span class="mono">--exclude</span>, <span class="mono">--include</span>;
+      <span class="mono">--no-rules</span> for every dataset, each spectrum still used once).</p>
+      <!--AUTO:gui_rules--><p>For GJ 876, with every archive ticked: 22 datasets, 3480 velocities. The rules use 8 of them, 1093 velocities. Left out as releases of spectra that another dataset has more precisely: 5; left out because they constrain neither the mean nor the slope: 9; used only for the spectra they alone have: 1.</p><!--/AUTO-->
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/datasets.png" alt="The table of the datasets of GJ 876 with what the rules leave out">
+        <figcaption>The datasets of GJ 876, every archive ticked: those used, those left out and why (another
+        release of the same spectra is more precise, or the dataset constrains neither the mean nor the slope),
+        and a release used for the spectra it alone has.</figcaption>
       </figure>
       <p><b>Zero</b>: each instrument about the solution shown (fitted offsets) or about its own median. The
       solution is one for every instrument, the trend and the signals; each instrument sits about it, the median
@@ -774,6 +807,90 @@ koloanui</div>
       table fits the window; Stop ends the batch.</p>
     </section>
 
+    <section class="view gui-panel" id="gui-panel-survey" data-group="gui" data-title="A survey, and its batch on a server">
+      <p class="crumb"><a href="#gui">The GUI</a></p>
+      <h2>A survey, and its batch on a server</h2>
+      <p>The <b>Survey</b> tab starts from constraints, not from a star: a range of spectral types and a distance
+      (every M dwarf within 15&nbsp;pc, say), between two declinations, brighter than a V if you give one. Ask
+      SIMBAD: the stars come back as a table, the nearest first, each under its GJ name when it has one, with its
+      type, its distance from its parallax, its V and its rotation period when SIMBAD lists one (that of the
+      latest paper, the others and their references under the cursor; that of CARMENES DR1 is added by the
+      cross-match). A system and its components are objects of their own in
+      SIMBAD: a mark says when another object of the sample is within 5 arcsec.</p>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/survey.png" alt="The survey tab: the constraints, the summary of the cross-match by spectrograph and the table of the stars">
+        <figcaption>The M dwarfs within a few parsecs, cross-matched with the archives: the summary by
+        spectrograph, then each star with its spectrographs, the velocities counted and the archives that have
+        them, and the files put with it. A star with nothing is greyed.</figcaption>
+      </figure>
+      <!--AUTO:gui_survey--><p>The M dwarfs within 7&nbsp;pc, as these pages were made: 94 objects in SIMBAD, of which 74 have velocities in the archives (45 on DACE, 52 in CARMENES DR1, 64 in a survey on VizieR), and 64 a rotation period in SIMBAD.</p><!--/AUTO-->
+      <ul>
+        <li><b>Cross-match with the archives</b> tells which stars have velocities, without gathering them:
+        CARMENES DR1 and the surveys on VizieR by the star's position in their lists, and DACE asked star by
+        star, six at a time (a few seconds a star). What DACE answers is kept in the archives folder, where the
+        gathering reads it back. Its summary counts the stars with velocities and, spectrograph by spectrograph
+        (the eras of an instrument and its releases put together: HARPS on DACE and in the RVBank is one line),
+        the stars, the velocities counted and the archives that have them. The table says the same of each
+        star; tick <b>some data</b>, and the stars that have nothing (no velocity in an archive, no file of
+        yours) are no longer shown.</li>
+        <li><b>Your files</b>: folders of LBL files of SPIRou, of NIRPS... The star of each file is its OBJECT
+        column, else its name, through APERO's names, and the file goes with the star of the sample that has
+        that name. The files of stars that are not in the sample are counted.</li>
+        <li><b>Tick</b> the stars to run: those with data, those with files, all, none; a click on a header
+        sorts the table.</li>
+      </ul>
+      <p>The batch of the stars ticked is the quick FIP of each, with its files and every archive of it, its
+      datasets chosen by the rules (<a href="#gui-panel-velocities">The velocities</a>). <b>Run it here</b>
+      sends it to the Batch FIP tab. Or <b>pack it</b> for another machine, a server or a cluster: one folder,
+      and its <span class="mono">.tar.gz</span>, with everything the batch needs and no path of this machine in
+      it.</p>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/survey_batch.png" alt="The batch of the stars ticked: run here, or packed for another machine">
+        <figcaption>The batch packed: its tar, and its ROOT, where the folder will be on the machine that runs
+        it (the folder of the route chosen in the terminal below, and the name of the batch).</figcaption>
+      </figure>
+      <pre class="codeblock">m_dwarfs_demo/
+  run_batch.py    # the script; its first setting is ROOT, where this folder is there
+  submit.sh       # the same as a SLURM job array, a star per task
+  targets.json    # the stars, and the files of each
+  files/          # the files of velocities of each star
+  archives/       # its archives, gathered before packing: no network needed there
+  cache/          # what koloa fetched once (the NASA Exoplanet Archive, the lists of the surveys)
+  koloa_src/      # koloa as it was when the batch was packed: nothing to install there
+  results/        # made by the batch: a folder per star, and table.csv
+
+# there
+tar xzf m_dwarfs_demo.tar.gz
+cd m_dwarfs_demo
+python run_batch.py            # several stars at once; a batch stopped goes on where it was</pre>
+      <p>Each star done is kept as it goes (its line of the table, its FIP as the page draws it, a PDF of its
+      quick look), and <span class="mono">results/table.csv</span> gathers them. Brought back, the results of a
+      batch folder open in the page as a batch: its table, and each star in the Analysis tab with its FIP as it
+      was computed.</p>
+      <!--AUTO:gui_survey_run--><p>A batch of nearby M dwarfs, packed on a laptop from their public archives and run on a server from its tar, with nothing installed there and no network asked:</p><div class="table-wrap"><table class="koloa"><thead><tr><th>star</th><th>type</th><th>d [pc]</th><th>datasets used</th><th>nights</th><th>best P [d]</th><th>FIP</th><th>K [m/s]</th><th>minutes</th></tr></thead><tbody><tr><td class="mono">GJ 699</td><td class="mono">M4V</td><td class="mono">1.83</td><td class="mono">6/17</td><td class="mono">1075</td><td class="mono">9537.5014</td><td class="mono">2.7&times;10<sup>-9</sup></td><td class="mono">30.13 &plusmn; 1.52</td><td class="mono">89</td></tr><tr><td class="mono">GJ 581</td><td class="mono">M3V</td><td class="mono">6.30</td><td class="mono">6/16</td><td class="mono">515</td><td class="mono">5.3685</td><td class="mono">&lt;&nbsp;10<sup>-300</sup></td><td class="mono">12.13 &plusmn; 0.23</td><td class="mono">31</td></tr><tr><td class="mono">GJ 1214</td><td class="mono">M4.5V</td><td class="mono">14.64</td><td class="mono">3/8</td><td class="mono">154</td><td class="mono">1.5807</td><td class="mono">3.9&times;10<sup>-63</sup></td><td class="mono">14.37 &plusmn; 0.52</td><td class="mono">6</td></tr></tbody></table></div><p>A best peak about as long as the series itself is a slow drift, not a planet: the table of a batch is a list of questions, each line still to be looked at in the Analysis tab.</p><!--/AUTO-->
+      <h3 id="gui-terminal">The terminal</h3>
+      <p>Under the batch, a terminal in the page: a shell of this machine, to go to the machine that will run
+      the batch. It is a real terminal: <span class="mono">ssh</span>, its password or its second factor typed
+      as in any other. <b>Remember how I got here</b> proposes the lines you typed that the terminal showed
+      (<span class="mono">ssh</span>, <span class="mono">cd</span>, what loads Python), to be corrected, with the
+      host and the folder of the batches there; a password is typed with the echo off, so it is never shown and
+      never kept. <b>Go there</b> types the lines of a route again.</p>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/survey_route.png" alt="A route: its name, its host, the folder of the batches there, the lines typed to get there">
+        <figcaption>A route: how to get to a server (a made-up one here), kept under a name.</figcaption>
+      </figure>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/survey_terminal.png" alt="The terminal of the survey tab, with the copy of the batch typed and not run">
+        <figcaption>Four buttons type a command and do not run it: read it, change it if need be, press Enter.
+        Here the copy of the tar to the server, in a terminal of this machine; then, in the terminal that is on
+        the server, unpack and launch (under <span class="mono">nohup</span>: it goes on when you leave), follow
+        its log, and bring the results back.</figcaption>
+      </figure>
+      <p>A shell is more than this page is otherwise trusted with (it runs nothing but koloa): the terminal
+      answers only to the page opened from the address koloa prints when it starts, which ends with a key, as a
+      notebook server does.</p>
+    </section>
+
     <section class="view gui-panel" id="gui-walk-gj436" data-group="gui" data-title="GJ 436 from its name">
       <p class="crumb"><a href="#gui">The GUI</a></p>
       <h2>GJ 436 from its name</h2>
@@ -782,7 +899,8 @@ koloanui</div>
       <ol>
         <li>Type <code>GJ 436</code> and Resolve: the star card (<a href="#gui-panel-star">The star</a>).</li>
         <li>Gather the archives (here with no DACE key: the public data), then tick them all under the
-        velocities and Plot (<a href="#gui-panel-velocities">The velocities</a>).</li>
+        velocities and Plot (<a href="#gui-panel-velocities">The velocities</a>). The table unticks the releases
+        of spectra that another dataset has more precisely, and the datasets that constrain nothing.</li>
         <li>Compute the quick FIP, untick an instrument first if it should not count
         (<a href="#gui-panel-quickfip">The quick FIP</a>).</li>
         <li>Look at the fold of peak #1, coloured by date, as a Keplerian, on the series
@@ -793,10 +911,10 @@ koloanui</div>
         <li>Remember the result; make the report, or the analysis script, from the same card
         (<a href="#gui-panel-report">The report and the script</a>).</li>
       </ol>
-      <!--AUTO:gui_walk_gj436--><p>The public archives of GJ 436 give 830 velocities in 445 nightly means (HIRES (Teklu+ 2025) 164, HARPS03 113, CARMENES 99, HIRES (Knutson+ 2014) 36, HARPS15 22, HIRES (CLS) 8, ESPRESSO18 3). The quick FIP puts peak #1 at 2.6440&nbsp;d, with a FIP of the period or any of its aliases of &lt;&nbsp;10<sup>-300</sup>; its sinusoid has K = 16.31 &plusmn; 0.24&nbsp;m/s. With the mass of the star, 0.47&nbsp;M<sub>&#9737;</sub>, its minimum mass is m sin i = 21.3<sup>+1.4</sup><sub>&minus;1.5</sub>&nbsp;M<sub>&#8853;</sub>. The acceleration of the star is +0.04 &plusmn; 0.08&nbsp;m/s/yr (0.4&nbsp;&sigma;). Peak #2, at 1.3219&nbsp;d (FIP 5.6&times;10<sup>-17</sup>), is half the period of #1: an eccentric orbit is not a sinusoid, and what the sinusoid at P leaves is mostly its first harmonic, at P/2, of amplitude about e&nbsp;K.</p>
-<p>As a Keplerian (e free): P = 2.64389 &plusmn; 0.00001&nbsp;d, K = 17.46 &plusmn; 0.18&nbsp;m/s, e = 0.16 &plusmn; 0.01. The published orbit of GJ 436 b, folded beside it, agrees. Its eccentricity is also why the fold at the transit ephemeris puts the conjunction of the velocities hours away from the transit: that of a sinusoid is off by about P&nbsp;e&nbsp;cos&nbsp;&omega;/&pi;, up to some 3.3&nbsp;h here.</p>
-<p>In TESS (sectors 22, 49), at the period of peak #1 and about the conjunction of its fold: the period scanned over 38 periods, the light curve folded at 2.64388&nbsp;d; a plausible transit, 171&nbsp;&sigma; in 14 transits, the box fitted to the medians 6.23 &plusmn; 0.08&nbsp;ppt deep and 0.7&nbsp;h long: with R<sub>&#9733;</sub> = 0.455&nbsp;R<sub>&#9737;</sub> (NASA Exoplanet Archive), a radius of 3.9&nbsp;R<sub>&#8853;</sub>. Its equilibrium temperature is about 684&nbsp;K (no albedo; T<sub>&#9733;</sub> = 3586&nbsp;K).</p>
-<p>Once its Keplerian orbit is ticked out, the best peak of the residuals is at 52.55&nbsp;d with a FIP of 0.5: no second planet this run can claim.</p><!--/AUTO-->
+      <!--AUTO:gui_walk_gj436--><p>The public archives of GJ 436 give 714 velocities in 435 nightly means (HIRES (Teklu+ 2025) 164, HARPS03 (RVBank) 113, CARMENES 99, HIRES (Knutson+ 2014) 37, HARPS15 22). The quick FIP puts peak #1 at 2.6440&nbsp;d, with a FIP of the period or any of its aliases of &lt;&nbsp;10<sup>-300</sup>; its sinusoid has K = 16.34 &plusmn; 0.23&nbsp;m/s. With the mass of the star, 0.47&nbsp;M<sub>&#9737;</sub>, its minimum mass is m sin i = 21.4<sup>+1.4</sup><sub>&minus;1.5</sub>&nbsp;M<sub>&#8853;</sub>. The acceleration of the star is +0.00 &plusmn; 0.07&nbsp;m/s/yr (0.0&nbsp;&sigma;). Peak #2, at 1.3220&nbsp;d (FIP 1.7&times;10<sup>-19</sup>), is half the period of #1: an eccentric orbit is not a sinusoid, and what the sinusoid at P leaves is mostly its first harmonic, at P/2, of amplitude about e&nbsp;K.</p>
+<p>As a Keplerian (e free): P = 2.64389 &plusmn; 0.00001&nbsp;d, K = 17.27 &plusmn; 0.20&nbsp;m/s, e = 0.16 &plusmn; 0.01. The published orbit of GJ 436 b, folded beside it, agrees. Its eccentricity is also why the fold at the transit ephemeris puts the conjunction of the velocities hours away from the transit: that of a sinusoid is off by about P&nbsp;e&nbsp;cos&nbsp;&omega;/&pi;, up to some 3.1&nbsp;h here.</p>
+<p>In TESS (sectors 22, 49), at the period of peak #1 and about the conjunction of its fold: the period scanned over 55 periods, the light curve folded at 2.64392&nbsp;d; a plausible transit, 164&nbsp;&sigma; in 14 transits, the box fitted to the medians 6.22 &plusmn; 0.06&nbsp;ppt deep and 0.7&nbsp;h long: with R<sub>&#9733;</sub> = 0.455&nbsp;R<sub>&#9737;</sub> (NASA Exoplanet Archive), a radius of 3.9&nbsp;R<sub>&#8853;</sub>. Its equilibrium temperature is about 684&nbsp;K (no albedo; T<sub>&#9733;</sub> = 3586&nbsp;K).</p>
+<p>Once its Keplerian orbit is ticked out, the best peak of the residuals is at 53.27&nbsp;d with a FIP of 0.3: no second planet this run can claim.</p><!--/AUTO-->
     </section>
 
     <section class="view gui-panel" id="gui-walk-batch" data-group="gui" data-title="Five stars in one batch">
@@ -1402,7 +1520,7 @@ fit = koloa.mcmc_orbits(data, [], trend=1)
 accel, minus, plus = acceleration(fit)[&#x27;accel&#x27;]
 
 <span class="c"># the lightest companion that can pull that hard, whatever its orbit</span>
-<span class="c">#   (&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;Torres 1999&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;) [Msun]: the star at 3.52 pc, the companion 11.6 arcsec away</span>
+<span class="c">#   (&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;Torres 1999&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;) [Msun]: the star at 3.52 pc, the companion 11.6 arcsec away</span>
 mmin = companion_min_mass(acceleration(fit)[&#x27;draws&#x27;], 3.52, 11.6)
 
 <span class="c"># the perspective acceleration (mu^2 d, geometry) from the Gaia DR3</span>

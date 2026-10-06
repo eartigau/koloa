@@ -430,6 +430,70 @@ def gui(html):
                    f'peak at {rest["period"]:.2f}&nbsp;d with a FIP of '
                    f'{_sci(rest["fip"])}: a second signal to look at.</p>')
     html = fill(html, 'gui_walk_gj436', '\n'.join(out))
+    # which datasets of a star are used (koloa.datasets), from the table
+    #   of the page
+    sets = num.get('datasets') or {}
+    if sets.get('rows'):
+        rows = sets['rows']
+        state = [(row.get('rule') or {}).get('status') for row in rows]
+        used = [row for row, what in zip(rows, state)
+                if what not in ('release', 'weak')]
+        html = fill(html, 'gui_rules', (
+            f'<p>For {escape(sets["star"])}, with every archive ticked: '
+            f'{len(rows)} datasets, {sum(row["total"] for row in rows)} '
+            f'velocities. The rules use {len(used)} of them, '
+            f'{sum(row["n"] for row in used)} velocities. Left out as '
+            f'releases of spectra that another dataset has more precisely: '
+            f'{state.count("release")}; left out because they constrain '
+            f'neither the mean nor the slope: {state.count("weak")}; used '
+            f'only for the spectra they alone have: '
+            f'{sum(row["status"] == "part" for row in used)}.</p>'))
+    sv = num.get('survey') or {}
+    if sv.get('n'):
+        html = fill(html, 'gui_survey', (
+            f'<p>The M dwarfs within {sv["dmax"]:g}&nbsp;pc, as these pages '
+            f'were made: {sv["n"]} objects in SIMBAD, of which {sv["data"]} '
+            f'have velocities in the archives ({sv["dace"]} on DACE, '
+            f'{sv["carmenes"]} in CARMENES DR1, {sv["surveys"]} in a survey '
+            f'on VizieR)'
+            + (f', and {sv["rotation"]} a rotation period in SIMBAD'
+               if sv.get('rotation') else '') + '.</p>'))
+    # a batch packed here and run on a server: its table, as brought back
+    #   (docs/figures/gui/survey_run.json: results/table.json of the folder)
+    path = os.path.join(HERE, 'figures', 'gui', 'survey_run.json')
+    if os.path.exists(path):
+        lines = []
+        for row in json.load(open(path)):
+            if row.get('status') != 'done' or not row.get('period'):
+                continue
+            lines.append(
+                f'<tr><td class="mono">{escape(row["name"])}</td>'
+                f'<td class="mono">{escape(row.get("sptype") or "")}</td>'
+                f'<td class="mono">{row["distance"]:.2f}</td>'
+                f'<td class="mono">{escape(row.get("datasets") or "")}</td>'
+                f'<td class="mono">{row["nights"]}</td>'
+                f'<td class="mono">{row["period"]:.4f}</td>'
+                f'<td class="mono">{_sci(row["fip"])}</td>'
+                f'<td class="mono">{row["K"]:.2f} &plusmn; {row["K_err"]:.2f}'
+                f'</td><td class="mono">{row["elapsed"] / 60:.0f}</td></tr>')
+        if lines:
+            # a best peak as long as the series is a drift, not a planet
+            slow = [row['name'] for row in json.load(open(path))
+                    if row.get('period') and row.get('baseline')
+                    and row['period'] > 0.5 * row['baseline']]
+            html = fill(html, 'gui_survey_run', (
+                '<p>A batch of nearby M dwarfs, packed on a laptop from '
+                'their public archives and run on a server from its tar, '
+                'with nothing installed there and no network asked:</p>'
+                '<div class="table-wrap"><table class="koloa"><thead><tr>'
+                '<th>star</th><th>type</th><th>d [pc]</th>'
+                '<th>datasets used</th><th>nights</th><th>best P [d]</th>'
+                '<th>FIP</th><th>K [m/s]</th><th>minutes</th></tr></thead>'
+                '<tbody>' + ''.join(lines) + '</tbody></table></div>'
+                + ('<p>A best peak about as long as the series itself is a '
+                   'slow drift, not a planet: the table of a batch is a '
+                   'list of questions, each line still to be looked at in '
+                   'the Analysis tab.</p>' if slow else '')))
     rows = []
     for item in num.get('batch') or []:
         star, summ = item.get('star') or {}, item.get('summary') or {}

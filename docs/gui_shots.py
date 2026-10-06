@@ -85,14 +85,29 @@ def prepare(work: str) -> None:
 def start_server(work: str, port: int, remembered: str, koloa: str = ROOT):
     """koloa's GUI in the work folder: no DACE key, its own remembered
     targets"""
-    env = dict(os.environ, DACE_API_KEY='', PYTHONPATH=koloa)
-    code = ('from koloa import gui; '
-            f'gui.REMEMBERED = {remembered!r}; '
+    # a home of its own (no DACE key in it, a plain prompt in the terminal
+    #   of the page, its own routes), what koloa fetched once as it is here
+    home = os.path.join(work, 'home')
+    os.makedirs(home, exist_ok=True)
+    with open(os.path.join(home, '.zshrc'), 'w') as handle:
+        handle.write("PS1='%1~ %# '\n")
+    env = dict(os.environ, DACE_API_KEY='', PYTHONPATH=koloa, HOME=home,
+               ZDOTDIR=home, SHELL='/bin/zsh',
+               KOLOA_CACHE=os.path.join(os.path.expanduser('~'), '.cache',
+                                        'koloa'))
+    # the key of its terminal, known here (the page is opened with it),
+    #   and its routes in the work folder (not the user's)
+    import secrets
+    key = secrets.token_urlsafe(12)
+    code = ('from koloa import gui, terminal; '
+            f'gui.REMEMBERED = {remembered!r}; terminal.KEY = {key!r}; '
+            f'terminal.ROUTES = {os.path.join(work, "routes_demo.json")!r}; '
             f'gui.serve(port={port}, browser=False)')
     proc = subprocess.Popen([sys.executable, '-c', code], cwd=work, env=env,
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL)
-    time.sleep(3)
+    proc.koloa_key = key
+    time.sleep(8)
     return proc
 
 
@@ -186,9 +201,10 @@ def settle(page, selector: str = '#tsnote', limit: float = 600.0) -> None:
 KEPLER = 'if (foldShown !== null) showFold(foldShown);'
 
 
-def by_name(page, shots: Shots, numbers: dict) -> None:
-    """GJ 436 from its name alone: the star, its archives, the quick FIP,
-    the folds, the transit in TESS, the report, a result remembered"""
+def plotted(page, shots: Shots) -> None:
+    """GJ 436 from its name alone, as far as its velocities plotted: the
+    star, its archives, the series and the table of its datasets (no
+    computation: taken again after a change of the page)"""
     page.fill('#root', 'archives')
     page.fill('#target', 'GJ 436')
     page.press('#target', 'Enter')
@@ -203,11 +219,21 @@ def by_name(page, shots: Shots, numbers: dict) -> None:
     wait(page, "document.querySelector('#rvplot.on') && lastRV",
          retry="document.getElementById('plot').click();")
     time.sleep(2)
+    # the pointer off the plot: its tools show under it
+    page.mouse.move(5, 5)
+    time.sleep(0.5)
     shots.element('section:has(#filelist)', 'velocities')
     shots.element('#plotcard', 'series')
+
+
+def by_name(page, shots: Shots, numbers: dict) -> None:
+    """GJ 436 from its name alone: the star, its archives, the quick FIP,
+    the folds, the transit in TESS, the report, a result remembered"""
+    plotted(page, shots)
     page.click('.startfip')
     wait(page, "quick && quick.status === 'done'", FIP_LIMIT,
-         retry='if (!quick) startQuick();')
+         retry="if (!quick) startQuick(); else if (quick.status === "
+               "'running') { quick.misses = 0; pollQuick(quick.id); }")
     settle(page)
     time.sleep(3)
     shots.region('#fipstatus', '#fipplot', 'fip')
@@ -394,6 +420,98 @@ def recalled(page, shots: Shots) -> None:
     page.mouse.move(5, 5)
 
 
+#: the star whose datasets show the rules of koloa.datasets (many
+#: releases of the same spectra, old velocities)
+RULES_STAR = 'GJ 876'
+
+
+def datasets(page, shots: Shots, numbers: dict) -> None:
+    """which datasets are used: a star from its archives alone, all of
+    them ticked; the table says what the rules leave out, and why"""
+    page.fill('#root', 'archives')
+    page.fill('#target', RULES_STAR)
+    page.press('#target', 'Enter')
+    wait(page, "document.querySelector('#ident .stats-grid')",
+         retry='resolveStar();')
+    time.sleep(2)
+    for key in ('dace', 'carmenes', 'vizier'):
+        page.check(f'[data-mirror="{key}"]')
+    page.click('#plot')
+    wait(page, "document.querySelector('#rvplot.on') && lastRV",
+         retry="document.getElementById('plot').click();")
+    time.sleep(2)
+    shots.element('#rvtable', 'datasets')
+    numbers['datasets'] = dict(star=RULES_STAR, rows=page.evaluate(
+        '() => lastRV.map((one) => ({ name: one.name, n: one.n, '
+        'total: one.total, source: one.source, status: one.status, '
+        'rule: one.rule }))'))
+
+
+#: the survey of the screenshots: the M dwarfs this near [pc]
+SURVEY_DMAX = 7
+
+
+def survey_tab(page, shots: Shots, numbers: dict) -> None:
+    """a survey: the M dwarfs within a few parsecs asked of SIMBAD, their
+    archives checked (public data), the files of the batch put with them,
+    a route to a server (not a real one), the batch packed, and the copy
+    of its tar typed in the terminal (not run)"""
+    page.click('[data-tab="survey"]')
+    page.fill('#sv-dmax', str(SURVEY_DMAX))
+    page.click('#sv-ask')
+    wait(page, 'survey && survey.stars', 300,
+         retry="document.getElementById('sv-ask').click();")
+    page.click('#sv-check')
+    wait(page, "survey.check && survey.check.status !== 'running'", 900)
+    time.sleep(3)
+    page.fill('#sv-folders', 'files')
+    page.fill('#sv-pattern', '*.csv')
+    page.click('#sv-match')
+    settle(page, '#sv-matchstatus')
+    page.click('#sv-tickfiles')
+    time.sleep(1)
+    shots.region('#tab-survey section', '#sv-card', 'survey',
+                 inside='#sv-card')
+    numbers['survey'] = page.evaluate(
+        '() => ({ dmax: +document.getElementById("sv-dmax").value, '
+        'n: survey.stars.length, '
+        'data: survey.stars.filter(svHas).length, '
+        'dace: survey.stars.filter((s) => s.archives && s.archives.dace)'
+        '.length, carmenes: survey.stars.filter((s) => s.archives && '
+        's.archives.carmenes).length, surveys: survey.stars.filter((s) => '
+        's.archives && (s.archives.surveys || []).length).length, '
+        'files: survey.stars.filter((s) => (s.files || []).length).length, '
+        'rotation: survey.stars.filter((s) => (s.rotation || []).some('
+        '(one) => !one.source.startsWith("CARMENES"))).length, '
+        'unmatched: (survey.unmatched || []).length })')
+    # a terminal, and how to get to a server (a made-up one)
+    page.click('#term-new')
+    wait(page, 'terms.length === 1', 60)
+    time.sleep(2)
+    page.click('#term-remember')
+    time.sleep(1)
+    page.fill('#route-name', 'server')
+    page.fill('#route-host', 'me@server')
+    page.fill('#route-folder', '/scratch/me/koloa_batches')
+    page.fill('#route-lines', 'ssh me@server\ncd /scratch/me/koloa_batches'
+                              '\nmodule load python scipy-stack')
+    time.sleep(0.5)
+    shots.element('#route-dialog', 'survey_route')
+    page.click('#route-save')
+    time.sleep(1.5)
+    # the batch of the stars ticked, packed (their archives as checked)
+    page.fill('#sv-name', 'm_dwarfs_demo')
+    page.dispatch_event('#sv-name', 'input')
+    page.uncheck('#sv-gather')
+    page.click('#sv-pack')
+    wait(page, "survey.pack && survey.pack.status !== 'running'", 600)
+    time.sleep(1)
+    shots.element('#sv-batchcard', 'survey_batch')
+    page.click('#term-copy')
+    time.sleep(3)
+    shots.element('#term-card', 'survey_terminal')
+
+
 def runs(page, shots: Shots) -> None:
     """a run of the command line: the archives of GJ 436 gathered again
     (public), its steps and its log"""
@@ -430,7 +548,9 @@ def batch_run(page, shots: Shots, numbers: dict, files,
         page.check('#batcharchives')
     page.click('#batchrun')
     wait(page, "batch && batch.status !== 'running'", 7200,
-         retry="if (!batch) document.getElementById('batchrun').click();")
+         retry="if (!batch) document.getElementById('batchrun').click(); "
+               "else if (batch.status === 'running') { batchMisses = 0; "
+               "pollBatch(batch.id); }")
     time.sleep(2)
     shots.element('#tab-batch', 'batch')
     numbers['batch'] = page.evaluate(
@@ -477,8 +597,10 @@ def main() -> None:
     parser.add_argument('--parts', default='name,file,runs,batch',
                         help='the walk-throughs, of name, file, runs and '
                              'batch; recall takes again, from the result '
-                             'remembered, what needs no computation, and '
-                             'batchshow the batch kept in numbers.json')
+                             'remembered, what needs no computation, '
+                             'batchshow the batch kept in numbers.json, '
+                             'datasets the table of the rules of a star, '
+                             'survey the survey tab and its terminal')
     parser.add_argument('--server', default='',
                         help='a koloa GUI already running (its address: '
                              'http://127.0.0.1:8790), in the same folder '
@@ -503,6 +625,8 @@ def main() -> None:
     proc = None if args.server else start_server(
         work, args.port, mem, os.path.abspath(args.koloa))
     address = args.server or f'http://127.0.0.1:{args.port}'
+    # the key of the server started here, for the terminal of the page
+    key = getattr(proc, 'koloa_key', '') if proc is not None else ''
     numbers: dict = dict(files=[os.path.basename(f) for f in files])
     # the batch of this server (run in the first language, shown again in
     #   the next)
@@ -521,7 +645,8 @@ def main() -> None:
                         "try { localStorage.clear(); localStorage.setItem("
                         f"'koloa-lang', '{lang}'); }} catch (e) {{}}")
                     page = ctx.new_page()
-                    page.goto(address.rstrip('/') + '/')
+                    page.goto(address.rstrip('/') + '/'
+                              + (f'?key={key}' if key else ''))
                     shots.page = page
                     keep = numbers if lang == 'en' else {}
                     if part == 'name':
@@ -538,6 +663,12 @@ def main() -> None:
                         runs(page, shots)
                     elif part == 'recall':
                         recalled(page, shots)
+                    elif part == 'datasets':
+                        datasets(page, shots, keep)
+                    elif part == 'plot':
+                        plotted(page, shots)
+                    elif part == 'survey':
+                        survey_tab(page, shots, keep)
                     elif part == 'batchshow':
                         # the batch kept in numbers.json, not run again
                         with open(os.path.join(OUT, 'numbers.json')) as handle:

@@ -203,10 +203,12 @@ explains it in full: what it does, what to enter, its default.
 
 Its Survey tab starts from constraints instead of a star: a range of
 spectral types and a distance (M0 to M9 within 15 pc, say) asked of
-SIMBAD, a table of the stars, a button that checks which of them have
-velocities in the archives, your folders of LBL files matched to them by
-name, and the batch of those ticked: run in the page, or packed for
-another machine. From Python:
+SIMBAD, a table of the stars (each with the rotation periods SIMBAD
+lists, and that of CARMENES DR1), a button that cross-matches them with
+the archives and says which have velocities, spectrograph by
+spectrograph (a tick shows only those with some data), your folders of
+LBL files matched to them by name, and the batch of those ticked: run in
+the page, or packed for another machine. From Python:
 
 ```python
 from koloa import survey
