@@ -284,6 +284,15 @@ def test_as_precise_the_named_and_the_latest_release_first():
     assert order == ['HIRES (New+ 2019)', 'HIRES (Old+ 2017)', 'Table+ 2022']
     assert datasets.year('HIRES (Teklu+ 2025)') == 2025
     assert datasets.year('HARPS03') == 9999
+    # a survey that does not name its year: that of where it came from
+    assert datasets.year('HIRES (CLS)', 'Rosenthal et al. 2021 (California '
+                         'Legacy Survey)') == 2021
+    assert datasets.year('CARMENES', 'CARMENES DR1') == 2023
+    assert datasets.year('HARPS03', 'DACE') == 9999
+    data = merge([copy('HIRES (CLS)', 80), copy('HIRES (New+ 2025)', 80)])
+    order, _ = datasets.ranking(data, datasets.links(data), sources={
+        'HIRES (CLS)': 'Rosenthal et al. 2021 (California Legacy Survey)'})
+    assert order[0] == 'HIRES (New+ 2025)'
 
 
 def test_the_ratings_of_several_releases():

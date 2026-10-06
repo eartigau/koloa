@@ -104,6 +104,9 @@ MIN_SCATTER = 5
 #: does (the best sampled one when none has as many)
 MIN_STAR = 20
 
+#: the year of the releases that name none (Ribas et al. 2023)
+ARCHIVE_YEARS = {'CARMENES DR1': 2023}
+
 #: how close in time each pair of datasets that may share spectra is to be
 Links = Dict[Tuple[str, str], float]
 
@@ -435,12 +438,16 @@ def compare(data: RVData, one: str, other: str, tol: float = SAME_FAMILY,
     return out
 
 
-def year(name: Any) -> int:
-    """the year of a release in a dataset's name ('HIRES (Teklu+ 2025)'),
-    9999 for an archive that names none (DACE, CARMENES DR1: as they are
-    now)"""
-    found = re.findall(r'(?<!\d)((?:19|20)\d{2})(?!\d)', str(name))
-    return int(found[-1]) if found else 9999
+def year(name: Any, source: Any = '') -> int:
+    """the year of a release: in the dataset's name ('HIRES (Teklu+
+    2025)'), else in where it came from ('HIRES (CLS)' of Rosenthal et al.
+    2021), else that of an archive known here (ARCHIVE_YEARS); 9999 for a
+    living archive (DACE: as it is now)"""
+    for text in (name, source):
+        found = re.findall(r'(?<!\d)((?:19|20)\d{2})(?!\d)', str(text or ''))
+        if found:
+            return int(found[-1])
+    return ARCHIVE_YEARS.get(str(source or ''), 9999)
 
 
 def ratings(names: Sequence[str],
@@ -486,7 +493,8 @@ def _upper(names: Optional[Sequence[str]]) -> List[str]:
 
 
 def ranking(data: RVData, tols: Links, protect: Sequence[str] = (),
-            prefer: Sequence[str] = (), signal: Optional[Callable] = None
+            prefer: Sequence[str] = (), signal: Optional[Callable] = None,
+            sources: Optional[Dict[str, str]] = None
             ) -> Tuple[List[str], Dict[Tuple[str, str], Dict[str, Any]]]:
     """
     The datasets of a series from the one whose spectra are kept first to
@@ -501,6 +509,8 @@ def ranking(data: RVData, tols: Links, protect: Sequence[str] = (),
     :param protect: list of str, the datasets of the file given
     :param prefer: list of str, the datasets asked back
     :param signal: callable or None, what the star does (star_signal)
+    :param sources: dict or None, where each dataset came from (the year
+                    of a release that does not name it)
 
     :return: tuple, the names in order, and the comparison of each pair
              that shares spectra ({(one, other): compare()})
@@ -527,8 +537,8 @@ def ranking(data: RVData, tols: Links, protect: Sequence[str] = (),
         if upper in first:
             return (0, first.index(upper))
         group = 1 if upper in second else 3 if len(holds[name]) > 1 else 2
-        return (group, score[name], 0 if family(name) else 1, -year(name),
-                -count[name], name)
+        return (group, score[name], 0 if family(name) else 1,
+                -year(name, (sources or {}).get(name)), -count[name], name)
     return sorted(names, key=key), pairs
 
 
@@ -686,7 +696,7 @@ def rules(data: RVData, sources: Optional[Dict[str, str]] = None,
     sources = sources or {}
     tols = links(data, sources)
     order, pairs = ranking(data, tols, protect, prefer,
-                           star_signal(data) if tols else None)
+                           star_signal(data) if tols else None, sources)
     asked = [name for name in order if name.upper() in _upper(exclude)]
     held = _upper(protect) + _upper(prefer)
     used = [name for name in order if name not in asked]
