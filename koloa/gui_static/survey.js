@@ -83,10 +83,10 @@ function svPackStatus() {
   } else {
     const r = p.result;
     svPacked = r;
-    $('sv-packstatus').innerHTML = `${esc(t('sv_stars'))}: ${r.n}, ${esc(t('sv_col_files'))}: ${r.files}· <span class="mono">${esc(r.tar || r.folder)}</span>`
+    $('sv-packstatus').innerHTML = `${esc(t('sv_stars'))}: ${r.n}, ${esc(t('sv_col_files'))}: ${r.files}· <span class="mono">${esc(r.tar_shown || r.tar || r.folder_shown || r.folder)}</span>`
       + (r.size ? ` (${(r.size / 1e6).toFixed(1)} MB)` : '') + ` · ROOT <span class="mono">${esc(r.root)}</span>`
       + (r.missing.length ? ` · <span class="bad">${esc(t('sv_missing'))} ${esc(r.missing.join(', '))}</span>` : '');
-    if (!$('sv-results').value) $('sv-results').value = r.folder;
+    if (!$('sv-results').value) $('sv-results').value = r.folder_shown || r.folder;
   }
 }
 
@@ -284,6 +284,8 @@ async function termLocal() {
   return terms.find((one) => one.local && one.alive) || (async () => {
     const one = await termOpen(t('term_here'));
     if (one) one.local = true;
+    // its prompt first: what is typed before it is shown twice
+    await new Promise((done) => setTimeout(done, 1200));
     return one;
   })();
 }
@@ -344,7 +346,8 @@ function termBatch() {
   const name = (svPacked && svPacked.folder.split('/').pop()) || $('sv-name').value.trim();
   if (!name) { $('term-status').textContent = t('term_need_batch'); return null; }
   $('term-status').textContent = '';
-  return { route, name, folder: route.folder.replace(/\/+$/, ''), tar: svPacked && svPacked.tar, local: svPacked && svPacked.folder };
+  return { route, name, folder: route.folder.replace(/\/+$/, ''), tar: svPacked && (svPacked.tar_shown || svPacked.tar),
+    local: svPacked && (svPacked.folder_shown || svPacked.folder) };
 }
 
 document.addEventListener('click', (e) => {

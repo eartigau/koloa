@@ -80,8 +80,10 @@ class Session:
         self.pid, self.fd = pty.fork()
         if self.pid == 0:  # the shell
             os.environ['TERM'] = 'xterm-256color'
+            # where koloa runs (its paths start there), unless said
             try:
-                os.chdir(cwd or os.path.expanduser('~'))
+                if cwd:
+                    os.chdir(cwd)
             except OSError:
                 pass
             os.execvp(shell, [shell, '-l'])

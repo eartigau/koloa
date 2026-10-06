@@ -78,6 +78,8 @@ td.src { font-size: 0.8rem; color: var(--muted); }
 /* the survey: its form, its table, its terminal */
 .svform label { display: inline-flex; align-items: center; gap: 6px; margin-right: 10px; }
 input.short { width: 5.2em; }
+#sv-root, #sv-results { width: 30em; max-width: 100%; }
+#sv-folders { width: 26em; max-width: 100%; }
 .svwrap { max-height: 28em; overflow: auto; }
 .svwrap tr.nodata td { opacity: 0.45; }
 .svwrap tr.nodata td:first-child { opacity: 1; }
