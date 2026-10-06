@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from koloa import kepler
+from koloa.paths import cache
 
 # =============================================================================
 # Define variables
@@ -185,7 +186,7 @@ SPT_TEFF: List[Tuple[str, int]] = [
     ('M8.5V', 2420), ('M9V', 2380), ('M9.5V', 2350), ('L0V', 2270),
     ('L1V', 2160), ('L2V', 2060)]
 #: where the TIC's answers are kept
-TIC_CACHE = os.path.join(os.path.expanduser('~'), '.cache', 'koloa', 'tic')
+TIC_CACHE = cache('tic')
 #: the masses of Neptune and Jupiter in Earth masses (GM ratios: Neptune's
 #: from JPL Horizons, Jupiter's and the Earth's the IAU 2015 nominal values)
 MNEP_MEARTH = 6835099.97e9 / 3.986004e14

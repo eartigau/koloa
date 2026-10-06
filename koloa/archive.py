@@ -50,6 +50,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from koloa.log import log
+from koloa.paths import cache
 
 # =============================================================================
 # Define variables
@@ -77,7 +78,7 @@ EU_MATCH_ARCSEC = 30.0
 M_JUP_EARTH = 317.828
 R_JUP_EARTH = 11.209
 #: where the archive's tables are kept, once fetched
-CACHE = os.path.join(os.path.expanduser('~'), '.cache', 'koloa', 'archive')
+CACHE = cache('archive')
 #: the columns of pscomppars kept (the ones that find a star, and the ones
 #: known_planets gives)
 PSCOMP_COLUMNS = ['hostname', 'gaia_dr3_id', 'tic_id', 'pl_name',

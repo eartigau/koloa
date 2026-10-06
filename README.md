@@ -34,6 +34,8 @@ exactly. That is what makes the outlier-aware FIP affordable.
 | `koloa.gui` | koloa in the browser (`koloa --gui`): a SIMBAD resolver, the velocities by instrument, the gathering and the detailed report, each run shown as the command line it is |
 | `koloa.gather` | everything public about a star from its SIMBAD name, kept in one folder: the velocities of DACE and of CARMENES DR1, the TESS light curves, the identifiers and periods of variability of SIMBAD, and a manifest of what each archive gave |
 | `koloa.datasets` | which datasets of a star are used: a spectrum that several have (HARPS on DACE and by SERVAL, HIRES in three surveys) is taken from the most precise release, told by the noise of each on the spectra they share; a dataset that constrains neither the mean nor the slope of a line through the nightly means is left out; everything stays on disk and can be asked back |
+| `koloa.survey` | a survey: the stars of SIMBAD within a distance and a range of spectral types, which of them have velocities in the archives (DACE, CARMENES DR1, the surveys on VizieR), the files of velocities one has of them (LBL, through APERO's names), and their batch: run here, or packed as one folder and its tar (the files, the archives, koloa itself, a script whose first setting is where the folder is) for a server or a cluster |
+| `koloa.terminal` | a terminal in the GUI, to the machine that runs a batch, with the way there remembered |
 | `koloa.archive` | the names of a star (CDS Sesame) and its planets in the NASA Exoplanet Archive, with every published solution; a fitted K against them, the most recent first |
 | `koloa.radvel_bridge` | `OutlierRVLikelihood`, a drop-in replacement for radvel's `RVLikelihood` |
 | `koloa.doppler` | relativistic Doppler conversions (velocity, wavelength ratio, log-wavelength shift) |
@@ -198,6 +200,38 @@ batch), in a process of its own; its steps show as they go, with the time
 each took, its log, and the report when it is done. The page is served on
 127.0.0.1 only and runs nothing but koloa. Every field has an (i) that
 explains it in full: what it does, what to enter, its default.
+
+Its Survey tab starts from constraints instead of a star: a range of
+spectral types and a distance (M0 to M9 within 15 pc, say) asked of
+SIMBAD, a table of the stars, a button that checks which of them have
+velocities in the archives, your folders of LBL files matched to them by
+name, and the batch of those ticked: run in the page, or packed for
+another machine. From Python:
+
+```python
+from koloa import survey
+stars = survey.sample(sptype=('M0', 'M9'), dmax=15.0)        # SIMBAD
+survey.check(stars, 'archives')            # DACE, CARMENES DR1, surveys
+survey.match_files(stars, ['/data/nirps/lbl', '/data/spirou/lbl'])
+ticked = [star for star in stars if survey.has_data(star)]
+made = survey.pack(ticked, 'm_dwarfs_15pc', root='archives',
+                   server_root='/scratch/me/m_dwarfs_15pc')
+```
+
+`pack` writes one folder and its `.tar.gz` with everything the batch
+needs and no path of this machine: the files of each star, its archives
+(gathered first, so that nothing is asked of the network there), what
+koloa fetched once (`KOLOA_CACHE` names where koloa keeps it), koloa
+itself, and `run_batch.py`. The first setting of that script is `ROOT`,
+where the folder is on the machine that runs it; there, `tar xzf`, then
+`python run_batch.py` (several stars at once; `submit.sh` is the same as
+a SLURM job array). Each star done is kept in `results/` (its line of
+the table, its FIP, a PDF), so a batch stopped goes on where it was, and
+the results brought back open in the page as a batch. The tab has a
+terminal to that machine (ssh as in any terminal), which remembers how
+you got there and types the copy, the launch and the return of the
+results for you to run; it answers only to the page opened with the key
+koloa prints when it starts.
 
 Its plot is a quick look before the report: the velocities shown, with
 sliders on both axes, and under them a quick FIP of exactly what is shown

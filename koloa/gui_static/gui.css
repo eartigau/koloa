@@ -75,6 +75,22 @@ table.mini td.num { font-family: "IBM Plex Mono", monospace; text-align: right; 
 table.mini tr.off td { opacity: 0.4; text-decoration: line-through; }
 table.mini tr.off td:first-child { text-decoration: none; opacity: 1; }
 td.src { font-size: 0.8rem; color: var(--muted); }
+/* the survey: its form, its table, its terminal */
+.svform label { display: inline-flex; align-items: center; gap: 6px; margin-right: 10px; }
+input.short { width: 5.2em; }
+.svwrap { max-height: 28em; overflow: auto; }
+.svwrap tr.nodata td { opacity: 0.45; }
+.svwrap tr.nodata td:first-child { opacity: 1; }
+.svwrap th { position: sticky; top: 0; background: #0d1626; z-index: 1; }
+#term-card.off .row:not(:first-of-type), #term-card.off #term-box { display: none; }
+.termbox { background: #05080f; border: 1px solid rgba(200, 220, 255, 0.14); border-radius: 8px; padding: 6px; height: 24em; }
+#term-tabs button.on { border-color: var(--accent); color: var(--accent); }
+#route-dialog { background: #0d1626; color: inherit; border: 1px solid rgba(200, 220, 255, 0.25); border-radius: 10px; min-width: 34em; }
+#route-dialog::backdrop { background: rgba(2, 5, 12, 0.6); }
+#route-dialog label { display: block; margin: 8px 0; }
+#route-dialog textarea { width: 100%; font-family: "IBM Plex Mono", monospace; font-size: 0.85rem; background: #05080f; color: inherit;
+  border: 1px solid rgba(200, 220, 255, 0.2); border-radius: 6px; padding: 8px; }
+span.mono { font-family: "IBM Plex Mono", monospace; font-size: 0.85em; }
 /* what the rules say of a dataset: read even when it is left out */
 table.mini td.why { font-size: 0.8rem; color: var(--muted); max-width: 46em; }
 table.mini tr.off td.why { opacity: 0.85; text-decoration: none; }

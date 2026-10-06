@@ -2054,6 +2054,8 @@ function showTab(name) {
   $('tab-analysis').hidden = name !== 'analysis';
   $('tab-remembered').hidden = name !== 'remembered';
   $('tab-batch').hidden = name !== 'batch';
+  $('tab-survey').hidden = name !== 'survey';
+  if (name === 'survey' && window.surveyShown) surveyShown();
   if (name === 'remembered') loadRemembered();
   else if (view) setTimeout(() => { syncSliders(); syncPeriods(); }, 50);
 }

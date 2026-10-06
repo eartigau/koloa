@@ -46,6 +46,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+from koloa.paths import cache
 
 # =============================================================================
 # Define variables
@@ -2190,7 +2191,9 @@ BATCHES: Dict[str, Dict[str, Any]] = {}
 
 def batch_fip(paths: List[str], opts: Dict[str, Any],
               archives: bool = False, regather: bool = False,
-              root: str = '', rules: bool = True) -> Dict[str, Any]:
+              root: str = '', rules: bool = True,
+              targets: Optional[List[Dict[str, Any]]] = None
+              ) -> Dict[str, Any]:
     """
     The quick FIP of many files, one after the other, in a thread, the
     trend as the report's boxes say; each kept as a quick FIP of its own,
@@ -2209,23 +2212,43 @@ def batch_fip(paths: List[str], opts: Dict[str, Any],
     :param regather: bool, gather the archives again (not those on disk)
     :param root: str, the folder of the archives
     :param rules: bool, False for the rules to leave no dataset out
+    :param targets: list of dict or None, stars in place of files (a
+                    survey: koloa.survey): name (its SIMBAD name), files
+                    (its files of velocities, none for its archives
+                    alone), sptype; each with every archive of the star
 
     :return: dict, the state of the batch (batch_state)
     """
-    paths = [os.path.abspath(os.path.expanduser(str(path)))
-             for path in paths if str(path).strip()]
-    if not paths:
+    def clean(path):
+        return os.path.abspath(os.path.expanduser(str(path)))
+    items = []
+    if targets:
+        archives = True
+        for star in targets:
+            files = [clean(path) for path in star.get('files') or []
+                     if str(path).strip()]
+            items.append(dict(
+                path=files[0] if files else '', files=files,
+                name=str(star['name']), given=dict(
+                    name=str(star['name']), sptype=star.get('sptype')),
+                status='waiting', qid=None, error=None, summary=None,
+                star=None, stage=None, note=None))
+    else:
+        for path in paths:
+            if str(path).strip():
+                items.append(dict(
+                    path=clean(path), files=[clean(path)],
+                    name=os.path.basename(clean(path)), given=None,
+                    status='waiting', qid=None, error=None, summary=None,
+                    star=None, stage=None, note=None))
+    if not items:
         raise ValueError('no file to run the FIP of')
     bid = uuid.uuid4().hex[:8]
     BATCHES[bid] = dict(id=bid, status='running', start=time.time(),
                         end=None, cancel=False, trend=trend_order(opts),
                         archives=bool(archives), regather=bool(regather),
                         rules=bool(rules), root=root or 'archives',
-                        items=[dict(path=path, name=os.path.basename(path),
-                                    status='waiting', qid=None, error=None,
-                                    summary=None, star=None, stage=None,
-                                    note=None)
-                               for path in paths])
+                        items=items)
     threading.Thread(target=_run_batch, args=(bid,), daemon=True).start()
     return batch_state(bid)
 
@@ -2275,13 +2298,22 @@ def _star_planets(target: str):
 
 
 def _batch_star(item: Dict[str, Any]) -> None:
-    """the star of a file of a batch (its APERO name), for its line, with
-    its known planets and its candidate TOIs"""
-    star = star_of_file(item['path'])
-    entry = star.get('entry') or {}
-    item['star'] = dict(raw=star.get('raw'), source=star.get('source'),
-                        apero=star.get('apero'), target=star.get('target'),
-                        spt=entry.get('spt'), status=entry.get('status'))
+    """the star of a file of a batch (its APERO name), or the star given
+    (a survey's), for its line, with its known planets and its candidate
+    TOIs"""
+    given = item.get('given')
+    if given:
+        item['star'] = dict(raw=given['name'], source='survey', apero=None,
+                            target=given['name'], spt=given.get('sptype'),
+                            status=None)
+        star = dict(target=given['name'])
+    else:
+        star = star_of_file(item['path'])
+        entry = star.get('entry') or {}
+        item['star'] = dict(raw=star.get('raw'), source=star.get('source'),
+                            apero=star.get('apero'),
+                            target=star.get('target'), spt=entry.get('spt'),
+                            status=entry.get('status'))
     if star.get('target'):
         known, cands = _star_planets(star['target'])
         item['star'].update(planets=known, tois=cands)
@@ -2292,13 +2324,18 @@ def _batch_archives(batch: Dict[str, Any], item: Dict[str, Any]):
     (gathered first unless on disk): the series, its sources, the star"""
     from koloa.gather import folder_name, gather
     target = (item['star'] or {}).get('target') or ''
+    files = [dict(path=path) for path in item.get('files')
+             or ([item['path']] if item['path'] else [])]
     if not target:
         item['note'] = 'no star: the file alone'
-        data, source, _ = series_of([dict(path=item['path'])])
+        data, source, _ = series_of(files)
         return data, source, ''
     folder = os.path.join(batch['root'], folder_name(target))
-    if batch['regather'] or not os.path.exists(os.path.join(
-            folder, 'manifest.json')):
+    # a batch carried to a machine without the network has its archives
+    #   with it, and asks for nothing (gather False)
+    if batch.get('gather', True) and (
+            batch['regather'] or not os.path.exists(os.path.join(
+                folder, 'manifest.json'))):
         item['stage'] = 'gather'
         try:
             gather(target, batch['root'], dace=True, carmenes=True,
@@ -2307,7 +2344,7 @@ def _batch_archives(batch: Dict[str, Any], item: Dict[str, Any]):
             item['note'] = f'archives not gathered ({type(err).__name__}: ' \
                 f'{err})'
     item['stage'] = None
-    asked = dict(files=[dict(path=item['path'])], target=target,
+    asked = dict(files=files, target=target,
                  root=batch['root'], dace=True, carmenes=True, vizier=True,
                  rules=batch.get('rules', True))
     whole, data, source, _, rows, _ = chosen_series(**asked)
@@ -2418,7 +2455,8 @@ def _run_batch(bid: str) -> None:
             if batch['archives']:
                 data, source, target = _batch_archives(batch, item)
             else:
-                data, _, _ = selection(dict(files=[dict(path=item['path'])]))
+                data, _, _ = selection(dict(files=[
+                    dict(path=path) for path in item['files']]))
             if batch['cancel']:
                 item['status'] = 'stopped'
                 continue
@@ -2494,10 +2532,12 @@ def batch_open(bid: str, index: int) -> Dict[str, Any]:
     detailed = dict(trend=batch['trend'] >= 1, curvature=batch['trend'] >= 2,
                     dace=arch, carmenes=arch, vizier=arch,
                     exclude=', '.join(left), include='')
-    page = dict(target=target, files=[dict(path=item['path'], label='')],
+    files = [dict(path=path, label='') for path in item.get('files')
+             or ([item['path']] if item['path'] else [])]
+    page = dict(target=target, files=files,
                 root=root, outdir='', detailed=detailed, clip=False,
                 view=None, periods=None, subtract=[], rules=mode)
-    return dict(page=page, rv=velocities([dict(path=item['path'])], target,
+    return dict(page=page, rv=velocities(files, target,
                                          root, arch, arch, arch,
                                          exclude=left, rules=mode),
                 quick=quick_state(item['qid']), notes=[],
@@ -3458,8 +3498,7 @@ def _home_short(path: str) -> str:
 # The results remembered: a quick look kept, to be recalled as it was
 # =============================================================================
 #: where the results remembered are kept, one folder each
-REMEMBERED = os.path.join(os.path.expanduser('~'), '.cache', 'koloa',
-                          'remembered')
+REMEMBERED = cache('remembered')
 
 
 def _sha1(path: str) -> str:
@@ -3815,6 +3854,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(quick_state(query['id']))
             if url.path == '/api/remembered':
                 return self._json(remembered())
+            if url.path == '/api/survey':
+                from koloa import gui_survey
+                return self._json(gui_survey.route(url.path, query))
             if url.path == '/api/batch':
                 return self._json(batch_state(query['id']))
             if url.path == '/api/listfiles':
@@ -3951,6 +3993,18 @@ class Handler(BaseHTTPRequestHandler):
                                             is not False))
             if path == '/api/batchstop':
                 return self._json(stop_batch(body.get('id', '')))
+            if path.startswith('/api/survey/'):
+                from koloa import gui_survey
+                return self._json(gui_survey.route(path, body))
+            if path.startswith('/api/term/'):
+                # a shell: only for the page that has the key of this
+                #   server (koloa.terminal)
+                from koloa import terminal
+                try:
+                    return self._json(terminal.route(
+                        path, body, self.headers.get('X-Koloa-Key')))
+                except PermissionError as err:
+                    return self._json(dict(error=str(err)), 403)
             if path == '/api/batch_open':
                 return self._json(batch_open(body.get('id', ''),
                                              body.get('index', 0)))
@@ -3997,7 +4051,10 @@ def serve(port: int = 8765, browser: bool = True):
             continue
     else:
         raise OSError(f'no free port from {port} to {port + 19}')
-    url = f'http://127.0.0.1:{server.server_address[1]}/'
+    # the key of this server in the address: the terminal of the page
+    #   (a shell) answers only to who has it
+    from koloa import terminal
+    url = f'http://127.0.0.1:{server.server_address[1]}/?key={terminal.KEY}'
     # exoplanet.eu's catalogue, when not kept yet: fetched in the
     #   background (its server takes minutes), the pages go on without it
     try:
@@ -4019,6 +4076,7 @@ def serve(port: int = 8765, browser: bool = True):
     except KeyboardInterrupt:
         pass
     finally:
+        terminal.close_all()
         for job in JOBS.values():
             if job.returncode is None:
                 job.proc.terminate()

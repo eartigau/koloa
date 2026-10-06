@@ -47,6 +47,7 @@ import numpy as np
 
 from koloa.log import log
 from koloa.periodogram import gls
+from koloa.paths import cache
 
 # =============================================================================
 # Define variables
@@ -56,7 +57,7 @@ MAST = 'https://mast.stsci.edu/api/v0/invoke'
 TESSCUT = 'https://mast.stsci.edu/tesscut/api/v0.1/sector'
 DOWNLOAD = 'https://mast.stsci.edu/api/v0.1/Download/file?uri='
 #: where the light curves are kept (they are public, and shared by runs)
-CACHE = os.path.join(os.path.expanduser('~'), '.cache', 'koloa', 'tess')
+CACHE = cache('tess')
 #: the light curves of a sector, the best first: (provenance, exposure [s])
 PREFERENCE = [('SPOC', 120), ('TESS-SPOC', None), ('QLP', None)]
 #: the flux column of each provenance (QLP's KSPSAP is flattened by a

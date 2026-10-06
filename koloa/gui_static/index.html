@@ -10,6 +10,10 @@
   <link rel="stylesheet" href="/static/theme.css">
   <link rel="stylesheet" href="/static/gui.css">
   <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+  <!-- the terminal of the survey tab -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 </head>
 <body>
   <div class="bg-orb orb-a"></div>
@@ -31,6 +35,7 @@
     <button type="button" class="tab on" data-tab="analysis" data-i18n="tab_analysis">Analysis</button>
     <button type="button" class="tab" data-tab="remembered"><span data-i18n="tab_remembered">Remembered targets</span> <span class="count" id="nrem"></span></button>
     <button type="button" class="tab" data-tab="batch" data-i18n="tab_batch">Batch FIP</button>
+    <button type="button" class="tab" data-tab="survey" data-i18n="tab_survey">Survey</button>
   </nav>
 
   <main class="layout" id="tab-analysis">
@@ -231,6 +236,104 @@
     </section>
   </main>
 
+  <!-- a survey: a sample from SIMBAD, its archives, its files, its batch -->
+  <main class="layout" id="tab-survey" hidden>
+    <section class="card span-3">
+      <h2><span data-i18n="sv_title">A survey</span> <button type="button" class="info" data-help="survey" aria-label="?">i</button></h2>
+      <p class="hint" data-i18n="sv_hint">The stars that meet a few constraints, asked of SIMBAD; which of them have velocities in the archives or in your files; then the quick FIP of those ticked, here or on another machine.</p>
+      <div class="row svform">
+        <label><span data-i18n="sv_from">Spectral type from</span> <input id="sv-from" type="text" value="M0" autocomplete="off" class="short"></label>
+        <label><span data-i18n="sv_to">to</span> <input id="sv-to" type="text" value="M9" autocomplete="off" class="short"></label>
+        <label><span data-i18n="sv_dmax">within [pc]</span> <input id="sv-dmax" type="number" value="15" min="1" step="1" class="short"></label>
+        <label><span data-i18n="sv_dec">declination from</span> <input id="sv-decmin" type="number" value="-90" min="-90" max="90" class="short"></label>
+        <label><span data-i18n="sv_to">to</span> <input id="sv-decmax" type="number" value="90" min="-90" max="90" class="short"></label>
+        <label><span data-i18n="sv_vmax">V brighter than</span> <input id="sv-vmax" type="number" step="0.5" class="short"></label>
+        <label><input type="checkbox" id="sv-dwarfs" checked> <span data-i18n="sv_dwarfs">dwarfs only</span></label>
+        <button type="button" id="sv-ask" class="go" data-i18n="sv_ask">Ask SIMBAD</button><span class="hint" id="sv-status"></span>
+      </div>
+    </section>
+    <section class="card span-3" id="sv-card" hidden>
+      <div class="row">
+        <button type="button" id="sv-check" data-i18n="sv_check">Check the archives</button>
+        <label><input type="checkbox" id="sv-dace" checked> DACE</label>
+        <span class="hint" data-i18n="sv_check_hint">of the stars ticked (of all when none is): DACE, CARMENES DR1, the surveys on VizieR</span>
+        <span class="hint" id="sv-checkstatus"></span>
+      </div>
+      <div class="row">
+        <span class="hint" data-i18n="sv_folders">Your files (LBL...), in the folders:</span>
+        <span class="picker"><input id="sv-folders" type="text" autocomplete="off" class="wide" placeholder="/data/nirps/lbl, /data/spirou/lbl"><button type="button" data-pick="folder" data-into="sv-folders">...</button></span>
+        <input id="sv-pattern" type="text" value="*.rdb" autocomplete="off" class="pattern">
+        <button type="button" id="sv-match" data-i18n="sv_match">Match the files</button><span class="hint" id="sv-matchstatus"></span>
+      </div>
+      <div class="row">
+        <span class="hint" data-i18n="sv_tick">Tick:</span>
+        <button type="button" class="small" id="sv-tickdata" data-i18n="sv_tick_data">those with data</button>
+        <button type="button" class="small" id="sv-tickfiles" data-i18n="sv_tick_files">those with files</button>
+        <button type="button" class="small" id="sv-tickall" data-i18n="sv_tick_all">all</button>
+        <button type="button" class="small" id="sv-ticknone" data-i18n="sv_tick_none">none</button>
+        <input id="sv-filter" type="text" autocomplete="off" class="pattern" placeholder="GJ 8, M4...">
+        <span class="hint" id="sv-count"></span>
+      </div>
+      <div id="sv-table"></div>
+    </section>
+    <section class="card span-3" id="sv-batchcard" hidden>
+      <h2><span data-i18n="sv_batch">The batch of the stars ticked</span> <button type="button" class="info" data-help="survey_batch" aria-label="?">i</button></h2>
+      <div class="row">
+        <label><input type="checkbox" id="sv-rules" checked> <span data-i18n="batch_rules">of them, the best release of the same spectra, and not the datasets that constrain nothing</span></label>
+      </div>
+      <div class="row">
+        <button type="button" id="sv-run" class="go" data-i18n="sv_run">Run it here</button>
+        <span class="hint" data-i18n="sv_run_hint">each star with its files and every archive of it, in the Batch FIP tab</span>
+        <span class="hint" id="sv-runstatus"></span>
+      </div>
+      <div class="row svform">
+        <label><span data-i18n="sv_name">Or pack it as</span> <input id="sv-name" type="text" value="koloa_batch" autocomplete="off"></label>
+        <label><span data-i18n="sv_out">made in</span> <span class="picker"><input id="sv-out" type="text" value="batches" autocomplete="off"><button type="button" data-pick="folder" data-into="sv-out">...</button></span></label>
+        <label><span data-i18n="sv_root">where it will be there (its ROOT)</span> <input id="sv-root" type="text" autocomplete="off" class="wide" placeholder="/scratch/me/koloa_batch"></label>
+        <label><span data-i18n="sv_jobs">stars at once</span> <input id="sv-jobs" type="number" value="6" min="1" class="short"></label>
+        <label><input type="checkbox" id="sv-gather" checked> <span data-i18n="sv_gather">gather the archives first</span></label>
+        <label><input type="checkbox" id="sv-tess"> <span data-i18n="sv_tess">with the light curves</span></label>
+        <button type="button" id="sv-pack" class="go" data-i18n="sv_pack">Pack it</button>
+      </div>
+      <p class="hint" id="sv-packstatus"></p>
+      <div class="row">
+        <label><span data-i18n="sv_results">The results of a batch folder</span> <span class="picker"><input id="sv-results" type="text" autocomplete="off" class="wide"><button type="button" data-pick="folder" data-into="sv-results">...</button></span></label>
+        <button type="button" id="sv-open" data-i18n="sv_open">Open them</button><span class="hint" id="sv-openstatus"></span>
+      </div>
+    </section>
+    <section class="card span-3" id="term-card">
+      <h2><span data-i18n="term_title">A terminal, to the machine that runs the batch</span> <button type="button" class="info" data-help="terminal" aria-label="?">i</button></h2>
+      <div class="row">
+        <button type="button" id="term-new" data-i18n="term_new">New terminal</button>
+        <select id="term-route"></select>
+        <button type="button" id="term-go" data-i18n="term_go">Go there</button>
+        <button type="button" id="term-remember" data-i18n="term_remember">Remember how I got here...</button>
+        <button type="button" id="term-forget" class="small" data-i18n="term_forget_btn">forget</button>
+        <span class="hint" id="term-status"></span>
+      </div>
+      <div class="row">
+        <span class="hint" data-i18n="term_types">Typed for you, to read then run with Enter:</span>
+        <button type="button" class="small" id="term-copy" data-i18n="term_copy">copy the tar there</button>
+        <button type="button" class="small" id="term-launch" data-i18n="term_launch">unpack and launch</button>
+        <button type="button" class="small" id="term-follow" data-i18n="term_follow">follow its log</button>
+        <button type="button" class="small" id="term-fetch" data-i18n="term_fetch">bring the results back</button>
+      </div>
+      <div id="term-tabs" class="row"></div>
+      <div id="term-box"></div>
+      <dialog id="route-dialog">
+        <h3 data-i18n="route_title">How to get there</h3>
+        <p class="hint" data-i18n="route_hint">The lines typed in this terminal that it showed (a password is never shown: never kept). Correct them: one line each, as you would type them.</p>
+        <label><span data-i18n="route_name">Name</span> <input id="route-name" type="text" autocomplete="off"></label>
+        <label><span data-i18n="route_host">Host, as ssh and rsync name it</span> <input id="route-host" type="text" autocomplete="off" placeholder="me@server"></label>
+        <label><span data-i18n="route_folder">Folder of the batches there</span> <input id="route-folder" type="text" autocomplete="off" class="wide" placeholder="/data/me/koloa_batches"></label>
+        <textarea id="route-lines" rows="6" spellcheck="false"></textarea>
+        <p class="hint bad" id="route-error"></p>
+        <div class="row"><button type="button" id="route-save" class="go" data-i18n="route_save">Remember</button>
+          <button type="button" id="route-cancel" class="small" data-i18n="cancel">Cancel</button></div>
+      </dialog>
+    </section>
+  </main>
+
   <footer class="footer">
     <p>
       <a href="https://github.com/eartigau/koloa" target="_blank">Source on GitHub</a>
@@ -240,5 +343,6 @@
   </footer>
   <script src="/static/common.js"></script>
   <script src="/static/gui.js"></script>
+  <script src="/static/survey.js"></script>
 </body>
 </html>

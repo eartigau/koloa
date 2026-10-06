@@ -48,12 +48,13 @@ from typing import Any, Dict, List, Optional, Sequence
 import numpy as np
 
 from koloa.log import log
+from koloa.paths import cache
 
 # =============================================================================
 # Define variables
 # =============================================================================
 #: where the light curves are kept (they are public, and shared by runs)
-CACHE = os.path.join(os.path.expanduser('~'), '.cache', 'koloa')
+CACHE = cache()
 #: the missions, in the order they are tried after TESS
 MISSIONS = ('kepler', 'k2', 'corot')
 #: their names

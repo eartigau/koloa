@@ -48,13 +48,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from koloa.log import log
+from koloa.paths import cache
 
 # =============================================================================
 # Define variables
 # =============================================================================
 #: where the copy of the database is kept
-FOLDER = os.path.join(os.path.expanduser('~'), '.cache', 'koloa',
-                      'apero_astrometrics')
+FOLDER = cache('apero_astrometrics')
 #: a folder of YAML files to read instead (an export of APERO's)
 ENV_FOLDER = 'KOLOA_APERO_ASTROMETRICS'
 #: the assets server of APERO (its DRS.ASSETS_URLS)

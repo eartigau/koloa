@@ -71,6 +71,7 @@ import numpy as np
 
 from koloa.data import RVData, merge
 from koloa.log import log, outcome, step
+from koloa.paths import cache
 
 # =============================================================================
 # Define variables
@@ -80,8 +81,7 @@ GAVO_TAP = 'https://dc.g-vo.org/tap/sync'
 #: SIMBAD's TAP service
 SIMBAD_TAP = 'https://simbad.cds.unistra.fr/simbad/sim-tap/sync'
 #: where the list of the stars of CARMENES DR1 is kept, once fetched
-CARMENES_CACHE = os.path.join(os.path.expanduser('~'), '.cache', 'koloa',
-                              'carmenes_objects.json')
+CARMENES_CACHE = cache('carmenes_objects.json')
 #: how far from SIMBAD's position a CARMENES star may be [degrees]
 CARMENES_RADIUS = 0.005
 #: the scalar columns of carmenes.rvs (its per-order columns are left out)
