@@ -1480,6 +1480,8 @@ function transitNote(f) {
       + `${e.shift >= 0 ? '+' : ''}${span(e.shift)} \u00b1 ${span(e.shift_err)}${sig}, K ${pm(e.K_free, e.K_free_err, 2)} m/s`) + '</span>';
 }
 
+// the decimals of a period: two figures of its error, four at least
+const periodDigits = (e) => (e > 0 ? Math.min(8, Math.max(4, 1 - Math.floor(Math.log10(e)))) : 4);
 const pm = (v, e, d) => `${v.toFixed(d)}${Number.isFinite(e) ? ` \u00b1 ${e.toFixed(d)}` : ''}`;
 
 function showFold(id) {
@@ -1501,9 +1503,9 @@ function showFold(id) {
   const pubNote = f.published ? ` \u00b7 <span class="pubnote">\u2605 ${esc(t('published'))} (${esc(f.published.reference)}): `
     + `P = ${f.published.period.toFixed(4)} d, K = ${f.published.K.toFixed(2)} m/s, e = ${f.published.e.toFixed(2)}</span>` : '';
   $('foldnote').innerHTML = f.kind === 'kepler'
-    ? `<b>${foldLabel(base)}</b> ${esc(t('fmodel_kepler_short'))}: P = ${pm(f.period, f.P_err, 4)} d, K = ${pm(f.K, f.K_err, 2)} m/s, `
+    ? `<b>${foldLabel(base)}</b> ${esc(t('fmodel_kepler_short'))}: P = ${pm(f.period, f.P_err, periodDigits(f.P_err))} d, K = ${pm(f.K, f.K_err, 2)} m/s, `
       + `e = ${pm(f.e, f.e_err, 2)}, \u03c9 = ${f.omega.toFixed(0)}\u00b0, rms ${f.rms.toFixed(2)} m/s \u00b7 ${esc(t('fold_note_kep'))}`
-    : `<b>${foldLabel(base)}</b>: P = ${f.P_err ? pm(f.period, f.P_err, Math.min(8, Math.max(4, 1 - Math.floor(Math.log10(f.P_err))))) : f.period.toFixed(4)} d, K = ${f.K.toFixed(2)} \u00b1 ${f.K_err.toFixed(2)} m/s, `
+    : `<b>${foldLabel(base)}</b>: P = ${f.P_err ? pm(f.period, f.P_err, periodDigits(f.P_err)) : f.period.toFixed(4)} d, K = ${f.K.toFixed(2)} \u00b1 ${f.K_err.toFixed(2)} m/s, `
       + `rms ${f.rms.toFixed(2)} m/s \u00b7 ${esc(t('fold_note'))}`;
   $('foldnote').innerHTML += pubNote + transitNote(f)
     // the minimum mass of a Keplerian orbit; the mass of a transiting one

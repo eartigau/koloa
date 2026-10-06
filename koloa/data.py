@@ -48,6 +48,8 @@ TIME_NAMES = ['rjd', 'bjd', 'mjd', 'jd', 'time', 't']
 RV_NAMES = ['vrad', 'rv', 'vel', 'velocity', 'y']
 ERR_NAMES = ['svrad', 'sig_vrad', 'erv', 'rv_err', 'e_rv', 'err', 'error',
              'sigma']
+#: the names of a column that gives the instrument of each velocity
+INST_NAMES = ('inst', 'instrument', 'ins_name', 'instrument_name')
 
 
 # =============================================================================
@@ -586,8 +588,9 @@ class RVData:
         :param time: str or None, the time column
         :param rv: str or None, the velocity column
         :param err: str or None, the error column
-        :param inst: str or None, the instrument column (one instrument when
-                     None)
+        :param inst: str or None, the instrument column; None: a column
+                     named inst, instrument or ins_name when it holds
+                     names, else one instrument
         :param name: str or None, the name of the target
         :param indicators: list of str or None, which indicators to keep
                            (all of them when None)
@@ -627,6 +630,14 @@ class RVData:
         if time is None or rv is None or err is None:
             raise ValueError(f'Could not find the time, velocity and error '
                              f'columns in {filename}: {header}')
+        # a column named for it gives the instrument of each velocity, when
+        #   it holds names (HARPS03, HARPS15: each its own zero point)
+        if inst is None:
+            inst = next((col for col in header
+                         if col.lower() in INST_NAMES and col not in
+                         (time, rv, err)
+                         and not np.any(np.isfinite(columns[col]))
+                         and np.all(texts[col] != '')), None)
         # every column with an error column of its own is an indicator
         used = {time, rv, err}
         found = {}

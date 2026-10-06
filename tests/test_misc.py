@@ -294,3 +294,25 @@ def test_a_merge_keeps_each_instrument_on_its_own_zero_point():
     both = merge([lbl, carm])
     for inst in both.instruments:
         assert abs(np.median(both.rv[both.inst == inst])) < 2.0
+
+
+def test_a_csv_names_its_instruments(tmp_path):
+    """a column named inst (or instrument) that holds names gives the
+    instrument of each velocity, each its own zero point (HARPS before and
+    after its change of fibres); numbers there, or no such column: one
+    instrument"""
+    from koloa.data import RVData
+    path = tmp_path / 'two.csv'
+    path.write_text('rjd,vrad,svrad,inst,OBJECT\n' + ''.join(
+        f'{60000 + k},{10.0 + (15.0 if k >= 6 else 0.0)},1.0,'
+        f'{"HARPS15" if k >= 6 else "HARPS03"},GJ 1\n' for k in range(10)))
+    data = RVData.from_csv(str(path))
+    assert data.instruments == ['HARPS03', 'HARPS15']
+    assert data.zero_point['HARPS15'] - data.zero_point['HARPS03'] == 15.0
+    assert 'OBJECT' in data.meta and 'inst' not in data.meta
+    path.write_text('rjd,vrad,svrad,inst\n' + ''.join(
+        f'{60000 + k},10.0,1.0,{k % 2}\n' for k in range(10)))
+    assert RVData.from_csv(str(path)).instruments == ['inst']
+    path.write_text('rjd,vrad,svrad\n' + ''.join(
+        f'{60000 + k},10.0,1.0\n' for k in range(10)))
+    assert RVData.from_csv(str(path)).instruments == ['inst']
