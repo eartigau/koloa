@@ -35,7 +35,7 @@ def test_a_spectral_type_as_a_number():
 
 
 def _simbad(monkeypatch):
-    """SIMBAD's answer to the two questions of a sample"""
+    """SIMBAD's answer to the three questions of a sample"""
     from koloa import gather
     asked = []
 
@@ -48,6 +48,14 @@ def _simbad(monkeypatch):
                     dict(oidref='2', id='GJ   65 B'),
                     dict(oidref='3', id='GJ 65'),
                     dict(oidref='5', id='HD 1')]
+        if 'FROM mesVar' in query:  # the same paper twice: once is enough
+            return [dict(oidref='1', period='87.3',
+                         bibcode='2015MNRAS.452.2745S'),
+                    dict(oidref='1', period='82.8',
+                         bibcode='2023A&A...672A..52F'),
+                    dict(oidref='1', period='82.8',
+                         bibcode='2023A&A...672A..52F'),
+                    dict(oidref='2', period='', bibcode='2016ApJ...821...93N')]
         return [
             dict(oid='1', main_id='BD-15  6290', ra='343.3197', dec='-14.2637',
                  plx_value='214.0', plx_err='0.05', sp_type='M3.5V',
@@ -83,6 +91,12 @@ def test_a_sample_from_simbad(monkeypatch):
     assert star['distance'] == pytest.approx(1000 / 214.0)
     assert star['ids']['HIP'] == 'HIP 113020' and star['V'] == 10.19
     assert star['near'] is None
+    # the rotation periods SIMBAD lists, the latest paper first
+    assert "v.vartyp = 'ROT'" in asked[2] and 'plx_value >= 66.6' in asked[2]
+    assert star['rotation'] == [
+        dict(period=82.8, source='2023A&A...672A..52F'),
+        dict(period=87.3, source='2015MNRAS.452.2745S')]
+    assert stars[0]['rotation'] == [] and stars[1]['rotation'] == []
     # a system and its component: each told of the other
     assert stars[0]['near'] == 'GJ 65' and stars[1]['near'] == 'GJ 65 B'
     assert stars[0]['V'] is None and stars[0]['G'] == 10.8
@@ -105,8 +119,8 @@ def test_what_the_archives_have_of_a_star(tmp_path, monkeypatch):
     _simbad(monkeypatch)
     stars = survey.sample(('M0', 'M9'), 15.0)
     monkeypatch.setattr(gather, 'carmenes_objects', lambda refresh=False: [
-        dict(ra='343.3197', dec='-14.2637', nobs='69',
-             carmenes_id='J22532-142')])
+        dict(ra='343.3197', dec='-14.2637', nobs='69', p_rot='81.0',
+             p_rot_source='DA19', carmenes_id='J22532-142')])
     monkeypatch.setattr(published, 'survey_stars',
                         lambda survey, refresh=False, timeout=120.0: (
                             [('GJ876', 343.3197, -14.2637)]
@@ -116,6 +130,9 @@ def test_what_the_archives_have_of_a_star(tmp_path, monkeypatch):
 
     def dace_rv(ident, target, folder, api_key=None, refresh=False):
         folders.append(folder)
+        if ident['gj'] == 'GJ 65':  # known, with no velocity: nothing
+            return RVData(np.array([]), np.array([]), np.array([]),
+                          inst=np.array([], dtype=str))
         if ident['gj'] != 'GJ 876':
             return None
         return RVData(np.arange(12.0), np.zeros(12), np.ones(12),
@@ -130,9 +147,16 @@ def test_what_the_archives_have_of_a_star(tmp_path, monkeypatch):
     assert arch['carmenes'] == 69 and arch['surveys'] == ['teklu25',
                                                          'rvbank20']
     assert arch['n'] == 81
+    # the rotation period of CARMENES DR1 after those of SIMBAD, once
+    assert stars[-1]['rotation'][-1] == dict(period=81.0,
+                                             source='CARMENES DR1 (DA19)')
+    survey.check_star(stars[-1], str(tmp_path / 'arch'))
+    assert len(stars[-1]['rotation']) == 3
     assert os.path.join('arch', 'GJ_876', 'rv', 'dace') in ''.join(folders)
     assert survey.has_data(stars[-1]) and not survey.has_data(stars[0])
     assert stars[0]['archives']['dace'] is None
+    assert stars[1]['archives']['dace'] is None
+    assert not survey.has_data(stars[1])
     # spectrograph by spectrograph: the eras of HARPS and its release in
     #   the RVBank are one line, with the velocities DACE counted
     assert stars[-1]['summary'] == [

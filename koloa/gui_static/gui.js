@@ -2056,6 +2056,9 @@ function showTab(name) {
   $('tab-remembered').hidden = name !== 'remembered';
   $('tab-batch').hidden = name !== 'batch';
   $('tab-survey').hidden = name !== 'survey';
+  // the batch and the survey over the whole window, their tabs and the
+  //   banner with them
+  document.body.classList.toggle('wide', name === 'batch' || name === 'survey');
   if (name === 'survey' && window.surveyShown) surveyShown();
   if (name === 'remembered') loadRemembered();
   else if (view) setTimeout(() => { syncSliders(); syncPeriods(); }, 50);

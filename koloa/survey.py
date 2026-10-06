@@ -198,8 +198,10 @@ def sample(sptype: Sequence[str] = ('M0', 'M9'), dmax: float = 15.0,
              has one, SIMBAD's otherwise), main (SIMBAD's), ra, dec [deg],
              distance [pc], plx and plx_err [mas], sptype, spnum, kind,
              otype, V, G, J, K, rv [km/s], ids ({catalogue: name}), names
-             (every name kept) and near (another object of the sample
-             within NEAR arcsec, or None)
+             (every name kept), near (another object of the sample within
+             NEAR arcsec, or None) and rotation (the rotation periods
+             SIMBAD lists, the latest first: period [days] and source;
+             check() adds that of CARMENES DR1)
     """
     from koloa.gather import SIMBAD_TAP, _tap
     low, high = sp_number(sptype[0]), sp_number(sptype[1])
@@ -228,6 +230,24 @@ def sample(sptype: Sequence[str] = ('M0', 'M9'), dmax: float = 15.0,
     names: Dict[str, List[str]] = {}
     for row in idents:
         names.setdefault(row['oidref'], []).append(_clean(row['id']))
+    # the rotation periods SIMBAD lists (its table of variability: the
+    #   measurements of type ROT, each with its paper), the latest first
+    spins: Dict[str, List[Dict[str, Any]]] = {}
+    try:
+        for row in _tap(SIMBAD_TAP, (
+                f'SELECT TOP {10 * MAXREC} v.oidref, v.period, v.bibcode '
+                f'FROM mesVar AS v JOIN basic AS b ON b.oid = v.oidref '
+                f"WHERE {where} AND v.vartyp = 'ROT' AND v.period IS NOT "
+                f'NULL'), timeout):
+            period = _number(row['period'])
+            one = dict(period=period, source=_clean(row['bibcode']))
+            if period and one not in spins.setdefault(row['oidref'], []):
+                spins[row['oidref']].append(one)
+    except (OSError, ValueError) as err:  # the sample without them
+        log(f'SIMBAD: its rotation periods could not be asked ({err})',
+            'warn')
+    for found in spins.values():
+        found.sort(key=lambda one: one['source'][:4], reverse=True)
     out = []
     for row in rows:
         num, kind = sp_number(row['sp_type']), sp_kind(row['sp_type'])
@@ -255,7 +275,8 @@ def sample(sptype: Sequence[str] = ('M0', 'M9'), dmax: float = 15.0,
             distance=1000.0 / plx, plx=plx, plx_err=_number(row['plx_err']),
             sptype=_clean(row['sp_type']), spnum=num, kind=kind,
             otype=_clean(row['otype']), rv=_number(row['rvz_radvel']),
-            ids=ids, names=mine, near=None, **mags))
+            ids=ids, names=mine, near=None,
+            rotation=list(spins.get(row['oid'], [])), **mags))
     out.sort(key=lambda star: star['distance'])
     _neighbours(out)
     log(f'SIMBAD: {len(out)} stars from {sptype[0]} to {sptype[1]} within '
@@ -318,6 +339,14 @@ def check_star(star: Dict[str, Any], root: str = 'archives',
         found = carmenes_star(star['ra'], star['dec'])
         if found is not None:
             out['carmenes'] = int(float(found.get('nobs') or 0)) or 1
+            # its rotation period, beside those SIMBAD lists
+            spin = _number(found.get('p_rot'))
+            mine = star.setdefault('rotation', [])
+            if spin and not any(one['source'].startswith('CARMENES')
+                                for one in mine):
+                mine.append(dict(period=spin, source='CARMENES DR1' + (
+                    f' ({_clean(found.get("p_rot_source"))})'
+                    if _clean(found.get('p_rot_source')) else '')))
     except (OSError, ValueError) as err:
         out['carmenes_error'] = str(err)
     for survey in kpub.SURVEYS:
@@ -332,7 +361,8 @@ def check_star(star: Dict[str, Any], root: str = 'archives',
         try:
             data = dace_rv(ident_of(star), star['name'], folder,
                            api_key=api_key, refresh=refresh)
-            if data is not None:
+            # a star DACE knows with no velocity of it has nothing there
+            if data is not None and data.n:
                 out['dace'] = dict(n=int(data.n), instruments={
                     str(inst): int(np.sum(data.inst == inst))
                     for inst in data.instruments})

@@ -31,7 +31,7 @@ from koloa import survey
 SURVEYS: Dict[str, Dict[str, Any]] = {}
 #: what the page shows of a star
 SHOWN = ('name', 'main', 'sptype', 'spnum', 'distance', 'ra', 'dec', 'V',
-         'G', 'J', 'K', 'near', 'archives', 'summary')
+         'G', 'J', 'K', 'near', 'archives', 'summary', 'rotation')
 
 
 # =============================================================================

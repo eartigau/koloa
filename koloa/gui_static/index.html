@@ -272,11 +272,7 @@
         <button type="button" class="small" id="sv-tickfiles" data-i18n="sv_tick_files">those with files</button>
         <button type="button" class="small" id="sv-tickall" data-i18n="sv_tick_all">all</button>
         <button type="button" class="small" id="sv-ticknone" data-i18n="sv_tick_none">none</button>
-        <select id="sv-show">
-          <option value="all" data-i18n="sv_show_all">every star</option>
-          <option value="data" data-i18n="sv_show_data">those with data</option>
-          <option value="none" data-i18n="sv_show_none">those with none</option>
-        </select>
+        <label><input type="checkbox" id="sv-somedata"> <span data-i18n="sv_somedata">some data</span></label>
         <input id="sv-filter" type="text" autocomplete="off" class="pattern" placeholder="GJ 8, M4, HARPS...">
         <span class="hint" id="sv-count"></span>
       </div>

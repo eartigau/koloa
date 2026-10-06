@@ -19,16 +19,19 @@ const svHas = (star) => {
 const svKnown = (star) => (star.summary || []).reduce((sum, one) => sum + (one.n || 0), 0);
 const svShown = () => {
   const words = $('sv-filter').value.trim().toUpperCase();
-  const show = $('sv-show').value;
+  // some data: not the stars cross-matched that have nothing (no velocity
+  //   in an archive, no file); a star not cross-matched yet stays
+  const some = $('sv-somedata').checked;
   const rows = (survey ? survey.stars : []).filter((star) => (!words
     || `${star.name} ${star.main} ${star.sptype} ${(star.summary || []).map((one) => one.name).join(' ')}`.toUpperCase().includes(words))
-    && (show === 'all' || (show === 'data') === svHas(star)));
+    && (!some || svHas(star) || !star.archives));
   const { key, dir } = svSort;
   const val = (star) => {
     if (key === 'known') return star.archives ? svKnown(star) : -1;
     if (key === 'summary') return star.archives ? (star.summary || []).length : -1;
     if (key === 'files') return (star.files || []).length;
     if (key === 'tick') return svTicked.has(star.name) ? 1 : 0;
+    if (key === 'rotation') return (star.rotation || []).length ? star.rotation[0].period : null;
     return star[key];
   };
   return rows.sort((a, b) => {
@@ -37,6 +40,16 @@ const svShown = () => {
     return dir * ((x ?? Infinity) - (y ?? Infinity));
   });
 };
+
+// the rotation period of a star: the latest SIMBAD lists (its table of
+//   variability), else that of CARMENES DR1; the others under the cursor
+function svRotation(star) {
+  const all = star.rotation || [];
+  if (!all.length) return '';
+  const fmt = (p) => (p < 10 ? p.toFixed(2) : p < 100 ? p.toFixed(1) : p.toFixed(0));
+  const tip = all.map((one) => `${+one.period.toPrecision(5)} d \u00b7 ${one.source}`).join('\n');
+  return `<span title="${esc(tip)}">${fmt(all[0].period)}${all.length > 1 ? ` <span class="hint">+${all.length - 1}</span>` : ''}</span>`;
+}
 
 // the summary of the cross-match: how many stars have velocities, and
 //   spectrograph by spectrograph (the stars, the velocities counted, the
@@ -62,7 +75,7 @@ function svRender() {
   if (!survey) return;
   svOverview();
   const cols = [['tick', ''], ['name', t('sv_col_name')], ['main', 'SIMBAD'], ['spnum', t('sv_col_type')], ['distance', 'd [pc]'],
-    ['V', 'V'], ['summary', t('sv_col_arch')], ['known', t('sv_col_known')], ['files', t('sv_col_files')]];
+    ['V', 'V'], ['rotation', t('sv_col_rot')], ['summary', t('sv_col_arch')], ['known', t('sv_col_known')], ['files', t('sv_col_files')]];
   const head = cols.map(([key, label]) => `<th data-svsort="${key}" class="sortable${svSort.key === key ? ' sorted' : ''}">${esc(label)}`
     + `${svSort.key === key ? (svSort.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('');
   const rows = svShown();
@@ -81,6 +94,7 @@ function svRender() {
         + `<td><b>${esc(star.name)}</b>${star.near ? ` <span class="hint" title="${esc(t('sv_near'))} ${esc(star.near)}">⧉</span>` : ''}</td>`
         + `<td class="src">${esc(star.main)}</td><td>${esc(star.sptype)}</td><td class="num">${num(star.distance, 2)}</td>`
         + `<td class="num">${num(star.V ?? star.G, 1)}${star.V === null && star.G !== null ? '<span class="hint">G</span>' : ''}</td>`
+        + `<td class="num">${svRotation(star)}</td>`
         + `<td class="svarch">${arch}</td><td class="num">${a ? (svKnown(star) || '') : ''}</td><td>${files}</td></tr>`;
     }).join('') + '</table></div>';
   const withData = survey.stars.filter(svHas).length;
@@ -439,7 +453,7 @@ document.addEventListener('change', (e) => {
     svRender();
   }
   if (e.target.id === 'term-route') svServerRoot();
-  if (e.target.id === 'sv-show') svRender();
+  if (e.target.id === 'sv-somedata') svRender();
 });
 document.addEventListener('input', (e) => {
   if (e.target.id === 'sv-filter') svRender();
