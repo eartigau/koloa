@@ -227,6 +227,14 @@ def translate(html: str, lang: str = 'fr'):
         for tag in soup.find_all('a', href=True):
             if tag['href'] in wiki:
                 tag['href'] = wiki[tag['href']]
+    # the screenshots of the GUI in the language of the page, where there
+    #   are (figures/gui/<lang>/<name>, the GUI in that language)
+    for tag in soup.find_all('img', src=True):
+        src = tag['src']
+        if src.startswith('figures/gui/') and src.count('/') == 2:
+            local = src.replace('figures/gui/', f'figures/gui/{lang}/')
+            if os.path.exists(os.path.join(HERE, local)):
+                tag['src'] = local
     # the language link: back to the English page
     for tag in soup.select('a.lang-link'):
         tag['href'] = 'index.html'

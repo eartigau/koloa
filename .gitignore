@@ -62,3 +62,7 @@ docs/i18n/chunk_*.json
 docs/i18n/fr_[0-9]*.json
 docs/i18n/source.json
 docs/i18n/missing_*.json
+
+# the GUI's screenshots for the site: the folder they are taken from (its
+#   archives, files of velocities and remembered targets)
+docs/gui_demo/

@@ -973,6 +973,11 @@ def sidebar(html: str) -> str:
             groups.setdefault(group, []).append((vid, title))
     from usecases import USECASES
     kinds = {f'uc-panel-{key}': kind for key, _, _, kind, _ in USECASES}
+    # the pages of the GUI: its parts, then the walk-throughs
+    kinds.update({vid: ('gui-walk' if vid.startswith('gui-walk') else 'gui')
+                  for vid, group, _ in views if group == 'gui'})
+    labels = dict(simulated='simulated', real='real stars',
+                  gui='the page, part by part', **{'gui-walk': 'walk-throughs'})
     parts = ['<div class="nav-title">koloa</div>', '<ul class="nav-top">']
     for vid, group, title in views:
         if group:
@@ -986,8 +991,7 @@ def sidebar(html: str) -> str:
             kind = kinds.get(sid)
             if kind and kind != kind_now:
                 items.append(f'<li class="nav-label">'
-                             f'{"simulated" if kind == "simulated" else "real stars"}'
-                             f'</li>')
+                             f'{labels.get(kind, "real stars")}</li>')
                 kind_now = kind
             items.append(f'<li><a href="#{sid}">{stitle}</a></li>')
         parts.append(f'<li class="nav-group" data-group="{vid}">'

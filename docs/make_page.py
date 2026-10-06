@@ -20,6 +20,8 @@ import os
 import re
 from html import escape
 
+import numpy as np
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 #: the figures of the examples are shown at most this many times their size
@@ -317,10 +319,152 @@ def colour_comments(html):
                   recolour, html, flags=re.S)
 
 
+def _sci(val, digits=1):
+    """a small number as a power of ten (HTML)"""
+    if val is None:
+        return '?'
+    if val <= 0:
+        return '&lt;&nbsp;10<sup>-300</sup>'
+    exp = int(np.floor(np.log10(val)))
+    if -3 <= exp <= 0:
+        return f'{val:.{max(digits, -exp + digits - 1)}f}'
+    return f'{val / 10 ** exp:.{digits}f}&times;10<sup>{exp}</sup>'
+
+
+def _pm(val, low, high, fmt='.2f'):
+    """a value and its errors, the + over the -"""
+    return (f'{val:{fmt}}<sup>+{high:{fmt}}</sup><sub>&minus;{low:{fmt}}'
+            '</sub>')
+
+
+def gui(html):
+    """The walk-throughs of the GUI, from the run that took its screenshots
+    (docs/gui_shots.py: docs/figures/gui/numbers.json)"""
+    path = os.path.join(HERE, 'figures', 'gui', 'numbers.json')
+    if not os.path.exists(path):
+        return html
+    num = json.load(open(path))
+    quick, tess = num.get('quick') or {}, num.get('tess') or {}
+    kep, rest = num.get('kepler') or {}, num.get('residuals') or {}
+    out = []
+    if quick:
+        insts = ', '.join(f'{name} {count}' for name, count in
+                          sorted(quick['instruments'].items(),
+                                 key=lambda item: -item[1]))
+        out.append(f'<p>The public archives of GJ 436 give {quick["nexp"]} '
+                   f'velocities in {quick["n"]} nightly means ({insts}). '
+                   f'The quick FIP puts peak #1 at '
+                   f'{quick["period"]:.4f}&nbsp;d, with a FIP of the period '
+                   f'or any of its aliases of {_sci(quick["fip"])}; its '
+                   f'sinusoid has K = {quick["K"]:.2f} &plusmn; '
+                   f'{quick["K_err"]:.2f}&nbsp;m/s.')
+        mm = quick.get('msini')
+        if mm:
+            out[-1] += (f' With the mass of the star, '
+                        f'{mm["M"]:.2f}&nbsp;M<sub>&#9737;</sub>, its minimum '
+                        f'mass is m sin i = '
+                        f'{_pm(mm["best"], mm["lo"], mm["hi"], ".1f")}'
+                        f'&nbsp;M<sub>&#8853;</sub>.')
+        acc = (quick.get('acceleration') or {}).get('accel')
+        if acc:
+            out[-1] += (f' The acceleration of the star is '
+                        f'{acc[0]:+.2f} &plusmn; {0.5 * (acc[1] + acc[2]):.2f}'
+                        f'&nbsp;m/s/yr ({quick["acceleration"]["accel_sigma"]:.1f}'
+                        f'&nbsp;&sigma;).')
+        # a second peak at half the period: the eccentric orbit's harmonic
+        peaks = quick.get('peaks') or []
+        if len(peaks) > 1 and abs(2 * peaks[1]['period'] / quick['period']
+                                  - 1) < 0.01:
+            out[-1] += (f' Peak #2, at {peaks[1]["period"]:.4f}&nbsp;d (FIP '
+                        f'{_sci(peaks[1]["fip"])}), is half the period of #1: '
+                        f'an eccentric orbit is not a sinusoid, and what the '
+                        f'sinusoid at P leaves is mostly its first harmonic, '
+                        f'at P/2, of amplitude about e&nbsp;K.')
+        out[-1] += '</p>'
+    if kep:
+        out.append(f'<p>As a Keplerian (e free): P = {kep["P"]:.5f} &plusmn; '
+                   f'{kep["P_err"]:.5f}&nbsp;d, K = {kep["K"]:.2f} &plusmn; '
+                   f'{kep["K_err"]:.2f}&nbsp;m/s, e = {kep["e"]:.2f} &plusmn; '
+                   f'{kep["e_err"]:.2f}. The published orbit of GJ 436 b, '
+                   f'folded beside it, agrees. Its eccentricity is also why '
+                   f'the fold at the transit ephemeris puts the conjunction '
+                   f'of the velocities hours away from the transit: that of a '
+                   f'sinusoid is off by about P&nbsp;e&nbsp;cos&nbsp;&omega;/&pi;, '
+                   f'up to some {kep["P"] * kep["e"] / np.pi * 24:.1f}&nbsp;h '
+                   f'here.</p>')
+    if tess:
+        fit, best, star = tess.get('fit') or {}, tess.get('best') or {}, \
+            tess.get('star') or {}
+        text = (f'<p>In TESS (sectors {", ".join(map(str, tess["sectors"]))}),'
+                f' at the period of peak #1 and about the conjunction of its '
+                f'fold: ')
+        if tess.get('scan'):
+            text += (f'the period scanned over {tess["scan"]["n"]} periods, '
+                     f'the light curve folded at '
+                     f'{tess["fold_period"]:.5f}&nbsp;d; ')
+        text += (f'a {"plausible" if tess["plausible"] else "doubtful"} '
+                 f'transit, {best.get("snr", 0):.0f}&nbsp;&sigma; in '
+                 f'{best.get("ntransits", 0)} transits')
+        if fit:
+            text += (f', the box fitted to the medians '
+                     f'{fit["depth"]:.2f} &plusmn; {fit["depth_err"]:.2f}'
+                     f'&nbsp;ppt deep and {fit["duration"]:.1f}&nbsp;h long: '
+                     f'with R<sub>&#9733;</sub> = {star.get("radius", 0):.3f}'
+                     f'&nbsp;R<sub>&#9737;</sub> ({star.get("radius_source")})'
+                     f', a radius of {fit["radius"]:.1f}&nbsp;R<sub>&#8853;'
+                     f'</sub>')
+        teff = star.get('teff')
+        if teff and star.get('radius') and star.get('mass'):
+            from koloa.stars import equilibrium_temperature
+            teq = equilibrium_temperature(teff, star['radius'], star['mass'],
+                                          tess['fold_period'])
+            text += (f'. Its equilibrium temperature is about {teq:.0f}&nbsp;K '
+                     f'(no albedo; T<sub>&#9733;</sub> = {teff:.0f}&nbsp;K)')
+        out.append(text + '.</p>')
+    if rest:
+        out.append(f'<p>Once its Keplerian orbit is ticked out, the best peak of the '
+                   f'residuals is at {rest["period"]:.2f}&nbsp;d with a FIP of '
+                   f'{_sci(rest["fip"])}: no second planet this run can '
+                   f'claim.</p>' if rest['fip'] > 0.01 else
+                   f'<p>Once its Keplerian orbit is ticked out, the residuals have a '
+                   f'peak at {rest["period"]:.2f}&nbsp;d with a FIP of '
+                   f'{_sci(rest["fip"])}: a second signal to look at.</p>')
+    html = fill(html, 'gui_walk_gj436', '\n'.join(out))
+    rows = []
+    for item in num.get('batch') or []:
+        star, summ = item.get('star') or {}, item.get('summary') or {}
+        planets = ', '.join(f'{pl["name"]} {pl["P"]:.3g}&nbsp;d'
+                            for pl in star.get('planets') or []) or '-'
+        insts = ', '.join(f'{name} {count}' for name, count in
+                          (summ.get('instruments') or {}).items())
+        tr = summ.get('transit') or {}
+        trans = ('&#9873; plausible' if tr.get('plausible') else
+                 f'{tr["snr"]:.1f}&nbsp;&sigma;, no' if tr.get('snr') is not None
+                 else (tr.get('status') or '-'))
+        # names and numbers: the same in every language (class mono)
+        rows.append(f'<tr><td class="mono">'
+                    f'{escape(star.get("target") or item["name"])}</td>'
+                    f'<td class="mono">{escape(star.get("apero") or "")}</td>'
+                    f'<td class="mono">{planets}</td>'
+                    f'<td class="mono">{insts}</td>'
+                    f'<td class="mono">{summ.get("period", 0):.3f}</td>'
+                    f'<td class="mono">{_sci(summ.get("fip"))}</td>'
+                    f'<td>{trans}</td></tr>')
+    if rows:
+        html = fill(html, 'gui_walk_batch', (
+            '<div class="table-wrap"><table class="koloa"><thead><tr>'
+            '<th>star</th><th>APERO name</th><th>known planets</th>'
+            '<th>nights by instrument</th><th>best P [d]</th><th>FIP</th>'
+            '<th>transit in TESS</th></tr></thead><tbody>'
+            + ''.join(rows) + '</tbody></table></div>'))
+    return html
+
+
 def main():
     path = os.path.join(HERE, 'index.html')
     html = open(path).read()
     html = campaign(html)
+    html = gui(html)
     html = toi2120(html)
     html = examples(html)
     # the cards of the other demos, and the mathematics

@@ -228,6 +228,10 @@
       text-transform: uppercase; border-top: 1px solid var(--line); padding-top: 12px; }
     .uc-sub { margin: 18px 0 8px; font-size: 0.92rem; color: var(--text); }
     .uc-panel figure.lecture-figure { margin: 12px 0; }
+    /* the screenshots of the GUI (its page is dark) */
+    .lecture-figure img.shot { border: 1px solid var(--line); border-radius: 10px; background: #0b1526; }
+    .gui-panel figure.lecture-figure { margin: 14px 0; }
+    .gui-panel ol, .gui-panel ul { line-height: 1.6; }
     @media (max-width: 720px) {
       .uc-row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
       .uc-criteria li { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
@@ -264,6 +268,7 @@
 <ul class="nav-top">
 <li><a href="#overview">Overview</a></li>
 <li><a href="#install">Install and run</a></li>
+<li class="nav-group" data-group="gui"><a href="#gui">The GUI</a><ul class="nav-sub"><li class="nav-label">the page, part by part</li><li><a href="#gui-panel-start">Starting it</a></li><li><a href="#gui-panel-star">The star</a></li><li><a href="#gui-panel-velocities">The velocities</a></li><li><a href="#gui-panel-gather">Gathering the archives</a></li><li><a href="#gui-panel-quickfip">The quick FIP</a></li><li><a href="#gui-panel-folds">The folds</a></li><li><a href="#gui-panel-tess">A transit in TESS</a></li><li><a href="#gui-panel-report">The report and the script</a></li><li><a href="#gui-panel-remembered">Remembered targets</a></li><li><a href="#gui-panel-batch">The batch FIP</a></li><li class="nav-label">walk-throughs</li><li><a href="#gui-walk-gj436">GJ 436 from its name</a></li><li><a href="#gui-walk-batch">Five stars in one batch</a></li><li><a href="#gui-walk-file">A file of your own</a></li></ul></li>
 <li><a href="#how">How it works</a></li>
 <li><a href="#outliers">Understanding outliers</a></li>
 <li class="nav-group" data-group="usecases"><a href="#usecases">Use cases, as tests</a><ul class="nav-sub"><li class="nav-label">simulated</li><li><a href="#uc-panel-nofalse">No planet</a></li><li><a href="#uc-panel-recovery">A planet behind outliers</a></li><li><a href="#uc-panel-posterior">Orbit posteriors</a></li><li><a href="#uc-panel-twoplanets">Two planets</a></li><li><a href="#uc-panel-gpjoint">Activity and a planet</a></li><li><a href="#uc-panel-contamination">How many outliers</a></li><li><a href="#uc-panel-completeness">Recovery maps</a></li><li><a href="#uc-panel-campaign">The campaign</a></li><li><a href="#uc-panel-acceleration">A star's acceleration</a></li><li class="nav-label">real stars</li><li><a href="#uc-panel-toi2120">TOI-2120 b</a></li><li><a href="#uc-panel-dace">HD 69830 from DACE</a></li><li><a href="#uc-panel-kepler21">Kepler-21 b</a></li><li><a href="#uc-panel-gl725">GL 725 A and B</a></li><li><a href="#uc-panel-rotation">Rotation from DTEMP</a></li><li><a href="#uc-panel-mdwarfs">M dwarfs, PCA2D</a></li></ul></li>
@@ -333,6 +338,8 @@
       <div class="view-card">
         <h2>Where to go from here</h2>
         <ul class="feature-list">
+          <li><a href="#gui">The GUI</a>: koloa in the browser, part by part, with screenshots, and walk-throughs on
+            real stars from their name or a file.</li>
           <li><a href="#usecases">Use cases, as tests</a>: each one a question, its data, the command that runs it, and
             criteria checked on the outputs of that run.</li>
           <li><a href="#install">Install and run</a>, then <a href="#how">how it works</a>.</li>
@@ -390,7 +397,445 @@ print(fip.summary())       <span class="c"># the number of signals, the best int
 <span class="c">#   over the campaign, shape, activity indicators, absorption by a GP</span>
 report = koloa.duck_test(data, period=fip.best()[&#x27;period&#x27;], fipres=fip)
 print(report.text())</div>
+      <p>In the browser, the same and more (<a href="#gui">The GUI</a>), and the archives of a star from its
+      name:</p>
+      <div class="codeblock"><span class="c"># koloa in a web page served by this machine: a star by its name, its</span>
+<span class="c">#   archives, your files, the quick FIP, the folds, a transit in TESS, the</span>
+<span class="c">#   report, a batch of many files (koloanui is the same, in one word)</span>
+koloa --gui
+
+<span class="c"># what is public about a star, in archives/GJ_436/: DACE (with your key,</span>
+<span class="c">#   what your account may see), CARMENES DR1, the velocities published on</span>
+<span class="c">#   VizieR (Keck HIRES, the APF, the Lick Hamilton, HARPS by SERVAL, the</span>
+<span class="c">#   star&#x27;s papers), every TESS sector, and the light curves of Kepler, K2</span>
+<span class="c">#   and CoRoT when the star lay in their fields</span>
+koloa &quot;GJ 436&quot; --gather archives</div>
     </section>
+
+    <section class="view" id="gui" data-title="The GUI">
+      <h2>The GUI: koloa in the browser</h2>
+      <p><code>koloa --gui</code> opens koloa in a web page served by this machine: a star by its name, its
+      archives gathered, your files of velocities, a quick FIP of what is plotted, folds and orbits, a transit
+      looked for in TESS, the detailed report and a script of the analysis, one target after another or many at
+      once. Every run is the command line the page shows, word for word, in a process of its own; nothing is
+      done that the command line cannot do, and the page is a way to look before choosing what to run.</p>
+      <p>Each part of the page has its own page here, with screenshots and what every control does; the
+      walk-throughs then follow real stars from start to end. The screenshots are of public data only: the
+      archives were gathered without a DACE key, and the files are public HARPS velocities. Every <span
+      class="mono">(i)</span> of the GUI opens the full explanation of its control; these pages say why, and
+      what to look at.</p>
+      <ul class="page-index">
+        <li class="page-index-label">the page, part by part</li>
+        <li><a href="#gui-panel-start">Starting it</a><span>The command, the three tabs, the language, the help of every control.</span></li>
+        <li><a href="#gui-panel-star">The star</a><span>SIMBAD, its known planets and TOIs, its mass, radius and temperature; the star of a file from its APERO name.</span></li>
+        <li><a href="#gui-panel-velocities">The velocities</a><span>Your files and the archives, the plot of the series, the instruments kept or left out, the zero of each.</span></li>
+        <li><a href="#gui-panel-gather">Gathering the archives</a><span>DACE, CARMENES DR1, VizieR source by source, TESS, Kepler, K2 and CoRoT; the runs and their logs.</span></li>
+        <li><a href="#gui-panel-quickfip">The quick FIP</a><span>The FIP of what is plotted, in two passes; each instrument's own; the acceleration of the star.</span></li>
+        <li><a href="#gui-panel-folds">The folds</a><span>Sinusoid or Keplerian at a peak, a known planet or a transit; m sin i and the equilibrium temperature; the residuals.</span></li>
+        <li><a href="#gui-panel-tess">A transit in TESS</a><span>The light curve high-passed and folded at each signal, the box fitted, whether a transit is plausible.</span></li>
+        <li><a href="#gui-panel-report">The report and the script</a><span>The detailed report and its options; the analysis as a commented script, its data with it.</span></li>
+        <li><a href="#gui-panel-remembered">Remembered targets</a><span>A result kept, with its data, to come back to.</span></li>
+        <li><a href="#gui-panel-batch">The batch FIP</a><span>Many files at once: their stars, their best peaks, their accelerations, their transits.</span></li>
+        <li class="page-index-label">walk-throughs</li>
+        <li><a href="#gui-walk-gj436">GJ 436 from its name</a><span>No file at all: its public archives, its planet found, its orbit, its transit in TESS.</span></li>
+        <li><a href="#gui-walk-batch">Five stars in one batch</a><span>Five files of public HARPS velocities in one run: their stars, their best peaks, their transits.</span></li>
+        <li><a href="#gui-walk-file">A file of your own</a><span>The star found from the file, the archives put with it, the copies of the same spectra told apart.</span></li>
+      </ul>
+    </section>
+
+    <section class="view gui-panel" id="gui-panel-start" data-group="gui" data-title="Starting it">
+      <p class="crumb"><a href="#gui">The GUI</a></p>
+      <h2>Starting it</h2>
+      <div class="codeblock"><span class="c"># the page in your browser, served on 127.0.0.1 only (the next free port</span>
+<span class="c">#   from 8765); Ctrl-C stops it, and the runs it started</span>
+koloa --gui
+
+<span class="c"># the same, in one word</span>
+koloanui</div>
+      <p>The server runs from the folder you start it in: relative paths (the archives folder, the report folder,
+      your files) start there, and the page says where. It answers this machine only and runs nothing but koloa.
+      After an update of koloa, start it again: the page and the server go together.</p>
+      <p>The page has three tabs. <b>Analysis</b> is one star: its name, its velocities, the quick FIP, the
+      folds, a transit in TESS, the archives to gather and the detailed report. <b>Remembered targets</b> lists
+      the results kept, each to be recalled as it was. <b>Batch FIP</b> runs the quick FIP of many files, one after
+      the other, into a table. <b>New target</b>, at the top, empties the page as a new session would (a run that
+      still runs goes on); <b>EN/FR</b> switches the language of the page, and it is kept.</p>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/help.png" alt="A help bubble of the GUI, the explanation of the transit search">
+        <figcaption>Every control has an <span class="mono">(i)</span>: under the cursor, or a click, the
+        whole of what it does, what to enter and its default, in the language of the page.</figcaption>
+      </figure>
+    </section>
+
+    <section class="view gui-panel" id="gui-panel-star" data-group="gui" data-title="The star">
+      <p class="crumb"><a href="#gui">The GUI</a></p>
+      <h2>The star</h2>
+      <p>Its SIMBAD name: GJ 436, Ross 905, HD 69830, TOI-700 or TIC 307210830 all work. Resolve (or Enter)
+      asks the CDS for its identifiers, position, TIC and Gaia DR3 numbers and aliases, then the NASA Exoplanet
+      Archive and exoplanet.eu for its known planets, and TESS for its TOIs. The answer is kept on disk (in its
+      archives folder once gathered), and the page reads it from there the next time.</p>
+      <p>The <b>known planets</b> are the NASA Exoplanet Archive's, each with its published solutions, and
+      under each the values of exoplanet.eu, a second opinion: the two mostly agree, not always (another paper
+      taken), and each has planets, or times of transit, the other lacks (a planet only exoplanet.eu has is
+      listed as such). Both catalogues are kept on this machine once fetched; exoplanet.eu's comes in the
+      background the first time (its server takes minutes).</p>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/star.png" alt="The star card of the GUI for GJ 436">
+        <figcaption>The star card. Left, the name and the mass used for the minimum masses (it can be typed
+        over). Right, what SIMBAD and the archives say: the periods of variability SIMBAD lists (a rotation, say;
+        one of them can be picked for the GP of the report), the known planets with their published orbits and
+        references, the TOIs with their ephemerides, and whether CARMENES DR1 observed the star.</figcaption>
+      </figure>
+      <p>The <b>mass</b> of the star is the archive's for a planet host, else a rough one from its spectral type
+      (the table of Pecaut and Mamajek). Its <b>radius</b> and <b>effective temperature</b> are best guesses, in
+      that order: the NASA Exoplanet Archive, the TESS Input Catalog (Gaia, and the relations of Mann et al. for
+      the cool dwarfs), APERO's database, the same table by spectral type. The radius sets the depths of a transit
+      (and the radius of a planet from one), the temperature the equilibrium temperature of a planet.</p>
+      <h4 class="uc-sub">The star of a file, by its APERO name</h4>
+      <p>Give a file of velocities with the name empty, and the page fills it: the file's OBJECT column (LBL keeps
+      the header key of each spectrum), else its name (<span class="mono">lbl_&lt;OBJECT&gt;_&lt;TEMPLATE&gt;.rdb</span>),
+      looked up in APERO's database of names exactly as APERO looks (the same cleaning of the name, its
+      variants and aliases), which gives its SIMBAD name. The line under the name says how.</p>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/star_from_file.png" alt="The star card filled from the OBJECT column of a file">
+        <figcaption>A file of public HARPS velocities whose OBJECT column reads GJ 581: its APERO name and its
+        SIMBAD name, then the star resolved.</figcaption>
+      </figure>
+      <p>APERO's database is the astrometrics folder of its assets. Its YAML files come first in the tarball of
+      APERO's assets server, so koloa reads a few megabytes of it and stops, with no APERO installed. The copy
+      is made at the first lookup, again with <code>koloa --refresh-apero</code> or the page's button (Batch FIP
+      tab).</p>
+    </section>
+
+    <section class="view gui-panel" id="gui-panel-velocities" data-group="gui" data-title="The velocities">
+      <p class="crumb"><a href="#gui">The GUI</a></p>
+      <h2>The velocities</h2>
+      <p>Your files, one row each: an LBL <span class="mono">.rdb</span> (SPIRou, NIRPS, HARPS, ESPRESSO,
+      HARPS-N), a csv with rjd, vrad and svrad (and indicators with their errors), or a csv of DACE. The
+      instrument column is left empty when the file says it (the names of its reduced files, APERO's keys), or
+      names it (NIRPS_LBL2 against NIRPS, two reductions of one instrument, each with its own offset). Below
+      them, the archives folder, and the archives already gathered for the star with their number of points: tick
+      those to plot, and the report uses them.</p>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/velocities.png" alt="The velocities card with the archives of GJ 436 ticked">
+        <figcaption>No file: GJ 436 from its archives alone, DACE, CARMENES DR1 and the velocities published
+        on VizieR ticked. The note under Plot says where each came from and how many spectra two sources share
+        (each spectrum is kept once).</figcaption>
+      </figure>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/series.png" alt="The plot of the series of GJ 436, every instrument, with its table">
+        <figcaption>The series, each instrument in its colour: the calendar dates on top, sliders along both axes
+        (the y one in asinh, fine about the bulk of the points and coarse towards the outliers), twice the 3 to
+        97 percentile range or everything, a red triangle at an edge for a point beyond it. The table under it:
+        each instrument, its source, its points and rms; untick one (or click it in the legend) to leave it out
+        of the quick FIP and the report.</figcaption>
+      </figure>
+      <p><b>Zero</b>: each instrument about the solution shown (fitted offsets) or about its own median. The
+      solution is one for every instrument, the trend and the signals; each instrument sits about it, the median
+      of its velocities minus it zero over its own epochs, so that the instruments run on from one to the next.
+      <b>Colour by</b> the instrument or the BERV (from LBL, DACE and CARMENES). The DACE copy of an instrument of
+      your files (NIRPS_DACE: the same spectra through DACE's pipeline, less precise than LBL's) is left out the
+      first time it is seen, and the note says so: one tick adds it back.</p>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/series_solution.png" alt="The series with the Keplerian solution, its envelope and the residuals">
+        <figcaption>A fold's solution drawn on the series (the solution on the time series, ticked under the
+        fold): one curve for every instrument, the trend and the orbit, with its 1-sigma envelope (draws from
+        the full covariance of its fit), and under the series the residuals to it. Where the series spans too
+        many cycles to draw each, a band shows the range the solution fills (its ups and downs), its trend
+        dashed; zoom on the time to see the orbit itself. With several signals ticked, it is their
+        sum.</figcaption>
+      </figure>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/series_zoom.png" alt="The same series zoomed in on a fortnight, the orbit drawn through its nights">
+        <figcaption>Zoomed in on the fortnight with the most nights: the orbit itself, the same curve for every
+        instrument, and the residuals under it.</figcaption>
+      </figure>
+    </section>
+
+    <section class="view gui-panel" id="gui-panel-gather" data-group="gui" data-title="Gathering the archives">
+      <p class="crumb"><a href="#gui">The GUI</a></p>
+      <h2>Gathering the archives</h2>
+      <p>What is known of a star, in one folder of its own (<span class="mono">archives/GJ_436/</span>):
+      <b>DACE</b> (HARPS, ESPRESSO, NIRPS, CORALIE... with your key, what your account may see; without it,
+      the public data), <b>CARMENES DR1</b> (about 360 M dwarfs of the north, 2016 to 2020, corrected for the
+      nightly zero points), the velocities published on <b>VizieR</b>, and every <b>TESS</b> sector at MAST
+      (with the light curves of <b>Kepler</b>, <b>K2</b> and <b>CoRoT</b> when the star lay in their fields).
+      VizieR has a box per source: Keck HIRES (Teklu et al. 2025; Tal-Or et al. 2019), the California Legacy
+      Survey (HIRES, the APF and the Lick Hamilton), the Lick Hamilton (Fischer et al. 2014), HARPS by SERVAL
+      (Trifonov et al. 2020), and the tables of the star's papers in its SIMBAD bibliography.</p>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/gather.png" alt="The card that gathers the archives of a star">
+        <figcaption>The card: the archives, the sources of VizieR, and the command line it runs (copy it for a
+        script). Gathered once, the archives are read from disk; Refresh asks again.</figcaption>
+      </figure>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/runs.png" alt="A run of the GUI with its steps and its log">
+        <figcaption>Every run, gathering or report, is the command line in a process of its own: its steps with
+        the time each took and what each found (here the points of each instrument and source), and its log,
+        open by default. Closing the page does not stop it; stopping the server does.</figcaption>
+      </figure>
+    </section>
+
+    <section class="view gui-panel" id="gui-panel-quickfip" data-group="gui" data-title="The quick FIP">
+      <p class="crumb"><a href="#gui">The GUI</a></p>
+      <h2>The quick FIP</h2>
+      <p>A first look before the report: the FIP of exactly what the plot shows (the files, the archives ticked,
+      the instruments kept), outlier-aware, in nightly means, with no GP. It starts on its own for one instrument;
+      with several, untick those to leave out first, then compute it (Stop ends it). Two passes, as in the
+      report: the errors of each instrument inflated to the noise of a fit without planets, a FIP; then to the
+      noise of a fit with the signals found and the known planets (their variance is not noise), and the FIP
+      again. About a minute for one instrument, longer with many; a bar shows
+      the time left.</p>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/fip.png" alt="The quick FIP of GJ 436, its peaks numbered">
+        <figcaption>White, the FIP of the period or any of its aliases (what decides on a planet); grey, of the
+        period alone; dotted, FIP = 1 % and the window (a day, a synodic month, a year); dashed, the known
+        planets. The peaks below 10 % (or the best three) are numbered, one per family of aliases. Under it, the
+        acceleration of the star from the fit of the quick look, and how much each instrument's errors were
+        inflated.</figcaption>
+      </figure>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/fip_each.png" alt="The FIP of each instrument under the joint one">
+        <figcaption>Each instrument too: each one's own FIP (its nightly means, its own jitter sampled) in its
+        colour under the joint one, with its best peaks in a table. A signal every instrument sees is the star's
+        or a planet's; one a single instrument sees may be that instrument's.</figcaption>
+      </figure>
+      <p>Click the periodogram, or type a period in Fold at P, to fold anywhere: the fold snaps to the dip of the
+      FIP within a peak's width. Recompute the FIP after changing what is plotted; <b>Remember the result</b>
+      keeps all of it.</p>
+    </section>
+
+    <section class="view gui-panel" id="gui-panel-folds" data-group="gui" data-title="The folds">
+      <p class="crumb"><a href="#gui">The GUI</a></p>
+      <h2>The folds</h2>
+      <p>The nightly means folded at a numbered peak: a sinusoid fitted with an offset per instrument and the
+      trend, each night weighted by its probability of being valid (from the FIP: an outlier hardly counts),
+      phase 0 at the conjunction. Its period is refined within the peak, the other peaks fitted with it there
+      (the grid point of the FIP is a fraction of a peak off: over a long series, enough for a sinusoid to drift
+      in phase from one end to the other). Its line gives P with its error, K and the rms; with the mass of the
+      star, the minimum mass in Earth, Neptune and Jupiter masses (its errors from draws of K, P and the mass,
+      one &plusmn; when its two sides are alike), and the equilibrium
+      temperature of the planet (for a Bond albedo of 0 and of 0.3, from the period, the mass, the radius and the
+      temperature of the star).</p>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/fold.png" alt="The fold of GJ 436 at its strongest peak">
+        <figcaption>The fold at peak #1: the points in the colour of their instrument, the sinusoid and its
+        1-sigma envelope, a white circle about a night the FIP took for an outlier more often than not, the y
+        range of the series above.</figcaption>
+      </figure>
+      <div class="two-figs">
+        <figure class="lecture-figure">
+          <img class="shot" src="figures/gui/fold_date.png" alt="The same fold coloured by date">
+          <figcaption>Coloured by date: a signal that drifts in phase over the years, or that only some seasons
+          hold, shows here.</figcaption>
+        </figure>
+        <figure class="lecture-figure">
+          <img class="shot" src="figures/gui/fold_kepler.png" alt="The Keplerian fit of the same peak">
+          <figcaption>Keplerian (e free): koloa's fit, outliers and the jitter of each instrument with it, its
+          period free within the peak, its errors from its covariance; under it, &Delta;BIC against no planet
+          and against a circular orbit (positive: the orbit is the better model).</figcaption>
+        </figure>
+      </div>
+      <p>The buttons beyond the peaks fold at the published orbit of each <b>known planet</b> (&#9733;, its
+      solution and envelope drawn, whatever the FIP says) and at the <b>transit ephemeris</b> of each transiting
+      planet or TOI (&#9680;: phase 0 at the transit, the ephemeris carried to the velocities with its error, and
+      the conjunction the velocities put on their own set against it).</p>
+      <div class="two-figs">
+        <figure class="lecture-figure">
+          <img class="shot" src="figures/gui/fold_known.png" alt="The fold at the published orbit of a known planet">
+          <figcaption>At a known planet: its published orbit over the velocities.</figcaption>
+        </figure>
+        <figure class="lecture-figure">
+          <img class="shot" src="figures/gui/fold_transit.png" alt="The fold at the transit ephemeris">
+          <figcaption>At the transit ephemeris: the velocities' conjunction against the transits'.</figcaption>
+        </figure>
+      </div>
+      <p><b>Tick a signal</b> (the box before its button) to take it out of the velocities: its sinusoid, or
+      its Keplerian orbit when that is the model shown as it is ticked (not its offsets and trend, which the
+      FIP fits again). Several can be ticked: each fold is then fitted on the velocities without the other
+      ticked signals, the solution on the time series is their sum, and the FIP of what is left is computed
+      after each subtraction, in the order ticked, and drawn over the FIP of the series in the colour of its
+      tick. A second planet the first one hid shows up, or the activity, or nothing; a click on a peak of the
+      last one folds there, and a tick goes on; untick to put a signal back. Tick the Keplerian of an eccentric
+      orbit rather than its sinusoid: a sinusoid leaves the orbit's harmonic at half the period, a peak of its
+      own in what is left.</p>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/fip_residuals.png" alt="The FIP of what is left once the planet is ticked out, over the FIP of the series">
+        <figcaption>The FIP of what is left of GJ 436's velocities once the Keplerian orbit of peak #1 is ticked
+        out (in the colour of its tick), over the FIP of the series (white).</figcaption>
+      </figure>
+    </section>
+
+    <section class="view gui-panel" id="gui-panel-tess" data-group="gui" data-title="A transit in TESS">
+      <p class="crumb"><a href="#gui">The GUI</a></p>
+      <h2>A transit in TESS</h2>
+      <p>A transit found would make a weak velocity signal strong. Under the folds, each peak with a FIP below
+      10 % is looked for in TESS, about the conjunction of its fold (where a transiting planet transits), and so
+      is each transiting planet and TOI of the star at its ephemeris. The light curve is the star's archives',
+      else every sector at MAST. A star TESS has not observed yet has none, and the panel says so (its sectors
+      leave gaps: GJ 1214, for one, is in none so far), with the sectors to come when tess-point is
+      installed.</p>
+      <p>Kepler, K2 and CoRoT are searched too when the star lay in their fields: the long cadence of Kepler,
+      the K2SFF light curves of K2 where there are some, the light curves of CoRoT kept at the CDS. The first
+      mission with a plausible transit is the one shown, and a button for each mission that has the star
+      searches its light curve.</p>
+      <ul>
+        <li><b>The light curve</b>: split into stretches (a sector, at its gaps of more than 0.2 day), the first
+        0.25 day after each gap left out (the ramp of TESS as it starts again), each stretch high-passed on its
+        own (a running median three times the expected transit, a robust line near its ends), flares clipped.</li>
+        <li><b>The search</b>: boxes of half, one and two times the duration of a central transit, within 3 sigma
+        of the expected time carried to the epochs of TESS (the error of a conjunction from a sinusoid includes
+        the offset an eccentric orbit gives it), or over the whole phase. When the error of the period would smear
+        the transits across sectors years apart, the period itself is scanned, coarse then fine, and the light
+        curve folded at the best.</li>
+        <li><b>The depth</b>: a box fitted by least squares to the medians of the folded light curve in fine bins
+        (the deepest box of the search follows the deepest points; the fit's depth is the transit's mean level),
+        and the radius of the planet from it.</li>
+        <li><b>Plausible</b>: 7 sigma or more, in 2 transits or more, still 3.5 sigma without the deepest (one
+        event is not a transit seen twice), and beyond the best box at periods where there is nothing, with a
+        chance below 1 % (an active star, or the systematics of a light curve, make dips of their own at any
+        period). The transits of the star's other known planets are left out first.</li>
+      </ul>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/tess_fold.png" alt="The TESS light curve of GJ 436 folded at the velocity period">
+        <figcaption>The fold: every point (grey), their medians in bins (blue), the box fitted to them (orange),
+        the window searched (shaded), the depths of a 1 Earth-radius and a 1 Jupiter-radius planet before the
+        star (red; the Jupiter one marked at the edge when beyond); the phase below, the hours from the transit
+        above.</figcaption>
+      </figure>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/tess_series.png" alt="The high-passed light curve of each TESS sector with each transit shaded">
+        <figcaption>The time series, each transit: every sector on its own, each putative transit shaded, the
+        fitted box on it and its own depth under it. Transits that agree at every epoch make a consistent
+        signal; one deep event and nothing at the others, a glitch.</figcaption>
+      </figure>
+      <p>The search was tested on LHS 1140 b and c, TOI-700 b, c, d and e and GJ 436 b (found at their published
+      radii, from their ephemerides, from a conjunction as the velocities give it and over the whole phase) and
+      at periods where there is nothing (none found), and in the other missions on Kepler-21 b (Kepler),
+      K2-18 b and K2-3 b, c and d (K2) and CoRoT-7 b (CoRoT). A star as active as AU Mic makes dips as deep as
+      its planets at any period, and the panel says so rather than claim a transit.</p>
+    </section>
+
+    <section class="view gui-panel" id="gui-panel-report" data-group="gui" data-title="The report and the script">
+      <p class="crumb"><a href="#gui">The GUI</a></p>
+      <h2>The detailed report and the analysis script</h2>
+      <p>The card of the report sets its options (the signals of the FIP and its sweeps, the periods to search,
+      a GP of the activity in the FIP, by band or an SHO at the rotation, the TOIs to fit with their transits,
+      the instruments to leave out, the trend, every exposure or nightly means, the archives, a detection map, an
+      MCMC of the orbits) and shows the command line they make; <b>Make the report</b> runs it, and its steps and
+      log show in Runs, its PDF at the end.</p>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/report.png" alt="The card of the detailed report with its options and command line">
+        <figcaption>The report's card: its options, the command line, Make the report, and Analysis script.</figcaption>
+      </figure>
+      <p><b>Analysis script</b> writes a kit to run, and change, the analysis yourself, offline: a
+      <span class="mono">.tar.gz</span> with <span class="mono">analysis.py</span>, the analysis step by step
+      calling koloa's routines (the velocities read and put together, a fit of their noise, the FIP in two
+      passes, the Keplerian orbits of the signals with their errors and minimum masses, the acceleration of the
+      star, the folds, the FIP of the residuals), every step explained at length in its comments in the language
+      of the page and its figures saved as PDF; your files; the archives gathered for the star; and
+      <span class="mono">star.yaml</span>, what SIMBAD, the archive and TESS say of the star. Its settings are
+      those of the card: a starting point for a student, or for a change koloa does not make.</p>
+      <p>The <b>PDF</b> button of the plot writes the quick look as it is shown (the series in its ranges, the
+      quick FIP, the folds, the transit), with a page of numbers.</p>
+    </section>
+
+    <section class="view gui-panel" id="gui-panel-remembered" data-group="gui" data-title="Remembered targets">
+      <p class="crumb"><a href="#gui">The GUI</a></p>
+      <h2>Remembered targets</h2>
+      <p><b>Remember the result</b> keeps the page as it is (the star, the files, the archives ticked, the
+      instruments left out, the options of the report), the quick FIP and its folds, and a copy of the velocities
+      and of the archives, with a note of your own. The Remembered targets tab lists them; Recall puts one back in
+      the Analysis tab as it was (the original files while they have not changed, else their copies).</p>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/remembered.png" alt="The list of remembered targets">
+        <figcaption>The remembered targets: the star, its note, the instruments and points, the best peaks and
+        their FIPs, the known planets, and when it was kept.</figcaption>
+      </figure>
+    </section>
+
+    <section class="view gui-panel" id="gui-panel-batch" data-group="gui" data-title="The batch FIP">
+      <p class="crumb"><a href="#gui">The GUI</a></p>
+      <h2>The batch FIP</h2>
+      <p>The quick FIP of many files, one after the other: add them (several in the dialog, or every file of a
+      folder that matches a pattern, or one of several patterns separated by spaces) and run. Each file is on its own, or, with <b>every archive</b> ticked,
+      with every archive of its star (DACE, CARMENES DR1, VizieR; gathered once into the archives folder, then
+      read from there). The star of each file is found by its APERO name.</p>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/batch.png" alt="The table of a batch FIP of five stars">
+        <figcaption>The table: each file, its object (its APERO name and spectral type, its known planets &#9733;
+        and candidate TOIs &#9680; with their periods), its nights by instrument, the span, its best peak (marked
+        &#9733; or &#9680; when it falls on one of them) and its FIP (green below 1 %), the K and rms of a
+        sinusoid there, the acceleration of the star, and a transit looked for in TESS when the FIP is below
+        10 % (&#9873; when one is plausible, else its signal-to-noise ratio, the reason under the cursor).</figcaption>
+      </figure>
+      <p>Click a header to sort, CSV to save it (with the APERO and SIMBAD names, the planets, the instruments and
+      the transit), Open to take a file to the Analysis tab with its quick FIP, its star and its archives. The
+      table fits the window; Stop ends the batch.</p>
+    </section>
+
+    <section class="view gui-panel" id="gui-walk-gj436" data-group="gui" data-title="GJ 436 from its name">
+      <p class="crumb"><a href="#gui">The GUI</a></p>
+      <h2>GJ 436 from its name</h2>
+      <p>No file at all: the star's name, its public archives, and what the GUI makes of them, step by step. The
+      numbers below are those of the run that took the screenshots of these pages.</p>
+      <ol>
+        <li>Type <code>GJ 436</code> and Resolve: the star card (<a href="#gui-panel-star">The star</a>).</li>
+        <li>Gather the archives (here with no DACE key: the public data), then tick them all under the
+        velocities and Plot (<a href="#gui-panel-velocities">The velocities</a>).</li>
+        <li>Compute the quick FIP, untick an instrument first if it should not count
+        (<a href="#gui-panel-quickfip">The quick FIP</a>).</li>
+        <li>Look at the fold of peak #1, coloured by date, as a Keplerian, on the series
+        (<a href="#gui-panel-folds">The folds</a>).</li>
+        <li>Read the TESS panel under it (<a href="#gui-panel-tess">A transit in TESS</a>).</li>
+        <li>Tick peak #1 with the Keplerian chosen: its orbit is taken out, and the FIP of what is left is drawn
+        over the first (<a href="#gui-panel-folds">The folds</a>).</li>
+        <li>Remember the result; make the report, or the analysis script, from the same card
+        (<a href="#gui-panel-report">The report and the script</a>).</li>
+      </ol>
+      <!--AUTO:gui_walk_gj436--><p>The public archives of GJ 436 give 830 velocities in 445 nightly means (HIRES (Teklu+ 2025) 164, HARPS03 113, CARMENES 99, HIRES (Knutson+ 2014) 36, HARPS15 22, HIRES (CLS) 8, ESPRESSO18 3). The quick FIP puts peak #1 at 2.6440&nbsp;d, with a FIP of the period or any of its aliases of &lt;&nbsp;10<sup>-300</sup>; its sinusoid has K = 16.31 &plusmn; 0.24&nbsp;m/s. With the mass of the star, 0.47&nbsp;M<sub>&#9737;</sub>, its minimum mass is m sin i = 21.3<sup>+1.4</sup><sub>&minus;1.5</sub>&nbsp;M<sub>&#8853;</sub>. The acceleration of the star is +0.04 &plusmn; 0.08&nbsp;m/s/yr (0.4&nbsp;&sigma;). Peak #2, at 1.3219&nbsp;d (FIP 5.6&times;10<sup>-17</sup>), is half the period of #1: an eccentric orbit is not a sinusoid, and what the sinusoid at P leaves is mostly its first harmonic, at P/2, of amplitude about e&nbsp;K.</p>
+<p>As a Keplerian (e free): P = 2.64389 &plusmn; 0.00001&nbsp;d, K = 17.46 &plusmn; 0.18&nbsp;m/s, e = 0.16 &plusmn; 0.01. The published orbit of GJ 436 b, folded beside it, agrees. Its eccentricity is also why the fold at the transit ephemeris puts the conjunction of the velocities hours away from the transit: that of a sinusoid is off by about P&nbsp;e&nbsp;cos&nbsp;&omega;/&pi;, up to some 3.3&nbsp;h here.</p>
+<p>In TESS (sectors 22, 49), at the period of peak #1 and about the conjunction of its fold: the period scanned over 38 periods, the light curve folded at 2.64388&nbsp;d; a plausible transit, 171&nbsp;&sigma; in 14 transits, the box fitted to the medians 6.23 &plusmn; 0.08&nbsp;ppt deep and 0.7&nbsp;h long: with R<sub>&#9733;</sub> = 0.455&nbsp;R<sub>&#9737;</sub> (NASA Exoplanet Archive), a radius of 3.9&nbsp;R<sub>&#8853;</sub>. Its equilibrium temperature is about 684&nbsp;K (no albedo; T<sub>&#9733;</sub> = 3586&nbsp;K).</p>
+<p>Once its Keplerian orbit is ticked out, the best peak of the residuals is at 52.55&nbsp;d with a FIP of 0.5: no second planet this run can claim.</p><!--/AUTO-->
+    </section>
+
+    <section class="view gui-panel" id="gui-walk-batch" data-group="gui" data-title="Five stars in one batch">
+      <p class="crumb"><a href="#gui">The GUI</a></p>
+      <h2>Five stars in one batch</h2>
+      <p>Five files of public HARPS velocities, one per star, each with its OBJECT column, run together in the
+      Batch FIP tab, each file on its own: the star of each found by its APERO name, its quick FIP, and a
+      transit looked for in its space photometry where the FIP is below 10 %. With every archive ticked, the
+      archives of each star are gathered and put with its file first: many more velocities, and, with a dozen
+      datasets a star, a far longer run.</p>
+      <!--AUTO:gui_walk_batch--><div class="table-wrap"><table class="koloa"><thead><tr><th>star</th><th>APERO name</th><th>known planets</th><th>nights by instrument</th><th>best P [d]</th><th>FIP</th><th>transit in TESS</th></tr></thead><tbody><tr><td class="mono">BD-07 4003</td><td class="mono">GJ581</td><td class="mono">GJ 581 e 3.15&nbsp;d, GJ 581 b 5.37&nbsp;d, GJ 581 c 12.9&nbsp;d</td><td class="mono">HARPS03 248, HARPS15 6</td><td class="mono">5.369</td><td class="mono">1.6&times;10<sup>-157</sup></td><td>5.0&nbsp;&sigma;, no</td></tr><tr><td class="mono">HD 156384C</td><td class="mono">GJ667C</td><td class="mono">GJ 667 C b 7.2&nbsp;d, GJ 667 C c 28.1&nbsp;d, GJ 667 C f 39&nbsp;d, GJ 667 C e 62.2&nbsp;d, GJ 667 C g 256&nbsp;d</td><td class="mono">HARPS03 185, HARPS15 82</td><td class="mono">7.201</td><td class="mono">4.9&times;10<sup>-25</sup></td><td>7.2&nbsp;&sigma;, no</td></tr><tr><td class="mono">BD-15 6290</td><td class="mono">GJ876A</td><td class="mono">GJ 876 d 1.94&nbsp;d, GJ 876 c 30.1&nbsp;d, GJ 876 b 61.1&nbsp;d, GJ 876 e 124&nbsp;d</td><td class="mono">HARPS03 235, HARPS15 13</td><td class="mono">61.220</td><td class="mono">&lt;&nbsp;10<sup>-300</sup></td><td>59.1&nbsp;&sigma;, no</td></tr><tr><td class="mono">HD 40307</td><td class="mono">HD40307</td><td class="mono">HD 40307 b 4.31&nbsp;d, HD 40307 c 9.62&nbsp;d, HD 40307 d 20.4&nbsp;d, HD 40307 e 34.6&nbsp;d, HD 40307 f 51.8&nbsp;d, HD 40307 g 198&nbsp;d</td><td class="mono">HARPS03 233, HARPS15 28</td><td class="mono">9.622</td><td class="mono">4.1&times;10<sup>-10</sup></td><td>6.3&nbsp;&sigma;, no</td></tr><tr><td class="mono">HD 69830</td><td class="mono"></td><td class="mono">HD 69830 b 8.67&nbsp;d, HD 69830 c 31.6&nbsp;d, HD 69830 d 197&nbsp;d</td><td class="mono">HARPS03 269, HARPS03_EGGS 1, HARPS15 21</td><td class="mono">31.605</td><td class="mono">1.2&times;10<sup>-34</sup></td><td>79.5&nbsp;&sigma;, no</td></tr></tbody></table></div><!--/AUTO-->
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/batch.png" alt="The table of the batch of five stars">
+        <figcaption>The batch, sorted by FIP. Open any line to take it to the Analysis tab.</figcaption>
+      </figure>
+    </section>
+
+    <section class="view gui-panel" id="gui-walk-file" data-group="gui" data-title="A file of your own">
+      <p class="crumb"><a href="#gui">The GUI</a></p>
+      <h2>A file of your own, and its archives</h2>
+      <p>The everyday case: an LBL file of SPIRou or NIRPS, its star, and what the archives add.</p>
+      <ol>
+        <li>Pick the file (Browse...) with the name empty: the star is filled from its OBJECT column (or its file
+        name) through APERO's names, and resolved (<a href="#gui-panel-star">The star</a>).</li>
+        <li>Gather the archives of the star, tick those to add, and Plot. An instrument the file has too (NIRPS in
+        the file and on DACE) is the same spectra by another pipeline: the archive's is named apart (NIRPS_DACE,
+        its own offset), its exposures within a minute of the file's left out, and NIRPS_DACE itself is left
+        out by default; tick it to compare.</li>
+        <li>Several files go in one analysis, a row each: SPIRou and NIRPS, or two reductions of one instrument
+        named apart in the instrument column.</li>
+        <li>Then as for GJ 436: the quick FIP, the folds, a transit in TESS, and the report with the same
+        settings.</li>
+      </ol>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/star_from_file.png" alt="The star filled from the OBJECT column of a file">
+        <figcaption>The star of a file, from its OBJECT column and APERO's names.</figcaption>
+      </figure>
+    </section>
+
 
     <section class="view" id="how" data-title="How it works">
       <h2>How it works, briefly</h2>
@@ -957,7 +1402,7 @@ fit = koloa.mcmc_orbits(data, [], trend=1)
 accel, minus, plus = acceleration(fit)[&#x27;accel&#x27;]
 
 <span class="c"># the lightest companion that can pull that hard, whatever its orbit</span>
-<span class="c">#   (&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;Torres 1999&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;) [Msun]: the star at 3.52 pc, the companion 11.6 arcsec away</span>
+<span class="c">#   (&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;&lt;a href=&quot;https://doi.org/10.1086/316313&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;Torres 1999&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;&lt;/a&gt;) [Msun]: the star at 3.52 pc, the companion 11.6 arcsec away</span>
 mmin = companion_min_mass(acceleration(fit)[&#x27;draws&#x27;], 3.52, 11.6)
 
 <span class="c"># the perspective acceleration (mu^2 d, geometry) from the Gaia DR3</span>
