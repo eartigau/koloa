@@ -689,7 +689,8 @@ def rules(data: RVData, sources: Optional[Dict[str, str]] = None,
              release that has its spectra, how many), by (noise or
              errors), extra (what it scatters more than the better one,
              in quadrature [m/s]), precision and precision_better (the
-             noise, or median error, of the two [m/s]), mean and slope
+             noise, or median error, of the two [m/s]), tie (the two were
+             not told apart: the other is preferred), mean and slope
              (what it adds to the errors of the mean and of the slope),
              left (the points of its own of a weak one), nights and source
     """
@@ -724,6 +725,7 @@ def rules(data: RVData, sources: Optional[Dict[str, str]] = None,
         num = int(np.sum(data.inst == name))
         row = dict(name=name, n=num, used=0, keep=np.array([], dtype=int),
                    status='on', better=None, same=0, by=None, extra=None,
+                   tie=False,
                    precision=None, precision_better=None, mean=None,
                    slope=None, left=None, nights=None,
                    source=sources.get(name, ''))
@@ -753,9 +755,12 @@ def rules(data: RVData, sources: Optional[Dict[str, str]] = None,
                 mine, theirs = 'other', 'one'
             row.update(better=better, same=sum(gone.values()))
             if found is not None:
+                # a tie: the two could not be told apart, and the better
+                #   one is so by its name, its year or its size
                 row.update(by=found['by'], extra=found['extra'],
                            precision=found[mine],
-                           precision_better=found[theirs])
+                           precision_better=found[theirs],
+                           tie=found['ratio'] == 1.0)
         rows.append(row)
     return rows
 
@@ -796,10 +801,14 @@ def _better(row: Dict[str, Any]) -> str:
     """the release that has spectra of a dataset, and how the two compare"""
     if row.get('precision') is None:
         return str(row['better'])
+    if row.get('tie'):
+        return (f'{row["better"]} (as precise on the spectra they share: '
+                f'the one that names its spectrograph, the latest, or the '
+                f'one with the more spectra, is preferred)')
     if row['by'] == 'noise' and row.get('extra') is not None:
         if not row['precision'] > row['precision_better']:
-            return (f'{row["better"]} (as precise on the spectra they '
-                    f'share: preferred)')
+            return (f'{row["better"]} (preferred, from the comparisons of '
+                    f'all the releases of these spectra)')
         return (f'{row["better"]}, the more precise ({row["name"]} '
                 f'scatters {row["extra"]:.2f} m/s more, in quadrature, on '
                 f'the spectra they share)')

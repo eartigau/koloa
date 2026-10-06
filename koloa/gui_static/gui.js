@@ -767,7 +767,8 @@ function ruleNote(inst) {
   const pct = (v) => (v === null || v === undefined ? '?' : (100 * v).toFixed(2));
   const how = () => {
     if (r.precision === null || r.precision === undefined) return '';
-    if (r.by === 'noise') return r.precision > r.precision_better ? fill(t('ds_more'), { extra: f(r.extra, 2) }) : t('ds_tie');
+    if (r.tie) return t('ds_tie');
+    if (r.by === 'noise') return r.precision > r.precision_better ? fill(t('ds_more'), { extra: f(r.extra, 2) }) : t('ds_rated');
     return fill(t('ds_err'), { a: f(r.precision_better, 2), b: f(r.precision, 2) });
   };
   // asked back: what the rules do with it by default, in brackets

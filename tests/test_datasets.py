@@ -45,6 +45,8 @@ def test_the_better_release_of_the_same_spectra():
     assert rows['HARPS03']['precision_better'] == pytest.approx(1.0, abs=0.5)
     assert 'spectra of HARPS (Trifonov+ 2020)' in datasets.told(
         rows['HARPS03'])
+    assert not rows['HARPS03']['tie']
+    assert 'the more precise' in datasets.told(rows['HARPS03'])
     # what it scatters more than the other: sqrt(3^2 - 1^2)
     assert rows['HARPS03']['extra'] == pytest.approx(2.83, rel=0.25)
     assert datasets.left_out(rows.values()) == ['HARPS03']
@@ -196,6 +198,9 @@ def test_two_releases_as_precise_as_each_other():
     used, rows = datasets.choose(merge([copy, full]), auto=False)
     assert _rows(rows)['HARPS03']['status'] == 'on'
     assert _rows(rows)['HARPS (Paper+ 2015)']['status'] == 'release'
+    # said as it is: not told apart, the other preferred
+    assert _rows(rows)['HARPS (Paper+ 2015)']['tie']
+    assert 'as precise' in datasets.told(_rows(rows)['HARPS (Paper+ 2015)'])
 
 
 def test_a_release_that_names_no_spectrograph():

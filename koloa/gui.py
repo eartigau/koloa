@@ -792,8 +792,8 @@ def series_of(files: Any = '', target: str = '', root: str = '',
 
 #: what the page is told of a dataset by the rules
 RULE_KEYS = ('status', 'n', 'used', 'better', 'same', 'by', 'extra',
-             'precision', 'precision_better', 'mean', 'slope', 'left',
-             'nights')
+             'precision', 'precision_better', 'tie', 'mean', 'slope',
+             'left', 'nights')
 
 
 def velocities(files: Any = '', target: str = '', root: str = '',
