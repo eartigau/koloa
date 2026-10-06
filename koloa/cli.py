@@ -15,6 +15,7 @@ koloa from the command line.
     koloa --detailed --target "GJ 436"           # no file: the archives only
     koloa --gui                                  # the same in the browser,
                                                  # with the command lines
+    koloanui                                     # koloa --gui, in one word
     koloa "GJ 436" --gather archives             # DACE, CARMENES DR1 and
                                                  # TESS in archives/GJ_436
 
@@ -275,6 +276,13 @@ def main(argv=None):
             nburn=args.nburn, nchains=args.nchains, duck=not args.no_duck,
             gp=not args.no_gp, style=args.style, period=args.period,
             nightly=False if args.exposures else None)
+
+
+def gui(argv=None):
+    """koloanui: koloa's GUI in the browser, as koloa --gui does (with its
+    options: koloanui --port 8800)"""
+    import sys
+    main(['--gui'] + list(sys.argv[1:] if argv is None else argv))
 
 
 if __name__ == '__main__':

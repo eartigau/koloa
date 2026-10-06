@@ -982,3 +982,13 @@ def test_the_series_about_one_solution(tmp_path):
                              marker)
     assert len(fig.axes) == 1   # the series
     plt.close(fig)
+
+
+def test_koloanui_starts_the_gui(monkeypatch):
+    """koloanui is koloa --gui in one word, with its options"""
+    from koloa import cli
+    asked = []
+    monkeypatch.setattr(gui, 'serve', lambda port=8765: asked.append(port))
+    cli.gui([])
+    cli.gui(['--port', '8801'])
+    assert asked == [8765, 8801]

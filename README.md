@@ -153,7 +153,8 @@ and `koloa.gather.load('archives/GJ_436')` reads it back. DACE is filtered
 from some networks: it is then reported as unreachable and the rest goes
 on.
 
-`koloa --gui` does the same in the browser, from this machine: a SIMBAD
+`koloa --gui` (or `koloanui`, the same in one word) does the same in the
+browser, from this machine: a SIMBAD
 resolver (identifiers, position, TIC, the rotation periods SIMBAD and
 CARMENES list), the velocities of a file and of the archives by instrument,
 and the gathering and the detailed report with their options. Every run is

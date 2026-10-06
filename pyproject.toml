@@ -25,6 +25,7 @@ all = ["emcee>=3", "radvel>=1.4", "astropy>=5", "pyyaml>=5", "pytest"]
 
 [project.scripts]
 koloa = "koloa.cli:main"
+koloanui = "koloa.cli:gui"
 
 [tool.setuptools]
 packages = ["koloa"]
