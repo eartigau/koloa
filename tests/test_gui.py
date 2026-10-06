@@ -992,3 +992,24 @@ def test_koloanui_starts_the_gui(monkeypatch):
     cli.gui([])
     cli.gui(['--port', '8801'])
     assert asked == [8765, 8801]
+
+
+def test_where_a_light_curve_is_shown_from(tmp_path, monkeypatch):
+    """the light curve kept with the archives: its path as the page shows
+    it is the same however the archives folder was given (a remembered
+    result gives it in full), from the folder the server runs in"""
+    folder = tmp_path / 'archives' / 'GJ_436' / 'phot'
+    folder.mkdir(parents=True)
+    time = [58900.0 + 5.0 * it / 299 for it in range(300)]
+    (folder / 'tess.csv').write_text('rjd,flux,sflux,sector,pipeline\n'
+                                     + ''.join(f'{tt},1.0,0.001,22,SPOC\n'
+                                               for tt in time))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(gui, 'TESS_LC', {})
+    short = os.path.join('archives', 'GJ_436', 'phot', 'tess.csv')
+    for root in (str(tmp_path / 'archives'), 'archives'):
+        lc, where = gui.tess_light('GJ 436', root)
+        assert lc is not None
+        assert where == f'the archives of the star ({short})'
+    assert gui._path_shown(os.path.expanduser('~/elsewhere/x.csv')) \
+        == os.path.join('~', 'elsewhere', 'x.csv')

@@ -1756,6 +1756,16 @@ TESS_WHY: Dict[str, Dict[str, Any]] = {}
 TRANSIT_FIP = 0.1
 
 
+def _path_shown(path: str) -> str:
+    """a path as the page shows it, however it was asked: from the folder
+    the server runs in when under it, from the home folder (~) otherwise"""
+    full = os.path.abspath(path)
+    here = os.getcwd()
+    if full.startswith(here + os.sep):
+        return os.path.relpath(full, here)
+    return _home_short(full)
+
+
 def tess_light(target: str, root: str = '', fetch: bool = False):
     """
     The TESS light curve of a star: the one koloa.gather kept with its
@@ -1776,7 +1786,7 @@ def tess_light(target: str, root: str = '', fetch: bool = False):
         return TESS_LC[key]
     if os.path.exists(path):
         TESS_LC[key] = (transit.from_csv(path),
-                        f'the archives of the star ({path})')
+                        f'the archives of the star ({_path_shown(path)})')
         return TESS_LC[key]
     if not fetch:
         return None, 'not gathered'
@@ -1875,7 +1885,7 @@ def space_light(target: str, root: str = '', fetch: bool = False,
         return SPACE_LC[key]
     if os.path.exists(path):
         SPACE_LC[key] = (transit.from_csv(path),
-                         f'the archives of the star ({path})',
+                         f'the archives of the star ({_path_shown(path)})',
                          _csv_labels(path))
         return SPACE_LC[key]
     if not fetch:
