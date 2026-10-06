@@ -50,6 +50,8 @@ ROUTES = os.path.join(os.path.expanduser('~'), '.config', 'koloa',
 KEPT = 2_000_000
 #: how long a question for output waits for some [s]
 WAIT = 20.0
+#: how long after a line is typed its echo is looked for [s]
+ECHO = 0.7
 #: a line typed again by a route: the next one when the terminal has been
 #: quiet this long, or after this long at most [s]
 QUIET, PATIENCE = 0.8, 30.0
@@ -129,7 +131,10 @@ class Session:
         # where its output was before these keys: their echo comes after
         before = self.end
         os.write(self.fd, text.encode())
-        for char in text:
+        # not the keys that are no text (the arrows), nor what the
+        #   terminal of the page answers by itself (where its cursor is)
+        plain = re.sub(r'\x1b(\[[0-9;?]*[ -/]*[@-~]|O.|.)', '', text)
+        for char in plain:
             if char in '\r\n':
                 self._keep()
             elif char in '\x7f\x08':
@@ -143,19 +148,25 @@ class Session:
 
     def _keep(self) -> None:
         """the line just typed, kept if the terminal showed it: with the
-        echo off (a password, a code) it showed nothing of it"""
+        echo off (a password, a code) it showed nothing of it. Looked at
+        a moment later: through ssh the echo of the last keys comes with
+        the line's end"""
         line, self._line = self._line.strip(), ''
+        start = self._from
         if not line:
             return
-        # the echo may come a moment after the last key
-        time.sleep(0.15)
-        with self.cond:
-            shown = self.buffer[max(self._from, self.base) - self.base:]
-        text = re.sub(rb'\x1b\[[0-9;?]*[A-Za-z]', b'', shown).decode(
-            'utf-8', 'replace')
-        # a long line is shown on several rows: compared without spaces
-        if re.sub(r'\s+', '', line) in re.sub(r'\s+', '', text):
-            self.typed.append(line)
+
+        def later():
+            time.sleep(ECHO)
+            with self.cond:
+                shown = self.buffer[max(start, self.base) - self.base:]
+            text = re.sub(rb'\x1b\[[0-9;?]*[A-Za-z]', b'', shown).decode(
+                'utf-8', 'replace')
+            # a long line is shown on several rows: compared without
+            #   spaces
+            if re.sub(r'\s+', '', line) in re.sub(r'\s+', '', text):
+                self.typed.append(line)
+        threading.Thread(target=later, daemon=True).start()
 
     def resize(self, cols: int, rows: int) -> None:
         """the size of the terminal of the page"""
