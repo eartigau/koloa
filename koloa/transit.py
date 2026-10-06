@@ -845,17 +845,26 @@ def search(lc: Dict[str, np.ndarray], period: float,
             best['phase'] = float(((best['centre'] - t0) / fold + 0.5)
                                   % 1.0 - 0.5) * fold * 24.0
     out['best'] = best
+    # the verdict in words (why), and which of its sentences it is
+    #   (why_code: a page in another language writes its own from the
+    #   numbers of the search)
+    out['snr_need'] = float(SNR_PLAUSIBLE)
     if best is None:
+        out['why_code'] = 'none'
         out['why'] = 'no box with data where the transit would be'
     elif best['snr'] < SNR_PLAUSIBLE:
+        out['why_code'] = 'weak'
         out['why'] = (f'the deepest box is {best["snr"]:.1f} sigma deep '
                       f'(a transit: {SNR_PLAUSIBLE:.0f} or more)')
     elif best['ntransits'] < MIN_TRANSITS:
+        out['why_code'] = 'single'
         out['why'] = (f'{best["snr"]:.1f} sigma, but in a single transit')
     elif (best.get('snr_drop') or 0.0) < 0.5 * SNR_PLAUSIBLE:
+        out['why_code'] = 'one'
         out['why'] = (f'{best["snr"]:.1f} sigma, but from one transit: '
                       f'{best.get("snr_drop") or 0.0:.1f} sigma without it')
     elif best['radius'] > RP_MAX_RJ * R_JUPITER / R_EARTH:
+        out['why_code'] = 'deep'
         out['why'] = (f'{best["snr"]:.1f} sigma, but too deep for a planet '
                       f'(an eclipsing binary?)')
     else:
@@ -877,6 +886,7 @@ def search(lc: Dict[str, np.ndarray], period: float,
         chance = null_chance(best['snr_drop'], null)
         out['null_chance'] = chance
         if null and best['snr_drop'] <= top:
+            out['why_code'] = 'dips'
             out['why'] = (f'{best["snr"]:.1f} sigma in {best["ntransits"]} '
                           f'transits, but as strong a box at another period '
                           f'({best["snr_drop"]:.1f} sigma without its '
@@ -884,6 +894,7 @@ def search(lc: Dict[str, np.ndarray], period: float,
                           f'{len(null)}): this light curve makes dips of its '
                           f'own')
         elif not chance < NULL_CHANCE:
+            out['why_code'] = 'chance'
             out['why'] = (f'{best["snr"]:.1f} sigma in {best["ntransits"]} '
                           f'transits, but within reach of chance (the null '
                           f'of {len(null)} other periods reaches '
@@ -891,6 +902,7 @@ def search(lc: Dict[str, np.ndarray], period: float,
                           f'{1 / max(chance, 1e-12):.0f})')
         else:
             out['plausible'] = True
+            out['why_code'] = 'plausible'
             out['why'] = (f'{best["snr"]:.1f} sigma in {best["ntransits"]} '
                           f'transits ({best["snr_drop"]:.1f} without the '
                           f'deepest; at most {top:.1f} at {len(null)} other '

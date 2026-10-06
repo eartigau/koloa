@@ -1011,7 +1011,7 @@ async function showTransit(key, fetch, mission) {
       //   full frames only, or its light curve is not on this machine yet
       note.innerHTML = res.reason === 'unobserved' ? `<span>${esc(t('ts_unobserved'))}${(res.planned || []).length ? ` ${esc(t('ts_planned'))} ${esc(res.planned.join(', '))}.` : ''}</span>`
         : res.reason === 'frames' ? `<span>${esc(t('ts_frames'))} ${esc((res.sectors || []).join(', '))}</span>`
-          : `${esc(t('ts_missing'))} (${esc(res.lc || '')}) <button type="button" class="small" id="tsfetch">${esc(t('ts_fetch'))}</button>`;
+          : `${esc(t('ts_missing'))} (${esc(sourceText(res.lc))}) <button type="button" class="small" id="tsfetch">${esc(t('ts_fetch'))}</button>`;
       if (res.others_none) note.innerHTML += ` <span>${esc(t('ts_others_none'))}</span>`;
       $('tsplot').classList.remove('on');
       return;
@@ -1020,6 +1020,35 @@ async function showTransit(key, fetch, mission) {
   } catch (err) {
     note.innerHTML = `<span class="bad">${esc(err.message)}</span>`;
   }
+}
+// why a transit is plausible or not, in the language of the page: its
+//   sentence (the search's why_code) filled with the numbers of the search;
+//   the search's own words when it gave no code (a result of before)
+function whyText(code, v, words) {
+  const key = `ts_why_${code}`;
+  if (!code || !TEXT.en[key]) return words || '';
+  const f = (x, d) => (x === null || x === undefined ? '?' : (+x).toFixed(d));
+  const chance = +v.chance || 0;
+  const fill = { snr: f(v.snr, 1), n: v.n, drop: f(v.drop || 0, 1), need: f(v.need, 0), top: f(v.top || 0, 1), trials: v.trials,
+    chance: chance.toExponential(0), odds: (1 / Math.max(chance, 1e-12)).toFixed(0) };
+  return t(key).replace(/\{(\w+)\}/g, (all, name) => (name in fill ? fill[name] : all));
+}
+// the numbers of a verdict: of a search (the panel), of a line of the batch
+function whyOfSearch(res) {
+  const b = res.best || {};
+  const nul = res.null || [];
+  return whyText(res.why_code, { snr: b.snr, n: b.ntransits, drop: b.snr_drop, need: res.snr_need,
+    top: nul.length ? Math.max(...nul) : 0, trials: nul.length, chance: res.null_chance }, res.why);
+}
+function whyOfLine(tr) {
+  return whyText(tr.why_code, { snr: tr.snr, n: tr.ntransits, drop: tr.snr_drop, need: tr.snr_need,
+    top: tr.null_top, trials: tr.null_n, chance: tr.null_chance }, tr.why);
+}
+// where a light curve came from, and the radius of the star, in the
+//   language of the page (the server's words: English)
+function sourceText(words) {
+  return String(words || '').replace('the archives of the star', t('src_archives')).replace('the CDS', t('src_cds'))
+    .replace('its mass (R ~ M^0.9)', t('src_mass')).replace(/^not gathered$/, t('src_not_gathered'));
 }
 // the TESS panel as a fold or as the time series of each sector
 let tsView = 'fold';
@@ -1034,17 +1063,17 @@ function drawTransit(res, c) {
   const P = res.fold_period || res.period;
   const fmt = (v, d) => (v === null || v === undefined ? '?' : (+v).toFixed(d));
   const verdict = res.plausible ? `<span class="ok">\u2691 ${esc(t('ts_plausible'))}</span>` : `<span class="hint">${esc(t('ts_not'))}</span>`;
-  $('tsnote').innerHTML = `${verdict}: ${esc(res.why)}.`
+  $('tsnote').innerHTML = `${verdict}${t('colon')} ${esc(whyOfSearch(res))}.`
     // the depth, duration and radius of the box fitted to the medians
     + (res.fit ? ` ${esc(t('ts_fit'))} ${fmt(res.fit.depth, 3)} \u00b1 ${fmt(res.fit.depth_err, 3)} ppt, ${fmt(res.fit.duration, 1)} h, Rp \u2248 ${fmt(res.fit.radius, 2)} R\u2295`
       : b ? ` ${esc(t('ts_box'))} ${fmt(b.depth, 3)} \u00b1 ${fmt(b.depth_err, 3)} ppt, ${fmt(b.duration, 1)} h, Rp \u2248 ${fmt(b.radius, 2)} R\u2295` : '')
-    + ` \u00b7 R\u2605 ${fmt(res.star.radius, 3)} R\u2609 (${esc(res.star.radius_source)}), ${t('ts_expected')} ${fmt(res.duration, 1)} h`
+    + ` \u00b7 R\u2605 ${fmt(res.star.radius, 3)} R\u2609 (${esc(sourceText(res.star.radius_source))}), ${t('ts_expected')} ${fmt(res.duration, 1)} h`
     + (teqText(P, res.star) ? ` \u00b7${teqText(P, res.star)}` : '')
-    + ` \u00b7 ${esc(res.stretches || `TESS ${(res.sectors || []).join(', ')}`)} (${esc(res.lc)})`
+    + ` \u00b7 ${esc(res.stretches || `TESS ${(res.sectors || []).join(', ')}`)} (${esc(sourceText(res.lc))})`
     + (res.window ? ` \u00b7 ${t('ts_window')} \u00b1${fmt(res.window, 1)} h` : ` \u00b7 ${t('ts_whole')}`)
     // the period scanned: how many, and where the box is best
     + (res.scan ? ` \u00b7 ${t('ts_scan')} ${res.scan.n} ${t('ts_periods')} ${fmt(res.scan.low, 5)} - ${fmt(res.scan.high, 5)} d,`
-      + ` ${t('ts_folded')} ${fmt(P, 5)} d${b && b.period_offset !== undefined ? ` (${b.period_offset >= 0 ? '+' : ''}${fmt(b.period_offset, 1)}\u03c3)` : ''}` : '');
+      + ` ${t('ts_folded')} ${fmt(P, 5)} d${b && b.period_offset !== undefined ? ` (${Math.abs(b.period_offset) < 0.05 ? '' : b.period_offset > 0 ? '+' : '\u2212'}${fmt(Math.abs(b.period_offset), 1)}\u03c3)` : ''}` : '');
   const div = $('tsplot');
   div.classList.add('on');
   div.classList.toggle('series', tsView === 'series');
@@ -2136,7 +2165,7 @@ function periodMark(r) {
 //   flagged when plausible, its depth, radius and signal-to-noise ratio
 function transitCell(tr) {
   if (!tr) return '';
-  const tip = esc(tr.why || '');
+  const tip = esc(tr.status === 'plausible' || tr.status === 'none' ? whyOfLine(tr) : sourceText(tr.why));
   if (tr.status === 'plausible') {
     return `<span class="ok" title="${tip}">\u2691 ${tr.mission && tr.mission !== 'TESS' ? `${esc(tr.mission)} ` : ''}${tr.depth.toFixed(2)} ppt \u00b7 ${tr.radius.toFixed(1)} R\u2295 \u00b7 ${tr.snr.toFixed(1)}\u03c3</span>`;
   }

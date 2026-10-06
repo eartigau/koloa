@@ -4,6 +4,7 @@
 koloa's GUI: a page in the browser, served from this machine.
 
     koloa --gui                 # or python -m koloa.gui (--port 8765)
+    koloanui                    # the same, in one word
 
 A star by its SIMBAD name (the resolver: identifiers, position, TIC, the
 periods of variability SIMBAD lists, CARMENES DR1), a file of velocities or
@@ -2193,9 +2194,14 @@ def _batch_transit(batch: Dict[str, Any], item: Dict[str, Any],
     # the depth and radius of the box fitted to the medians, when there is
     #   one (the search's box is its deepest few points)
     fit = res.get('fit') or best
+    null = res.get('null') or []
     summ['transit'] = dict(
         status='plausible' if res['plausible'] else 'none',
         plausible=bool(res['plausible']), why=res['why'],
+        why_code=res.get('why_code'), snr_need=res.get('snr_need'),
+        snr_drop=best.get('snr_drop'), null_n=len(null),
+        null_top=max(null) if null else 0.0,
+        null_chance=res.get('null_chance'),
         snr=best.get('snr'), depth=fit.get('depth'),
         depth_err=fit.get('depth_err'), radius=fit.get('radius'),
         ntransits=best.get('ntransits'), sectors=res.get('sectors'),

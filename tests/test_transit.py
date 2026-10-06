@@ -61,6 +61,8 @@ def test_a_transit_found():
                              rstar=0.4, ntrial=10)
         best = res['best']
         assert res['plausible'], res['why']
+        # which sentence the verdict is, for a page in another language
+        assert res['why_code'] == 'plausible' and res['snr_need'] > 0
         assert best['depth'] == pytest.approx(1.2, abs=0.25)
         # the transit at its time
         off = ((best['centre'] - 58001.3) / 3.1 + 0.5) % 1.0 - 0.5
@@ -78,6 +80,8 @@ def test_no_transit_where_there_is_none():
         res = transit.search(lc, 3.1, t0, 0.05, 1e-4, mstar=0.4, rstar=0.4,
                              ntrial=10)
         assert not res['plausible'], res['why']
+        assert res['why_code'] in ('none', 'weak', 'single', 'one', 'dips',
+                                   'chance')
 
 
 def test_one_event_is_not_a_transit():
@@ -87,6 +91,7 @@ def test_one_event_is_not_a_transit():
     res = transit.search(lc, 5.0, None, mstar=0.4, rstar=0.4, ntrial=10)
     assert not res['plausible']
     assert 'one transit' in res['why'] or 'single' in res['why']
+    assert res['why_code'] in ('one', 'single')
 
 
 def test_another_planet_left_out():
