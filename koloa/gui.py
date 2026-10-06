@@ -1812,28 +1812,167 @@ def tess_why(target: str, root: str = '') -> Dict[str, Any]:
         root or 'archives', folder_name(target), 'phot', 'tess.csv')), {})
 
 
+#: the light curves of Kepler, K2 and CoRoT read, and which of them have a
+#: star (once asked)
+SPACE_LC: Dict[str, Any] = {}
+SPACE_HAVE: Dict[str, Dict[str, Any]] = {}
+
+
+def _csv_labels(path: str) -> Dict[int, str]:
+    """the names of the stretches of a light curve kept by koloa.gather
+    (its sector and pipeline columns): {1003: 'Kepler Q3'}"""
+    import csv
+    from koloa.photometry import label
+    out: Dict[int, str] = {}
+    with open(path, newline='') as handle:
+        for row in csv.DictReader(handle):
+            try:
+                sector = int(float(row['sector']))
+            except (KeyError, TypeError, ValueError):
+                continue
+            if sector not in out:
+                out[sector] = label(sector, row.get('pipeline'))
+    return out
+
+
+def space_have(target: str, ident: Optional[Dict[str, Any]] = None
+               ) -> Dict[str, Any]:
+    """which of Kepler, K2 and CoRoT have a star (MAST and VizieR asked by
+    its position, once): how many quarters, campaigns, runs"""
+    from koloa import photometry
+    from koloa.archive import resolve
+    from koloa.gather import folder_name
+    key = folder_name(target)
+    if key not in SPACE_HAVE:
+        SPACE_HAVE[key] = photometry.available(ident or resolve(target))
+    return SPACE_HAVE[key]
+
+
+def space_light(target: str, root: str = '', fetch: bool = False,
+                mission: str = 'tess'):
+    """
+    The light curve of a star from one mission: TESS (tess_light), or
+    Kepler, K2 or CoRoT: the one koloa.gather kept with its archives
+    (phot/<mission>.csv), else, when fetch, the one MAST or the CDS has
+    when the star lay in its fields (koloa.photometry)
+
+    :return: tuple, the light curve (koloa.transit) or None, where it came
+             from, and the names of its stretches ({number: 'Kepler Q3'};
+             empty for TESS: its sectors)
+    """
+    from koloa import photometry, transit
+    from koloa.gather import folder_name
+    if mission == 'tess':
+        return tess_light(target, root, fetch) + ({},)
+    if not target.strip():
+        return None, 'no star', {}
+    name = photometry.NAMES[mission]
+    path = os.path.join(root or 'archives', folder_name(target), 'phot',
+                        f'{mission}.csv')
+    key = os.path.abspath(path)
+    if key in SPACE_LC:
+        return SPACE_LC[key]
+    if os.path.exists(path):
+        SPACE_LC[key] = (transit.from_csv(path),
+                         f'the archives of the star ({path})',
+                         _csv_labels(path))
+        return SPACE_LC[key]
+    if not fetch:
+        return None, 'not gathered', {}
+    have = space_have(target).get(mission)
+    if not have:
+        SPACE_LC[key] = (None, f'not in the fields of {name}' if have == 0
+                         else f'{name} could not be asked', {})
+        return SPACE_LC[key]
+    from koloa.archive import resolve
+    lcs = photometry.light_curves(resolve(target),
+                                  missions=(mission,))[mission]
+    lc = transit.from_light_curves(lcs)
+    SPACE_LC[key] = (
+        lc, (f'{"the CDS" if mission == "corot" else "MAST"} '
+             f'(koloa.photometry)' if lc is not None
+             else f'no light curve of {name}'),
+        {int(one['sector']): one['label'] for one in lcs['sectors']})
+    return SPACE_LC[key]
+
+
+def _missions_with(target: str, root: str, used: str) -> List[str]:
+    """the missions known to have a light curve of a star, without asking
+    anyone: the one used, those on disk or read, those MAST or VizieR said
+    they have"""
+    from koloa import photometry
+    from koloa.gather import folder_name
+    folder = os.path.join(root or 'archives', folder_name(target), 'phot')
+    counts = SPACE_HAVE.get(folder_name(target), {})
+    out = []
+    for mission in ('tess',) + photometry.MISSIONS:
+        key = os.path.abspath(os.path.join(folder, f'{mission}.csv'))
+        kept = (TESS_LC if mission == 'tess' else SPACE_LC).get(key)
+        if mission == used or os.path.exists(key) \
+                or (kept is not None and kept[0] is not None) \
+                or counts.get(mission):
+            out.append(mission)
+    return out
+
+
+def _stretches(mission: str, sectors: List[int],
+               labels: Dict[int, str]) -> str:
+    """the stretches searched, in words: 'TESS 22, 49', 'Kepler Q0 to Q17
+    (18)', 'CoRoT LRa01, LRa06'"""
+    from koloa import photometry
+    name = photometry.NAMES[mission]
+    if mission == 'tess':
+        return f'{name} ' + ', '.join(str(sec) for sec in sectors)
+    short = [labels.get(sec, str(sec)).split()[-1] for sec in sectors]
+    if len(short) > 6:
+        return f'{name} {short[0]} to {short[-1]} ({len(short)})'
+    return f'{name} ' + ', '.join(short)
+
+
 def transit_check(opts: Dict[str, Any]) -> Dict[str, Any]:
     """
-    A transit in TESS at a period (koloa.transit.search): the light curve
-    of the star high-passed and folded, a box searched where the transit
-    would be (about a conjunction of the velocities, or a TOI's
-    ephemeris), the transits of its other known planets left out; with
-    the star's mass and best-guess radius
+    A transit in the space photometry of a star at a period
+    (koloa.transit.search): its light curve high-passed and folded, a box
+    searched where the transit would be (about a conjunction of the
+    velocities, or a TOI's ephemeris), the transits of its other known
+    planets left out; with the star's mass and best-guess radius. The
+    light curve is TESS's, else Kepler's, K2's or CoRoT's (the first that
+    has the star), or the mission asked
 
     :param opts: dict, target, root, name, period, tc, tc_err, p_err,
-                 fetch (ask MAST when the archives have no light curve),
-                 mstar (the page's)
+                 fetch (ask MAST and the CDS when the archives have no
+                 light curve), mstar (the page's), mission (tess, kepler,
+                 k2, corot; auto, the first that has the star)
 
     :return: dict, the search, and lc (where the light curve came from),
-             star (mass, radius and their sources)
+             mission (the one shown: with auto, the first with a plausible
+             transit, else the most significant box), searched (each
+             mission searched: plausible, snr), missions (those known to
+             have the star), stretches (the sectors, quarters... searched,
+             in words), labels (the name of each), star (mass, radius and
+             their sources)
     """
-    from koloa import transit
+    from koloa import photometry, transit
     target = str(opts.get('target') or '').strip()
-    lc, where = tess_light(target, opts.get('root') or '',
-                           bool(opts.get('fetch')))
-    if lc is None:
-        return dict(tess_why(target, opts.get('root') or ''), lc=where,
-                    missing=True, name=opts.get('name'))
+    base, fetch = opts.get('root') or '', bool(opts.get('fetch'))
+    asked = str(opts.get('mission') or 'auto').lower()
+    order = (('tess',) + photometry.MISSIONS if asked == 'auto'
+             else (asked,))
+    # the light curve of each mission that has the star; TESS's reason
+    #   when it has none
+    curves, first, last = [], None, None
+    for mission in order:
+        lc, where, labels = space_light(target, base, fetch, mission)
+        first, last = (where if first is None else first), where
+        if lc is not None:
+            curves.append((mission, lc, where, labels))
+    if not curves:
+        # TESS's reason first; and, once asked, no other mission either
+        out = dict(tess_why(target, base), lc=first, missing=True,
+                   name=opts.get('name'))
+        if fetch and asked == 'auto' and last != 'not gathered':
+            out['others_none'] = True
+        return out
     ident = resolve_star(target, opts.get('root') or '')
     star = ident.get('star') or {}
     mstar = _number(opts.get('mstar')) or star.get('mass') or 0.5
@@ -1845,13 +1984,32 @@ def transit_check(opts: Dict[str, Any]) -> Dict[str, Any]:
     tc_err = _number(opts.get('tc_err'))
     if opts.get('kind') == 'rv' and _number(opts.get('tc')) is not None:
         tc_err = transit.conjunction_error(tc_err, period)
-    res = transit.search(lc, period, _number(opts.get('tc')), tc_err,
-                         _number(opts.get('p_err')), float(mstar),
-                         float(rstar), others=others)
-    res.update(lc=where, name=opts.get('name'), star=dict(
+    # each mission searched in turn until one has a plausible transit;
+    #   else the one whose box is the most significant
+    res, found = None, {}
+    for mission, lc, where, labels in curves:
+        one = transit.search(lc, period, _number(opts.get('tc')), tc_err,
+                             _number(opts.get('p_err')), float(mstar),
+                             float(rstar), others=others)
+        one.update(lc=where, mission=mission,
+                   mission_name=photometry.NAMES[mission],
+                   labels={str(key): val for key, val in labels.items()},
+                   stretches=_stretches(mission, one.get('sectors') or [],
+                                        labels))
+        found[mission] = dict(plausible=bool(one['plausible']),
+                              snr=(one.get('best') or {}).get('snr'))
+        if res is None or one['plausible'] or (
+                not res['plausible'] and ((one.get('best') or {}).get('snr')
+                                          or 0)
+                > ((res.get('best') or {}).get('snr') or 0)):
+            res = one
+        if one['plausible']:
+            break
+    res.update(name=opts.get('name'), searched=found, star=dict(
         mass=float(mstar), radius=float(rstar),
         radius_source=star.get('radius_source') or 'its mass (R ~ M^0.9)',
-        teff=star.get('teff'), teff_source=star.get('teff_source')))
+        teff=star.get('teff'), teff_source=star.get('teff_source')),
+        missions=_missions_with(target, base, res['mission']))
     return _finite(res)
 
 
@@ -2041,6 +2199,7 @@ def _batch_transit(batch: Dict[str, Any], item: Dict[str, Any],
         snr=best.get('snr'), depth=fit.get('depth'),
         depth_err=fit.get('depth_err'), radius=fit.get('radius'),
         ntransits=best.get('ntransits'), sectors=res.get('sectors'),
+        mission=res.get('mission_name'), stretches=res.get('stretches'),
         period=float(peak['period']))
 
 

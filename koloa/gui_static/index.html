@@ -143,7 +143,8 @@
       <h2 class="foldhead"><span data-i18n="transit_title">A transit in TESS</span> <button type="button" class="info" data-help="transit_search" aria-label="?">i</button></h2>
       <div class="row" id="tsbuttons"></div>
       <div class="row"><span class="seg"><button type="button" class="small on" data-tsview="fold" data-i18n="ts_view_fold">fold</button><button type="button" class="small" data-tsview="series" data-i18n="ts_view_series">time series, each transit</button></span>
-        <button type="button" class="info" data-help="ts_view" aria-label="?">i</button></div>
+        <button type="button" class="info" data-help="ts_view" aria-label="?">i</button>
+        <span class="seg" id="tsmissions"></span></div>
       <p class="hint" id="tsnote"></p>
       <div id="tsplot" class="plot"></div>
     </section>
@@ -155,7 +156,7 @@
       <div class="checks">
         <label><input type="checkbox" data-opt="dace" data-for="gather" checked> DACE</label>
         <label><input type="checkbox" data-opt="carmenes" data-for="gather" checked> CARMENES DR1</label>
-        <label><input type="checkbox" data-opt="tess" data-for="gather" checked> TESS</label>
+        <label><input type="checkbox" data-opt="tess" data-for="gather" checked> <span data-i18n="gather_phot">TESS, Kepler, K2, CoRoT</span></label>
         <label><input type="checkbox" data-opt="vizier" data-for="gather" id="gather-vizier" checked> <span data-i18n="vizier_pub">VizieR (published)</span>:</label>
         <button type="button" class="info" data-help="gather_sources" aria-label="?">i</button>
       </div>

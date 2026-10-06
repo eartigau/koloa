@@ -84,7 +84,8 @@ function checkArchives() {
     } else if (onDisk && onDisk.exists) {
       btn.textContent = t('refresh');
       showDiskPoints();
-      const what = Object.entries(onDisk.archives || {}).map(([k, v]) => `${k} ${v}`).join(', ');
+      const what = Object.entries(onDisk.archives || {}).filter(([k, v]) => !(['kepler', 'k2', 'corot', 'space'].includes(k) && v === 'none'))
+        .map(([k, v]) => `${k} ${v}`).join(', ');
       $('ondisk').textContent = `${t('on_disk')} (${onDisk.created || ''}): ${what}`;
     } else {
       btn.textContent = t('run_gather');
@@ -983,23 +984,35 @@ function renderTransits(auto) {
   if (auto && tsOf !== quick.id) { tsOf = quick.id; showTransit(cands[0].key, true); }
   document.querySelectorAll('[data-tsearch]').forEach((b) => b.classList.toggle('on', b.dataset.tsearch === tsShown));
 }
-async function showTransit(key, fetch) {
+const MISSION_NAMES = { tess: 'TESS', kepler: 'Kepler', k2: 'K2', corot: 'CoRoT' };
+// the mission whose light curve is searched: auto (TESS, then Kepler, K2
+//   and CoRoT where the star lay in their fields: the first with a
+//   plausible transit), or the one picked
+let tsMission = 'auto';
+async function showTransit(key, fetch, mission) {
   const c = transitCandidates().find((x) => x.key === key);
   if (!c) return;
+  tsMission = mission || 'auto';
   tsShown = key;
   document.querySelectorAll('[data-tsearch]').forEach((b) => b.classList.toggle('on', b.dataset.tsearch === key));
   const note = $('tsnote');
   note.innerHTML = `<span class="spin"></span> ${esc(t(fetch ? 'ts_fetching' : 'ts_searching'))}`;
   try {
     const res = await api('/api/transit', { options: { target: $('target').value.trim(), root: $('root').value.trim(), period: c.period,
-      tc: c.tc, tc_err: c.tc_err, p_err: c.p_err, name: c.name, kind: c.kind, fetch: !!fetch, mstar: +$('mstar').value || null } });
+      tc: c.tc, tc_err: c.tc_err, p_err: c.p_err, name: c.name, kind: c.kind, fetch: !!fetch, mstar: +$('mstar').value || null,
+      mission: tsMission } });
     if (tsShown !== key) return;
+    // a button per mission that has the star, when more than one does
+    const have = res.missions || [];
+    $('tsmissions').innerHTML = have.length > 1 ? have.map((m) => `<button type="button" class="small${m === res.mission ? ' on' : ''}" data-tsmission="${esc(m)}"`
+      + ` title="${esc(t('ts_mission_tip'))}">${esc(MISSION_NAMES[m] || m)}</button>`).join('') : '';
     if (res.missing) {
       // TESS never looked at the star (nothing to fetch), has it in its
       //   full frames only, or its light curve is not on this machine yet
       note.innerHTML = res.reason === 'unobserved' ? `<span>${esc(t('ts_unobserved'))}${(res.planned || []).length ? ` ${esc(t('ts_planned'))} ${esc(res.planned.join(', '))}.` : ''}</span>`
         : res.reason === 'frames' ? `<span>${esc(t('ts_frames'))} ${esc((res.sectors || []).join(', '))}</span>`
           : `${esc(t('ts_missing'))} (${esc(res.lc || '')}) <button type="button" class="small" id="tsfetch">${esc(t('ts_fetch'))}</button>`;
+      if (res.others_none) note.innerHTML += ` <span>${esc(t('ts_others_none'))}</span>`;
       $('tsplot').classList.remove('on');
       return;
     }
@@ -1027,7 +1040,7 @@ function drawTransit(res, c) {
       : b ? ` ${esc(t('ts_box'))} ${fmt(b.depth, 3)} \u00b1 ${fmt(b.depth_err, 3)} ppt, ${fmt(b.duration, 1)} h, Rp \u2248 ${fmt(b.radius, 2)} R\u2295` : '')
     + ` \u00b7 R\u2605 ${fmt(res.star.radius, 3)} R\u2609 (${esc(res.star.radius_source)}), ${t('ts_expected')} ${fmt(res.duration, 1)} h`
     + (teqText(P, res.star) ? ` \u00b7${teqText(P, res.star)}` : '')
-    + ` \u00b7 TESS ${esc((res.sectors || []).join(', '))} (${esc(res.lc)})`
+    + ` \u00b7 ${esc(res.stretches || `TESS ${(res.sectors || []).join(', ')}`)} (${esc(res.lc)})`
     + (res.window ? ` \u00b7 ${t('ts_window')} \u00b1${fmt(res.window, 1)} h` : ` \u00b7 ${t('ts_whole')}`)
     // the period scanned: how many, and where the box is best
     + (res.scan ? ` \u00b7 ${t('ts_scan')} ${res.scan.n} ${t('ts_periods')} ${fmt(res.scan.low, 5)} - ${fmt(res.scan.high, 5)} d,`
@@ -1162,7 +1175,7 @@ function drawTransitSeries(res) {
       notes.push({ xref: xa, yref: `${ya} domain`, x: e.time, y: 0.02, text: `${e.depth.toFixed(2)}`, showarrow: false, yanchor: 'bottom',
         font: { size: 9, color: e.depth > 0.5 * depth ? '#f5a524' : '#7a8597' } });
     });
-    notes.push({ xref: `${xa} domain`, yref: `${ya} domain`, x: 0.01, y: 0.98, text: `${t('ts_sector')} ${sec}`, showarrow: false,
+    notes.push({ xref: `${xa} domain`, yref: `${ya} domain`, x: 0.01, y: 0.98, text: (res.labels || {})[sec] && res.mission !== 'tess' ? res.labels[sec] : `${t('ts_sector')} ${sec}`, showarrow: false,
       xanchor: 'left', yanchor: 'top', font: { size: 10, color: '#a8b4ca' } });
     layout[k ? `xaxis${k + 1}` : 'xaxis'] = { ...axis, tickformat: '.0f', exponentformat: 'none', nticks: 6 };
     layout[k ? `yaxis${k + 1}` : 'yaxis'] = { ...axis, range: [lo, hi], title: k % cols === 0 ? 'ppt' : '' };
@@ -2123,7 +2136,7 @@ function transitCell(tr) {
   if (!tr) return '';
   const tip = esc(tr.why || '');
   if (tr.status === 'plausible') {
-    return `<span class="ok" title="${tip}">\u2691 ${tr.depth.toFixed(2)} ppt \u00b7 ${tr.radius.toFixed(1)} R\u2295 \u00b7 ${tr.snr.toFixed(1)}\u03c3</span>`;
+    return `<span class="ok" title="${tip}">\u2691 ${tr.mission && tr.mission !== 'TESS' ? `${esc(tr.mission)} ` : ''}${tr.depth.toFixed(2)} ppt \u00b7 ${tr.radius.toFixed(1)} R\u2295 \u00b7 ${tr.snr.toFixed(1)}\u03c3</span>`;
   }
   if (tr.status === 'none') return `<span class="hint" title="${tip}">${tr.snr !== null && tr.snr !== undefined ? `${tr.snr.toFixed(1)}\u03c3` : '-'}</span>`;
   return `<span class="hint" title="${tip}">${esc(tr.status === 'no TESS' ? t('ts_no_tess') : tr.status === 'not observed' ? t('ts_not_observed') : tr.status)}</span>`;
@@ -2419,6 +2432,8 @@ document.addEventListener('click', async (e) => {
     else document.querySelectorAll('[data-tsview]').forEach((x) => x.classList.toggle('on', x.dataset.tsview === tsView));
   }
   if (e.target.id === 'tsfetch' && tsShown) showTransit(tsShown, true);
+  const tm = e.target.closest('[data-tsmission]');
+  if (tm && tsShown) showTransit(tsShown, true, tm.dataset.tsmission);
   if (e.target.id === 'batchcsv') batchCsv();
   const open = e.target.closest('[data-bopen]');
   if (open && batch) {

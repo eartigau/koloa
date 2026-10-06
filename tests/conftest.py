@@ -24,3 +24,13 @@ def no_encyclopaedia(monkeypatch):
     an empty one, unless a test gives its own"""
     from koloa import archive
     monkeypatch.setattr(archive, '_EU', dict(fetched='a test', planets=[]))
+
+
+@pytest.fixture(autouse=True)
+def no_space_missions(monkeypatch):
+    """Kepler, K2 and CoRoT are not asked (MAST, VizieR): a star is in
+    none of their fields, unless a test says otherwise"""
+    from koloa import gui
+    monkeypatch.setattr(gui, 'space_have', lambda target, ident=None:
+                        dict(kepler=0, k2=0, corot=0))
+    monkeypatch.setattr(gui, 'SPACE_LC', {})

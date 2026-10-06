@@ -157,7 +157,8 @@ def main(argv=None):
                              'the FIP')
     parser.add_argument('--no-tess', action='store_true',
                         help='with --detailed or --gather: do not fetch '
-                             'the TESS light curves of the star')
+                             'the TESS light curves of the star (nor, with '
+                             '--gather, those of Kepler, K2 and CoRoT)')
     parser.add_argument('--gather', nargs='?', const='.', default=None,
                         metavar='ROOT',
                         help='gather what DACE, CARMENES DR1, VizieR (the '

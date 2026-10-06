@@ -34,6 +34,10 @@ The folder of a star (the name as given, spaces as underscores):
                          best of SPOC 2-minute, TESS-SPOC, QLP)
     phot/tess/s<sector>_<pipeline>.csv   each sector: rjd, flux, sflux [ppt]
     phot/tess.csv        every sector together, with its sector and pipeline
+    phot/kepler.csv, phot/k2.csv, phot/corot.csv   the same from Kepler, K2
+                         and CoRoT when the star lay in their fields (and
+                         phot/<mission>/<stretch>.csv, each quarter,
+                         campaign or run)
 
 Times are BJD - 2400000 (rjd), velocities m/s. A file that is there is read
 back rather than asked for again, unless refresh=True.
@@ -347,6 +351,45 @@ def tess_photometry(ident: Dict[str, Any], target: str, folder: str,
     return lcs
 
 
+def space_photometry(ident: Dict[str, Any], target: str, folder: str,
+                     refresh: bool = False) -> Dict[str, Dict[str, Any]]:
+    """
+    The light curves of a star from Kepler, K2 and CoRoT, when it lay in
+    their fields (koloa.photometry): one CSV per quarter, campaign or run,
+    and one per mission with all of them (phot/kepler.csv, phot/k2.csv,
+    phot/corot.csv: rjd, flux, sflux [ppt], sector, pipeline; the sector is
+    the number of the stretch, koloa.photometry.label names it)
+
+    :return: dict, kepler, k2, corot (koloa.photometry.light_curves)
+    """
+    from koloa.photometry import light_curves
+    lcs = light_curves(ident, refresh=refresh)
+    for key, val in lcs.items():
+        allrows = []
+        for lc in val['sectors']:
+            path = os.path.join(folder, key,
+                                lc['label'].replace(' ', '_') + '.csv')
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, 'w', newline='') as handle:
+                writer = csv.writer(handle)
+                writer.writerow(['rjd', 'flux', 'sflux'])
+                for row in zip(lc['time'], lc['flux'], lc['err']):
+                    writer.writerow([_cell(val_) for val_ in row])
+            lc['csv'] = path
+            allrows += [[_cell(tt), _cell(ff), _cell(ee), str(lc['sector']),
+                         lc['provenance']]
+                        for tt, ff, ee in zip(lc['time'], lc['flux'],
+                                              lc['err'])]
+        if allrows:
+            with open(os.path.join(folder, f'{key}.csv'), 'w',
+                      newline='') as handle:
+                writer = csv.writer(handle)
+                writer.writerow(['rjd', 'flux', 'sflux', 'sector',
+                                 'pipeline'])
+                writer.writerows(allrows)
+    return lcs
+
+
 # -----------------------------------------------------------------------------
 # All of them
 # -----------------------------------------------------------------------------
@@ -366,7 +409,8 @@ def gather(target: str, root: str = '.', dace: bool = True,
     :param root: str, the folder of the folders of the stars
     :param dace: bool, the velocities of DACE
     :param carmenes: bool, the velocities of CARMENES DR1
-    :param tess: bool, the light curves of TESS
+    :param tess: bool, the light curves of TESS, and of Kepler, K2 and
+                 CoRoT when the star lay in their fields
     :param vizier: bool, the velocities published on VizieR (the surveys:
                    Keck HIRES, the APF, the Lick Hamilton, HARPS by SERVAL;
                    the tables of the star's papers), koloa.published
@@ -505,6 +549,30 @@ def gather(target: str, root: str = '.', dace: bool = True,
                 message='no light curve at MAST'))
         if 'tess' in manifest['archives']:
             outcome(_told(manifest['archives']['tess']))
+        # the other space missions, where the star lay in their fields
+        step('Kepler, K2, CoRoT')
+        space = attempt('space', lambda: space_photometry(
+            ident, target, photdir, refresh=refresh))
+        told = []
+        for key, val in (space or {}).items():
+            sectors = val['sectors']
+            manifest['archives'][key] = (dict(
+                status='ok', target=val['target'],
+                sectors=[dict(sector=lc['sector'], label=lc['label'],
+                              pipeline=lc['provenance'],
+                              exposure=lc['exposure'], npoints=len(lc['time']),
+                              file=os.path.relpath(lc['csv'], folder))
+                         for lc in sectors],
+                files=[f'phot/{key}.csv']) if sectors else dict(
+                status='none', target=val.get('target'),
+                message=val.get('error')
+                or f'not in the fields of {val["mission"]}'))
+            if sectors:
+                told.append(f'{val["mission"]}: ' + ', '.join(
+                    lc['label'].split()[-1] for lc in sectors)
+                    + f' ({sum(len(lc["time"]) for lc in sectors)} points)')
+        if space is not None:
+            outcome('; '.join(told) or 'the star is in none of their fields')
     if series:
         both = merge(series, name=target)
         write_rv(both, os.path.join(rvdir, 'all_rv.csv'))
@@ -521,6 +589,9 @@ def gather(target: str, root: str = '.', dace: bool = True,
                     if 'instruments' in val else
                     f'{len(val["sectors"])} sectors')
             log(f'{key}: {what}', 'value')
+        elif key in ('kepler', 'k2', 'corot', 'space') \
+                and val['status'] == 'none':
+            log(f'{key}: {val["message"]}')
         else:
             log(f'{key}: {val["status"]}, {val["message"]}', 'warn')
     return manifest
