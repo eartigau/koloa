@@ -254,11 +254,12 @@
     </section>
     <section class="card span-3" id="sv-card" hidden>
       <div class="row">
-        <button type="button" id="sv-check" data-i18n="sv_check">Check the archives</button>
+        <button type="button" id="sv-check" class="go" data-i18n="sv_check">Cross-match with the archives</button>
         <label><input type="checkbox" id="sv-dace" checked> DACE</label>
         <span class="hint" data-i18n="sv_check_hint">of the stars ticked (of all when none is): DACE, CARMENES DR1, the surveys on VizieR</span>
         <span class="hint" id="sv-checkstatus"></span>
       </div>
+      <div id="sv-overview"></div>
       <div class="row">
         <span class="hint" data-i18n="sv_folders">Your files (LBL...), in the folders:</span>
         <span class="picker"><input id="sv-folders" type="text" autocomplete="off" class="wide" placeholder="/data/nirps/lbl, /data/spirou/lbl"><button type="button" data-pick="folder" data-into="sv-folders">...</button></span>
@@ -271,7 +272,12 @@
         <button type="button" class="small" id="sv-tickfiles" data-i18n="sv_tick_files">those with files</button>
         <button type="button" class="small" id="sv-tickall" data-i18n="sv_tick_all">all</button>
         <button type="button" class="small" id="sv-ticknone" data-i18n="sv_tick_none">none</button>
-        <input id="sv-filter" type="text" autocomplete="off" class="pattern" placeholder="GJ 8, M4...">
+        <select id="sv-show">
+          <option value="all" data-i18n="sv_show_all">every star</option>
+          <option value="data" data-i18n="sv_show_data">those with data</option>
+          <option value="none" data-i18n="sv_show_none">those with none</option>
+        </select>
+        <input id="sv-filter" type="text" autocomplete="off" class="pattern" placeholder="GJ 8, M4, HARPS...">
         <span class="hint" id="sv-count"></span>
       </div>
       <div id="sv-table"></div>

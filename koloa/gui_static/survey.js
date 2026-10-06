@@ -14,15 +14,19 @@ const svHas = (star) => {
   const a = star.archives || {};
   return !!(a.dace || a.carmenes || (a.surveys || []).length || (star.files || []).length);
 };
+// what the archives have of a star: its velocities counted (DACE, CARMENES
+//   DR1), its spectrographs
+const svKnown = (star) => (star.summary || []).reduce((sum, one) => sum + (one.n || 0), 0);
 const svShown = () => {
   const words = $('sv-filter').value.trim().toUpperCase();
-  const rows = (survey ? survey.stars : []).filter((star) => !words
-    || `${star.name} ${star.main} ${star.sptype}`.toUpperCase().includes(words));
+  const show = $('sv-show').value;
+  const rows = (survey ? survey.stars : []).filter((star) => (!words
+    || `${star.name} ${star.main} ${star.sptype} ${(star.summary || []).map((one) => one.name).join(' ')}`.toUpperCase().includes(words))
+    && (show === 'all' || (show === 'data') === svHas(star)));
   const { key, dir } = svSort;
   const val = (star) => {
-    if (key === 'dace') return ((star.archives || {}).dace || {}).n ?? -1;
-    if (key === 'carmenes') return (star.archives || {}).carmenes ?? -1;
-    if (key === 'surveys') return ((star.archives || {}).surveys || []).length;
+    if (key === 'known') return star.archives ? svKnown(star) : -1;
+    if (key === 'summary') return star.archives ? (star.summary || []).length : -1;
     if (key === 'files') return (star.files || []).length;
     if (key === 'tick') return svTicked.has(star.name) ? 1 : 0;
     return star[key];
@@ -34,12 +38,31 @@ const svShown = () => {
   });
 };
 
+// the summary of the cross-match: how many stars have velocities, and
+//   spectrograph by spectrograph (the stars, the velocities counted, the
+//   archives that have them)
+function svOverview() {
+  const o = survey && survey.overview;
+  if (!o || !o.checked) { $('sv-overview').innerHTML = ''; return; }
+  const rows = o.spectrographs.map((row) => `<tr><td><b>${esc(row.name)}</b></td><td class="num">${row.stars}</td>`
+    + `<td class="num">${row.velocities || '<span class="hint">?</span>'}</td>`
+    + `<td class="src">${esc(Object.entries(row.where).map(([where, num]) => `${where} ${num}`).join(' · '))}</td></tr>`).join('');
+  $('sv-overview').innerHTML = `<p><b>${o.data}</b> ${esc(t('sv_ov_data'))} ${o.checked} ${esc(t('sv_ov_checked'))}`
+    + ` (${o.several} ${esc(t('sv_ov_several'))}, ${o.single} ${esc(t('sv_ov_single'))}); <b>${o.none}</b> ${esc(t('sv_ov_none'))}.`
+    + ` ${o.velocities} ${esc(t('sv_ov_velocities'))}`
+    + (o.files ? ` · ${esc(t('sv_ov_files'))} ${o.nfiles}, ${esc(t('sv_ov_filestars'))} ${o.files}` : '')
+    + (o.checked < o.n ? ` · ${o.n - o.checked} ${esc(t('sv_ov_todo'))}` : '') + '</p>'
+    + (rows ? `<table class="mini"><tr><th>${esc(t('sv_ov_spec'))}</th><th>${esc(t('sv_stars'))}</th><th>${esc(t('sv_ov_counted'))}</th>`
+      + `<th>${esc(t('sv_ov_where'))}</th></tr>${rows}</table>` : '');
+}
+
 function svRender() {
   $('sv-card').hidden = !survey;
   $('sv-batchcard').hidden = !survey;
   if (!survey) return;
+  svOverview();
   const cols = [['tick', ''], ['name', t('sv_col_name')], ['main', 'SIMBAD'], ['spnum', t('sv_col_type')], ['distance', 'd [pc]'],
-    ['V', 'V'], ['dace', 'DACE'], ['carmenes', 'CARMENES DR1'], ['surveys', t('sv_col_surveys')], ['files', t('sv_col_files')]];
+    ['V', 'V'], ['summary', t('sv_col_arch')], ['known', t('sv_col_known')], ['files', t('sv_col_files')]];
   const head = cols.map(([key, label]) => `<th data-svsort="${key}" class="sortable${svSort.key === key ? ' sorted' : ''}">${esc(label)}`
     + `${svSort.key === key ? (svSort.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('');
   const rows = svShown();
@@ -47,15 +70,18 @@ function svRender() {
   $('sv-table').innerHTML = `<div class="batchwrap svwrap"><table class="mini batch"><tr>${head}</tr>`
     + rows.map((star) => {
       const a = star.archives;
-      const dace = !a ? '' : a.dace ? `<b>${a.dace.n}</b> <span class="hint">${esc(Object.entries(a.dace.instruments).map(([k, v]) => `${k} ${v}`).join(', '))}</span>`
-        : `<span class="hint" title="${esc(a.dace_error || '')}">${a.dace_error ? '?' : '-'}</span>`;
+      // spectrograph by spectrograph: its velocities when an archive
+      //   counted them, the archives that have it
+      const arch = !a ? `<span class="hint">${esc(t('sv_not_checked'))}</span>`
+        : (star.summary || []).length ? star.summary.map((one) => `<span class="svspec"><b>${esc(one.name)}</b>${one.n ? ` ${one.n}` : ''}`
+          + ` <span class="hint">${esc(one.where.join(', '))}</span></span>`).join('')
+          : `<span class="hint" title="${esc(a.dace_error || '')}">${esc(t(a.dace_error ? 'sv_dace_error' : 'sv_nothing'))}</span>`;
       const files = (star.files || []).length ? `<span title="${esc(star.files.join('\n'))}"><b>${star.files.length}</b> <span class="hint">${esc(star.files[0])}${star.files.length > 1 ? ', ...' : ''}</span></span>` : '';
       return `<tr class="${a && !svHas(star) ? 'nodata' : ''}"><td><input type="checkbox" data-svtick="${esc(star.name)}"${svTicked.has(star.name) ? ' checked' : ''}></td>`
         + `<td><b>${esc(star.name)}</b>${star.near ? ` <span class="hint" title="${esc(t('sv_near'))} ${esc(star.near)}">⧉</span>` : ''}</td>`
         + `<td class="src">${esc(star.main)}</td><td>${esc(star.sptype)}</td><td class="num">${num(star.distance, 2)}</td>`
         + `<td class="num">${num(star.V ?? star.G, 1)}${star.V === null && star.G !== null ? '<span class="hint">G</span>' : ''}</td>`
-        + `<td>${dace}</td><td class="num">${a ? (a.carmenes || '-') : ''}</td>`
-        + `<td class="src">${a ? esc((a.surveys || []).join(', ') || '-') : ''}</td><td>${files}</td></tr>`;
+        + `<td class="svarch">${arch}</td><td class="num">${a ? (svKnown(star) || '') : ''}</td><td>${files}</td></tr>`;
     }).join('') + '</table></div>';
   const withData = survey.stars.filter(svHas).length;
   $('sv-count').textContent = `${survey.stars.length} ${t('sv_stars')}${survey.check ? ` · ${withData} ${t('sv_with_data')}` : ''} · ${svTicked.size} ${t('sv_ticked')}`
@@ -118,7 +144,7 @@ async function svFollow() {
     if (wasChecking || !busy) {
       // the archives of the stars checked so far
       const full = await api(`/api/survey?id=${survey.id}`);
-      survey.stars = full.stars;
+      survey.stars = full.stars; survey.overview = full.overview;
       svRender();
     } else { svCheckStatus(); svPackStatus(); }
     if (busy) svTimer = setTimeout(svFollow, 1500);
@@ -141,7 +167,7 @@ async function svMatch() {
   $('sv-matchstatus').innerHTML = '<span class="spin"></span>';
   try {
     const now = await api('/api/survey/files', { id: survey.id, folders: $('sv-folders').value, pattern: $('sv-pattern').value });
-    survey.stars = now.stars; survey.unmatched = now.unmatched;
+    survey.stars = now.stars; survey.unmatched = now.unmatched; survey.overview = now.overview;
     const other = now.unmatched.length ? ` · <span title="${esc(now.unmatched.map((u) => `${u.name}: ${u.target || u.raw || '?'}`).join('\n'))}">${now.unmatched.length} ${esc(t('sv_unmatched'))}</span>` : '';
     $('sv-matchstatus').innerHTML = `${now.matched} ${esc(t('sv_matched'))}${other}`;
     svRender();
@@ -403,7 +429,7 @@ document.addEventListener('click', (e) => {
   const sort = e.target.closest('[data-svsort]');
   if (sort) {
     const key = sort.dataset.svsort;
-    svSort = { key, dir: svSort.key === key ? -svSort.dir : (['dace', 'carmenes', 'surveys', 'files', 'tick'].includes(key) ? -1 : 1) };
+    svSort = { key, dir: svSort.key === key ? -svSort.dir : (['known', 'summary', 'files', 'tick'].includes(key) ? -1 : 1) };
     svRender();
   }
 });
@@ -413,6 +439,7 @@ document.addEventListener('change', (e) => {
     svRender();
   }
   if (e.target.id === 'term-route') svServerRoot();
+  if (e.target.id === 'sv-show') svRender();
 });
 document.addEventListener('input', (e) => {
   if (e.target.id === 'sv-filter') svRender();

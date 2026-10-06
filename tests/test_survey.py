@@ -133,6 +133,24 @@ def test_what_the_archives_have_of_a_star(tmp_path, monkeypatch):
     assert os.path.join('arch', 'GJ_876', 'rv', 'dace') in ''.join(folders)
     assert survey.has_data(stars[-1]) and not survey.has_data(stars[0])
     assert stars[0]['archives']['dace'] is None
+    # spectrograph by spectrograph: the eras of HARPS and its release in
+    #   the RVBank are one line, with the velocities DACE counted
+    assert stars[-1]['summary'] == [
+        dict(name='CARMENES', n=69, where=['DR1']),
+        dict(name='HARPS', n=12, where=['DACE', 'RVBank']),
+        dict(name='HIRES', n=None, where=['Teklu+ 2025'])]
+    assert stars[0]['summary'] == []
+    over = survey.overview(stars)
+    assert (over['n'], over['checked'], over['data'], over['none']) == (
+        3, 3, 1, 2)
+    assert over['velocities'] == 81 and over['several'] == 1
+    assert over['spectrographs'][0] == dict(name='CARMENES', stars=1,
+                                            velocities=69, where=dict(DR1=1))
+    assert survey.spectrographs(dict(dace=dict(n=7, instruments=dict(
+        HARPN=4, CORALIE14=3)), carmenes=None, surveys=['cls21', 'talor19'])
+        ) == [dict(name='HARPS-N', n=4, where=['DACE']),
+              dict(name='CORALIE', n=3, where=['DACE']),
+              dict(name='HIRES', n=None, where=['CLS', 'Tal-Or+ 2019'])]
 
 
 def test_the_files_put_with_the_stars(tmp_path, monkeypatch):
@@ -312,6 +330,10 @@ def test_the_survey_tab_of_the_page(tmp_path, monkeypatch):
     full = gui_survey.route('/api/survey', dict(id=sid))
     assert full['stars'][-1]['archives']['dace'] is None
     assert full['stars'][0]['archives'] is None
+    # the summary of the cross-match: one star asked, with nothing
+    assert (full['overview']['checked'], full['overview']['data'],
+            full['overview']['none']) == (1, 0, 1)
+    assert full['stars'][-1]['summary'] == []
     # the files of a folder, by the names of the page
     (tmp_path / 'lbl_GL876_GL876.rdb').write_text('rjd\tvrad\tsvrad\n')
     monkeypatch.setattr(apero_names, 'star_of_file', lambda path, fetch=True:

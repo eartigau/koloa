@@ -79,6 +79,18 @@ CATALOGUES = ('GJ', 'HD', 'HIP', 'TIC', 'Gaia DR3', 'Karmn', 'LHS', 'Wolf',
               'Ross', 'TOI', 'NAME', 'LP', 'G', 'L', 'BD', 'CD', '2MASS')
 #: the stars of a sample DACE is asked of at once
 WORKERS = 6
+#: the surveys on VizieR, as an archive of a spectrograph: the
+#: spectrograph, and the name of the archive in a few letters (the
+#: California Legacy Survey has HIRES for every star, the APF and Lick for
+#: some: known once its velocities are gathered)
+SURVEY_ARCHIVES = {'teklu25': ('HIRES', 'Teklu+ 2025'),
+                   'cls21': ('HIRES', 'CLS'),
+                   'talor19': ('HIRES', 'Tal-Or+ 2019'),
+                   'fischer14': ('Lick', 'Fischer+ 2014'),
+                   'rvbank20': ('HARPS', 'RVBank')}
+#: the names DACE gives a spectrograph that koloa.published.family does
+#: not read
+DACE_NAMES = {'HARPN': 'HARPS-N'}
 #: the most objects asked of SIMBAD
 MAXREC = 50000
 #: the file of a batch folder that lists its stars
@@ -328,7 +340,82 @@ def check_star(star: Dict[str, Any], root: str = 'archives',
             out['dace_error'] = str(err).split(';')[0]
     out['n'] = ((out['dace'] or {}).get('n', 0) + (out['carmenes'] or 0))
     star['archives'] = out
+    star['summary'] = spectrographs(out)
     return out
+
+
+def spectrographs(archives: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    What the archives have of a star, spectrograph by spectrograph (the
+    eras of an instrument and its releases put together): HARPS on DACE
+    and in the RVBank is one line, with the velocities DACE has
+
+    :param archives: dict, from check_star
+
+    :return: list of dict, the most velocities first: name (the
+             spectrograph), n (its velocities where an archive counted
+             them: DACE, CARMENES DR1; None when only surveys have it,
+             whose velocities are counted when they are gathered), where
+             (the archives that have it)
+    """
+    from koloa.published import family
+    found: Dict[str, Dict[str, Any]] = {}
+
+    def add(name, where, num=None):
+        one = found.setdefault(name, dict(name=name, n=None, where=[]))
+        if where not in one['where']:
+            one['where'].append(where)
+        if num:
+            one['n'] = (one['n'] or 0) + int(num)
+    for inst, num in ((archives.get('dace') or {}).get('instruments')
+                      or {}).items():
+        base = re.sub(r'[_\d].*$', '', str(inst))
+        add(family(inst) or DACE_NAMES.get(base, base), 'DACE', num)
+    if archives.get('carmenes'):
+        add('CARMENES', 'DR1', archives['carmenes'])
+    for key in archives.get('surveys') or []:
+        name, where = SURVEY_ARCHIVES.get(key, (key, key))
+        add(name, where)
+    return sorted(found.values(), key=lambda one: (-(one['n'] or 0),
+                                                   one['name']))
+
+
+def overview(stars: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    What the archives have of a sample, once its stars are checked: how
+    many have velocities, and spectrograph by spectrograph
+
+    :return: dict: n (stars), checked, data (those with velocities in an
+             archive), none (checked, with nothing), files (those with
+             files of one's own), nfiles, velocities (those counted),
+             spectrographs (list of dict, the most stars first: name,
+             stars, velocities, where: {archive: stars}), several (stars
+             with two spectrographs or more) and single (with one)
+    """
+    checked = [star for star in stars if star.get('archives') is not None]
+    table: Dict[str, Dict[str, Any]] = {}
+    several = single = 0
+    for star in checked:
+        mine = star.get('summary') or []
+        several += len(mine) > 1
+        single += len(mine) == 1
+        for one in mine:
+            row = table.setdefault(one['name'], dict(
+                name=one['name'], stars=0, velocities=0, where={}))
+            row['stars'] += 1
+            row['velocities'] += one['n'] or 0
+            for where in one['where']:
+                row['where'][where] = row['where'].get(where, 0) + 1
+    data = sum(bool(star.get('summary')) for star in checked)
+    return dict(
+        n=len(stars), checked=len(checked), data=data,
+        none=len(checked) - data,
+        files=sum(bool(star.get('files')) for star in stars),
+        nfiles=sum(len(star.get('files') or []) for star in stars),
+        velocities=sum(row['velocities'] for row in table.values()),
+        spectrographs=sorted(table.values(), key=lambda row: (
+            -row['stars'], row['name'])),
+        several=several, single=single)
 
 
 def check(stars: Sequence[Dict[str, Any]], root: str = 'archives',

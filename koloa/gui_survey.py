@@ -31,7 +31,7 @@ from koloa import survey
 SURVEYS: Dict[str, Dict[str, Any]] = {}
 #: what the page shows of a star
 SHOWN = ('name', 'main', 'sptype', 'spnum', 'distance', 'ra', 'dec', 'V',
-         'G', 'J', 'K', 'near', 'archives')
+         'G', 'J', 'K', 'near', 'archives', 'summary')
 
 
 # =============================================================================
@@ -73,7 +73,8 @@ def state(sid: str, stars: bool = True) -> Dict[str, Any]:
     job = SURVEYS[sid]
     out = dict(id=sid, n=len(job['stars']), asked=job['asked'],
                check=job['check'], pack=job['pack'],
-               unmatched=job.get('unmatched') or [])
+               unmatched=job.get('unmatched') or [],
+               overview=survey.overview(job['stars']))
     if stars:
         out['stars'] = [_star(star) for star in job['stars']]
     return out

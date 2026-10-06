@@ -75,12 +75,19 @@ table.mini td.num { font-family: "IBM Plex Mono", monospace; text-align: right; 
 table.mini tr.off td { opacity: 0.4; text-decoration: line-through; }
 table.mini tr.off td:first-child { text-decoration: none; opacity: 1; }
 td.src { font-size: 0.8rem; color: var(--muted); }
-/* the survey: its form, its table, its terminal */
+/* the survey: the whole width of the page, its form, its table, its terminal */
+#tab-survey.layout { max-width: none; padding: 8px 12px 24px; }
+#sv-overview { margin: 6px 0 10px; }
+#sv-overview p { margin: 4px 0; }
+#sv-overview table.mini td, #sv-overview table.mini th { padding-right: 22px; }
+.svspec { display: inline-block; margin-right: 14px; white-space: nowrap; }
+.svspec .hint { font-size: 0.78rem; }
+td.svarch { white-space: normal; }
 .svform label { display: inline-flex; align-items: center; gap: 6px; margin-right: 10px; }
 input.short { width: 5.2em; }
 #sv-root, #sv-results { width: 30em; max-width: 100%; }
 #sv-folders { width: 26em; max-width: 100%; }
-.svwrap { max-height: 28em; overflow: auto; }
+.svwrap { max-height: 62vh; overflow: auto; }
 .svwrap tr.nodata td { opacity: 0.45; }
 .svwrap tr.nodata td:first-child { opacity: 1; }
 .svwrap th { position: sticky; top: 0; background: #0d1626; z-index: 1; }
