@@ -777,12 +777,21 @@ async function startQuick() {
   }
 }
 
+// how many times in a row a run that does not answer is asked again (every
+//   3 s: a few minutes), before the page stops following it
+const POLL_MISSES = 100;
 async function pollQuick(id) {
   if (!quick || quick.id !== id) return;   // a newer one took its place
   let state;
-  try { state = await api(`/api/quickfip?id=${id}`); } catch (err) { return; }
+  try { state = await api(`/api/quickfip?id=${id}`); } catch (err) {
+    // no answer (the machine asleep, the network for a moment): asked
+    //   again, for a few minutes
+    quick.misses = (quick.misses || 0) + 1;
+    if (quick.misses <= POLL_MISSES) setTimeout(() => pollQuick(id), 3000);
+    return;
+  }
   if (!quick || quick.id !== id) return;
-  Object.assign(quick, state);
+  Object.assign(quick, state, { misses: 0 });
   if (state.status === 'failed') {
     $('fipstatus').innerHTML = `<p class="hint bad">${esc(state.error || 'failed')}</p>`;
     return;
@@ -1369,8 +1378,13 @@ function updateStages() {
 async function pollStage(st) {
   if (stages.get(st.key) !== st || !st.job) return;
   let state;
-  try { state = await api(`/api/quickfip?id=${st.job.id}`); } catch (err) { return; }
+  try { state = await api(`/api/quickfip?id=${st.job.id}`); } catch (err) {
+    st.misses = (st.misses || 0) + 1;
+    if (st.misses <= POLL_MISSES) setTimeout(() => pollStage(st), 3000);
+    return;
+  }
   if (stages.get(st.key) !== st) return;
+  st.misses = 0;
   Object.assign(st.job, state);
   drawStages();
   if (state.status === 'running') setTimeout(() => pollStage(st), 2000);
@@ -2050,9 +2064,14 @@ async function runBatch() {
     $('batchstatus').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
   }
 }
+let batchMisses = 0;
 async function pollBatch(id) {
   if (!batch || batch.id !== id) return;
-  try { batch = await api(`/api/batch?id=${id}`); } catch (err) { return; }
+  try { batch = await api(`/api/batch?id=${id}`); batchMisses = 0; } catch (err) {
+    batchMisses += 1;
+    if (batchMisses <= POLL_MISSES) setTimeout(() => pollBatch(id), 3000);
+    return;
+  }
   renderBatch();
   if (batch.status === 'running') setTimeout(() => pollBatch(id), 1500);
 }
