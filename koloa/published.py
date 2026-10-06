@@ -579,14 +579,21 @@ def _catalogues(update: Optional[Dict[str, Any]] = None
     path = os.path.join(CACHE, 'catalogues.json')
     if update is not None:
         os.makedirs(CACHE, exist_ok=True)
-        with open(path + '.part', 'w') as handle:
+        # several stars may be gathered at once: a part of its own for
+        #   each writer, put in place whole
+        import threading
+        part = f'{path}.{os.getpid()}.{threading.get_ident()}.part'
+        with open(part, 'w') as handle:
             json.dump(update, handle)
-        os.replace(path + '.part', path)
+        os.replace(part, path)
         return update
     if not os.path.exists(path):
         return {}
-    with open(path) as handle:
-        return json.load(handle)
+    try:
+        with open(path) as handle:
+            return json.load(handle)
+    except ValueError:  # asked again, rather than stopped by a bad file
+        return {}
 
 
 def _describe(catalogue: str, timeout: float = 60.0) -> Dict[str, Any]:

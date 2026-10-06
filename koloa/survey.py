@@ -829,8 +829,8 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
          gather: bool = True, tess: bool = False, jobs: int = 6,
          rules: bool = True, trend: int = 1, refresh: bool = False,
          api_key: Any = None, tar: bool = True,
-         progress: Optional[Callable[[int, int, str], None]] = None
-         ) -> Dict[str, Any]:
+         progress: Optional[Callable[[int, int, str], None]] = None,
+         workers: int = 3) -> Dict[str, Any]:
     """
     A batch folder, and its .tar.gz: everything the batch of some stars
     needs, to run it here or on another machine (see the module)
@@ -855,6 +855,8 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
     :param api_key: str, None or False: a DACE API key (koloa.dace)
     :param tar: bool, make the .tar.gz too
     :param progress: callable or None, told (done, total, star)
+    :param workers: int, the stars whose archives are gathered at once
+                    (the tables of a star's papers take a minute or two)
 
     :return: dict, folder, tar (None without), n (stars), files, size (of
              the tar [bytes]), and missing (the stars with nothing: no
@@ -869,20 +871,43 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
     folder = os.path.join(os.path.abspath(os.path.expanduser(out)), name)
     os.makedirs(folder, exist_ok=True)
     targets, missing, nfile = [], [], 0
+    # the archives first, a few stars at once: those that have none here
+    todo = [star for star in stars if gather and (
+        refresh or not os.path.exists(os.path.join(
+            root, _folder(star['name']), 'manifest.json')))]
+    done = [0]
+
+    def fetch(star):
+        try:
+            gather_star(star['name'], root, dace=True, carmenes=True,
+                        tess=tess, vizier=True, refresh=refresh,
+                        api_key=api_key)
+        except Exception as err:  # the star with what there is
+            log(f'pack: the archives of {star["name"]} not gathered '
+                f'({type(err).__name__}: {err})', 'warn')
+        done[0] += 1
+        if progress is not None:
+            progress(done[0], len(todo), star['name'])
+    if todo:
+        # what every star asks for once (the tables of the NASA Exoplanet
+        #   Archive, the lists of the surveys), before the stars are
+        #   gathered side by side
+        try:
+            from koloa import archive, published as kpub
+            from koloa.gather import carmenes_objects
+            archive.tables()
+            carmenes_objects()
+            for one in kpub.SURVEYS:
+                kpub.survey_stars(one)
+        except Exception as err:  # each star asks again, and says
+            log(f'pack: a table could not be fetched first ({err})', 'warn')
+        with ThreadPoolExecutor(max_workers=max(1, int(workers))) as pool:
+            list(pool.map(fetch, todo))
     for it, star in enumerate(stars):
         tag = _folder(star['name'])
-        if progress is not None:
+        if progress is not None and not todo:
             progress(it, len(stars), star['name'])
         here = os.path.join(root, tag)
-        if gather and (refresh or not os.path.exists(os.path.join(
-                here, 'manifest.json'))):
-            try:
-                gather_star(star['name'], root, dace=True, carmenes=True,
-                            tess=tess, vizier=True, refresh=refresh,
-                            api_key=api_key)
-            except Exception as err:  # the star with what there is
-                log(f'pack: the archives of {star["name"]} not gathered '
-                    f'({type(err).__name__}: {err})', 'warn')
         if os.path.isdir(here):
             shutil.copytree(here, os.path.join(folder, 'archives', tag),
                             dirs_exist_ok=True)
