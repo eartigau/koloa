@@ -15,10 +15,17 @@ instrument from one source ('HARPS03', 'HARPS (Trifonov+ 2020)'):
    of the two. On the spectra they share the star does the same in both,
    so the difference of the two is noise alone, and the covariance of
    each with that difference is its own noise: no model of the star is
-   needed. The more precise is the one with the smaller noise when the
-   two differ by more than SIGNIFICANT times what chance gives (the one
-   with the more spectra otherwise), or the one with the smaller errors
-   when they share fewer than MIN_COMPARE. A dataset left with fewer than
+   needed. What the star does only blurs the comparison (by chance it
+   lines up a little with that difference), so its strongest signals are
+   taken out of both first (star_signal: the same curve from both, which
+   leaves their difference as it is). The more precise is the one with
+   the smaller noise when the two differ by more than SIGNIFICANT times
+   what chance gives, or the one with the smaller errors when they share
+   fewer than MIN_COMPARE.
+   When neither says: a dataset that names its spectrograph before a
+   table that does not, the latest release, then the one with the more
+   spectra. A table that holds the spectra of two spectrographs under one
+   name (one offset for both) comes last. A dataset left with fewer than
    MIN_POINTS spectra of its own is left out.
 2. The datasets that constrain nothing. A line is fitted to the nightly
    means (an offset per dataset, one slope). The error of a night is its
@@ -43,10 +50,11 @@ Created on 2026-10-06
 @author: artigau
 """
 import re
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from koloa import periodogram
 from koloa.data import RVData, robust_std
 from koloa.published import MIN_POINTS, SAME_ANY, SAME_FAMILY, family
 
@@ -68,10 +76,25 @@ SIGNIFICANT = 1.0
 #: a pair of velocities this far from the others (in robust sigma of the
 #: differences) is not in the comparison of two releases
 CLIP = 5.0
-#: a dataset that names no spectrograph is a release of another's spectra
-#: when this fraction of its velocities are within SAME_FAMILY of them
-#: (HARPS-TERRA velocities in a paper's table, beside HARPS on DACE)
+#: a dataset that names no spectrograph holds spectra of another when,
+#: of its velocities within NEARBY of one of the other's, this fraction
+#: are within SAME_FAMILY (HARPS-TERRA velocities in a paper's table,
+#: beside HARPS on DACE: all of them; two spectrographs that looked at
+#: the star the same night: a few, by chance)
 MOSTLY = 0.5
+#: two velocities this close in time are of the same hour [days]
+NEARBY = 1.0 / 24
+#: the sinusoids taken out of the velocities before two releases are
+#: compared, at most; only those that chance would give less than once in
+#: FALSE_ALARM series (a sinusoid fitted to the noise of a release would
+#: take that noise out of it, and make it look the more precise)
+NSIGNALS = 6
+FALSE_ALARM = 1e-3
+#: their periods [days]: from this to twice the span of the series, the
+#: frequencies OVERSAMPLE to a peak's width (MAXFREQ of them at most)
+PMIN_SIGNAL = 1.5
+OVERSAMPLE = 4
+MAXFREQ = 30000
 #: a dataset is left out when taking it away changes the error of the mean
 #: and that of the slope by less than this
 WEAK = 0.01
@@ -132,6 +155,117 @@ def line_scatter(time: np.ndarray, rv: np.ndarray) -> float:
     return float(np.std(rest[keep]))
 
 
+#: what the star does, for the series seen last (asked again at each tick
+#: of the page)
+_SIGNALS: Dict[Tuple[int, float, float], Callable] = {}
+
+
+def star_signal(data: RVData, nsin: int = NSIGNALS
+                ) -> Callable[[np.ndarray], np.ndarray]:
+    """
+    What the star does, as a curve in time, for the comparison of two
+    releases of the same spectra: a line and the strongest sinusoids of
+    the series night by night (the median of every velocity of a night,
+    each dataset about its own median: one value a night, however many
+    releases hold its spectra, or their common noise would count as many
+    times and pass for a signal), found one after the other in a
+    periodogram of what is left and fitted together. Not an analysis of
+    the star: any curve taken out of both releases leaves their
+    difference as it is, and the less of the star is left in them the
+    better their noises are told apart
+
+    :param data: RVData, every dataset of the star
+    :param nsin: int, the sinusoids, at most
+
+    :return: callable, the curve: times [days] -> velocities [m/s]
+    """
+    key = (int(data.n), float(np.round(np.sum(data.time), 3)),
+           float(np.round(np.sum(data.rv), 3)))
+    if key in _SIGNALS:
+        return _SIGNALS[key]
+    order = np.argsort(data.time, kind='stable')
+    night = np.concatenate([[0], np.cumsum(np.diff(data.time[order]) > 0.5)])
+    time, value, err = [], [], []
+    for it in range(int(night[-1]) + 1 if len(night) else 0):
+        sel = order[night == it]
+        time.append(float(np.mean(data.time[sel])))
+        value.append(float(np.median(data.rv[sel])))
+        err.append(float(np.median(data.err[sel])))
+    time, value, err = np.array(time), np.array(value), np.array(err)
+    # the precise nights weigh the same, the imprecise ones less
+    if len(err):
+        err = np.sqrt(err ** 2 + np.median(err) ** 2)
+    mid = float(np.mean(time))
+    span = float(np.ptp(time))
+    freqs: List[float] = []
+
+    def design(when):
+        cols = [np.ones(len(when)), when - mid]
+        for freq in freqs:
+            cols += [np.sin(2 * np.pi * freq * (when - mid)),
+                     np.cos(2 * np.pi * freq * (when - mid))]
+        return np.array(cols).T
+
+    def solve():
+        matrix = design(time) / err[:, None]
+        return np.linalg.lstsq(matrix, value / err, rcond=None)[0]
+    coef = solve() if len(time) > 2 else np.zeros(2)
+    if len(time) >= 4 * MIN_SCATTER and span > 2 * PMIN_SIGNAL:
+        num = int(min(MAXFREQ, OVERSAMPLE * span / PMIN_SIGNAL))
+        grid = np.linspace(0.5 / span, 1.0 / PMIN_SIGNAL, num)
+        left = value - design(time) @ coef
+        for _ in range(nsin):
+            if len(time) < 2 * len(coef) + 6:
+                break
+            power = periodogram.gls(time, left, err, grid)
+            freqs.append(float(grid[int(np.argmax(power))]))
+            # between two frequencies of the grid: the best of the fits of
+            #   every sinusoid so far, finer each time, the new one then
+            #   the others again (a strong signal a little off its period
+            #   is left half in, and found a second time)
+            step = float(grid[1] - grid[0])
+            for which in [len(freqs) - 1] + list(range(len(freqs) - 1)):
+                width = step if which == len(freqs) - 1 else step / 10.0
+                for _ in range(3):
+                    centre = freqs[which]
+                    trials = np.linspace(centre - width, centre + width, 21)
+                    chi2 = []
+                    for trial in trials:
+                        freqs[which] = float(trial)
+                        chi2.append(float(np.sum(((
+                            value - design(time) @ solve()) / err) ** 2)))
+                    freqs[which] = float(trials[int(np.argmin(chi2))])
+                    width /= 10.0
+            again = solve()
+            rest = value - design(time) @ again
+            # what it takes out against what chance takes out at the best
+            #   of that many frequencies: (chi2 before - after) / after,
+            #   times half the degrees of freedom left, is exp(-x)
+            #   distributed for noise
+            before = float(np.sum((left / err) ** 2))
+            after = float(np.sum((rest / err) ** 2))
+            gain = (before - after) / max(after, 1e-30) \
+                * (len(time) - len(again)) / 2.0
+            if gain < np.log(num / OVERSAMPLE / FALSE_ALARM):
+                freqs.pop()
+                break
+            coef, left = again, rest
+    used = list(freqs)
+
+    def curve(when):
+        when = np.asarray(when, dtype=float)
+        cols = [np.ones(len(when)), when - mid]
+        for freq in used:
+            cols += [np.sin(2 * np.pi * freq * (when - mid)),
+                     np.cos(2 * np.pi * freq * (when - mid))]
+        return np.array(cols).T @ coef
+    curve.periods = [1.0 / freq for freq in used]
+    if len(_SIGNALS) >= 8:
+        _SIGNALS.pop(next(iter(_SIGNALS)))
+    _SIGNALS[key] = curve
+    return curve
+
+
 def arm(name: Any) -> str:
     """the arm of a spectrograph in a dataset's name (VIS, NIR), '' when
     none is named"""
@@ -156,10 +290,12 @@ def tolerance(data: RVData, one: str, other: str) -> float:
     How close in time a spectrum of a dataset is to the same one in
     another: SAME_FAMILY for one spectrograph (and arm), 0 for two
     spectrographs (HARPS and NIRPS observe at the same time: not the same
-    spectra). A dataset that names no spectrograph is a release of the
-    other's spectra when MOSTLY of the velocities of the smaller of the
-    two are within SAME_FAMILY of the other's (SAME_FAMILY then), and
-    shares with it only what is within SAME_ANY otherwise
+    spectra). A dataset that names no spectrograph (a paper's table, of
+    one spectrograph or of several) holds spectra of the other when, of
+    its velocities within NEARBY of one of the other's, MOSTLY are within
+    SAME_FAMILY (SAME_FAMILY then: the times of two releases differ by a
+    minute or so, UTC for one and TDB for the other); it shares with it
+    only what is within SAME_ANY otherwise
 
     :return: float [days]
     """
@@ -171,8 +307,9 @@ def tolerance(data: RVData, one: str, other: str) -> float:
     first, second = data.time[data.inst == one], data.time[data.inst == other]
     if len(first) > len(second):
         first, second = second, first
-    close = int(np.sum(nearest(first, second)[0] < SAME_FAMILY))
-    if close >= MIN_COMPARE and close >= MOSTLY * len(first):
+    dist = nearest(first, second)[0]
+    close = int(np.sum(dist < SAME_FAMILY))
+    if close >= MIN_COMPARE and close >= MOSTLY * np.sum(dist < NEARBY):
         return SAME_FAMILY
     return SAME_ANY
 
@@ -206,8 +343,8 @@ def _tol(tols: Links, one: str, other: str) -> float:
     return tols.get((one, other), tols.get((other, one), 0.0))
 
 
-def compare(data: RVData, one: str, other: str, tol: float = SAME_FAMILY
-            ) -> Optional[Dict[str, Any]]:
+def compare(data: RVData, one: str, other: str, tol: float = SAME_FAMILY,
+            signal: Optional[Callable] = None) -> Optional[Dict[str, Any]]:
     """
     Two datasets on the spectra they share: how many, and which is the
     more precise there
@@ -217,53 +354,129 @@ def compare(data: RVData, one: str, other: str, tol: float = SAME_FAMILY
     cov(b, b - a) that of noise_b, and var(a) - var(b) their difference,
     known to sqrt(var(a + b) var(a - b) / n).
 
-    :param tol: float, how close in time the same spectrum is [days]
+    A release that gives one velocity for several spectra (those of a
+    night, binned) is compared with the mean of the other's velocities of
+    those spectra: bin against bin, not a bin against one exposure.
 
-    :return: dict or None (no spectrum shared): n, ratio (the noise of
-             one over that of other: below 1, one is the more precise; 1
-             when they do not differ), by (noise or errors), the two
-             noises, or median errors (one, other) [m/s], and extra (what
-             the less precise scatters more than the other, in
-             quadrature [m/s]; None by errors)
+    :param tol: float, how close in time the same spectrum is [days]
+    :param signal: callable or None, what the star does (star_signal),
+                   taken out of both before they are compared
+
+    :return: dict or None (no spectrum shared): n (the spectra of one that
+             other has), ratio (the noise of one over that of other: below
+             1, one is the more precise; 1 when they do not differ), by
+             (noise or errors), the two noises, or median errors (one,
+             other) [m/s], and extra (what the less precise scatters more
+             than the other, in quadrature [m/s]; None by errors)
     """
     first, second = data.inst == one, data.inst == other
     dist, which = nearest(data.time[first], data.time[second])
     same = dist < tol
     if not np.any(same):
         return None
-    pick = which[same]
     num = int(np.sum(same))
-    out = dict(n=num, by='errors', ratio=1.0, extra=None,
-               one=float(np.median(data.err[first][same])),
-               other=float(np.median(data.err[second][pick])))
-    if num >= MIN_COMPARE:
-        mine, _ = about_line(data.time[first][same], data.rv[first][same])
-        theirs, _ = about_line(data.time[second][pick],
-                               data.rv[second][pick])
+    # from the one with the more velocities to the other: its velocities
+    #   that are one velocity of the other are meant (finer, coarser)
+    swap = int(np.sum(first)) < int(np.sum(second))
+    fine, coarse = (second, first) if swap else (first, second)
+    if swap:
+        dist, which = nearest(data.time[fine], data.time[coarse])
+        same = dist < tol
+    pick = which[same]
+    out = dict(n=num, by='errors', ratio=1.0, extra=None)
+    efine = float(np.median(data.err[fine][same]))
+    ecoarse = float(np.median(data.err[coarse][pick]))
+    out['one'], out['other'] = (ecoarse, efine) if swap else (efine, ecoarse)
+    groups, member = np.unique(pick, return_inverse=True)
+    if len(groups) >= MIN_COMPARE:
+        tfine, vfine = data.time[fine][same], data.rv[fine][same]
+        if signal is not None:
+            vfine = vfine - signal(tfine)
+        size = np.bincount(member)
+        tmean = np.bincount(member, weights=tfine) / size
+        vmean = np.bincount(member, weights=vfine) / size
+        tcoarse, vcoarse = data.time[coarse][groups], data.rv[coarse][groups]
+        if signal is not None:
+            vcoarse = vcoarse - signal(tcoarse)
+        mine, _ = about_line(tmean, vmean)
+        theirs, _ = about_line(tcoarse, vcoarse)
         diff = mine - theirs
         sig = robust_std(diff)
         if sig > 0:
             good = np.abs(diff - np.median(diff)) < CLIP * sig
             mine, theirs, diff = mine[good], theirs[good], diff[good]
-        if len(diff) >= MIN_COMPARE and np.std(diff) > 0:
+        # the same velocities in both (one table copied into another):
+        #   no noise to tell them by
+        level = max(float(np.std(mine)), float(np.std(theirs)))
+        if len(diff) >= MIN_COMPARE and np.std(diff) > 1e-6 * level:
             mine, theirs = mine - np.mean(mine), theirs - np.mean(theirs)
             diff = mine - theirs
-            var_one = float(np.mean(mine * diff))
-            var_other = float(-np.mean(theirs * diff))
+            var_fine = float(np.mean(mine * diff))
+            var_coarse = float(-np.mean(theirs * diff))
             gap = float(np.var(mine) - np.var(theirs))
             error = float(np.sqrt(np.var(mine + theirs) * np.var(diff)
                                   / len(diff)))
-            out.update(by='noise', one=float(np.sqrt(max(var_one, 0.0))),
-                       other=float(np.sqrt(max(var_other, 0.0))),
-                       extra=float(np.sqrt(abs(gap))))
+            ratio = 1.0
             if abs(gap) > SIGNIFICANT * error:
-                # a noise that chance made negative: far below the other's
-                low = 0.01 * max(var_one, var_other)
-                out['ratio'] = float(np.sqrt(max(var_one, low)
-                                             / max(var_other, low)))
+                # a noise that chance made negative, or smaller than can
+                #   be told: no smaller than what the comparison resolves
+                low = max(error, 1e-12)
+                ratio = float(np.sqrt(max(var_fine, low)
+                                      / max(var_coarse, low)))
+            nfine = float(np.sqrt(max(var_fine, 0.0)))
+            ncoarse = float(np.sqrt(max(var_coarse, 0.0)))
+            out.update(by='noise', extra=float(np.sqrt(abs(gap))),
+                       one=ncoarse if swap else nfine,
+                       other=nfine if swap else ncoarse,
+                       ratio=1.0 / ratio if swap else ratio)
             return out
     if out['other'] > 0 and abs(out['one'] / out['other'] - 1.0) >= TIE:
         out['ratio'] = out['one'] / out['other']
+    return out
+
+
+def year(name: Any) -> int:
+    """the year of a release in a dataset's name ('HIRES (Teklu+ 2025)'),
+    9999 for an archive that names none (DACE, CARMENES DR1: as they are
+    now)"""
+    found = re.findall(r'(?<!\d)((?:19|20)\d{2})(?!\d)', str(name))
+    return int(found[-1]) if found else 9999
+
+
+def ratings(names: Sequence[str],
+            pairs: Dict[Tuple[str, str], Dict[str, Any]]) -> Dict[str, float]:
+    """
+    One number per dataset from the comparisons of the pairs that share
+    spectra, the smaller the more precise: the log of a noise, up to a
+    constant, such that the difference of two of them is the log of the
+    ratio measured for that pair (least squares, each pair weighted by the
+    spectra it shares). A dataset is not better for having been compared
+    with a poor one only: every comparison constrains the same scale
+
+    :param names: list of str, the datasets
+    :param pairs: dict, {(one, other): compare()}
+
+    :return: dict, the rating of each dataset (0 for one compared with
+             none), rounded so that equal ones are equal
+    """
+    index = {name: it for it, name in enumerate(names)}
+    out = {name: 0.0 for name in names}
+    if not pairs:
+        return out
+    rows, values, weights = [], [], []
+    for (one, other), found in pairs.items():
+        row = np.zeros(len(names))
+        row[index[one]], row[index[other]] = 1.0, -1.0
+        rows.append(row)
+        values.append(np.log(found['ratio']))
+        weights.append(np.sqrt(found['n']))
+    # the scale is free: the mean of the ratings is zero (and that of each
+    #   group of datasets compared with each other: the least-norm answer)
+    design = np.array(rows) * np.array(weights)[:, None]
+    solved = np.linalg.lstsq(design, np.array(values) * np.array(weights),
+                             rcond=None)[0]
+    for name in names:
+        out[name] = float(np.round(solved[index[name]], 6)) + 0.0
     return out
 
 
@@ -273,40 +486,49 @@ def _upper(names: Optional[Sequence[str]]) -> List[str]:
 
 
 def ranking(data: RVData, tols: Links, protect: Sequence[str] = (),
-            prefer: Sequence[str] = ()
+            prefer: Sequence[str] = (), signal: Optional[Callable] = None
             ) -> Tuple[List[str], Dict[Tuple[str, str], Dict[str, Any]]]:
     """
     The datasets of a series from the one whose spectra are kept first to
-    the last: those of the file (protect), those asked for (prefer), then
-    the more precise before the less precise on the spectra they share
-    (the more spectra first for the same precision)
+    the last: those of the file (protect, in their order), those asked for
+    (prefer), then the more precise before the less precise on the spectra
+    they share; for the same precision, a dataset that names its
+    spectrograph before a table that names none, the latest release, the
+    more spectra. Last, a table that names no spectrograph and holds the
+    spectra of two (HIRES and HARPS under one name, one offset for both)
 
     :param tols: dict, the pairs that may share spectra (links)
     :param protect: list of str, the datasets of the file given
     :param prefer: list of str, the datasets asked back
+    :param signal: callable or None, what the star does (star_signal)
 
     :return: tuple, the names in order, and the comparison of each pair
              that shares spectra ({(one, other): compare()})
     """
     names = data.instruments
     pairs: Dict[Tuple[str, str], Dict[str, Any]] = {}
-    logs: Dict[str, List[float]] = {name: [] for name in names}
+    # the spectrographs whose spectra a table that names none holds
+    holds: Dict[str, set] = {name: set() for name in names}
     for (one, other), tol in tols.items():
-        found = compare(data, one, other, tol)
+        found = compare(data, one, other, tol, signal)
         if found is None:
             continue
         pairs[(one, other)] = found
-        logs[one].append(np.log(found['ratio']))
-        logs[other].append(-np.log(found['ratio']))
-    score = {name: float(np.mean(val)) if val else 0.0
-             for name, val in logs.items()}
+        if found['n'] >= MIN_COMPARE:
+            for mine, theirs in ((one, other), (other, one)):
+                if not family(mine) and family(theirs):
+                    holds[mine].add(family(theirs))
+    score = ratings(names, pairs)
     count = {name: int(np.sum(data.inst == name)) for name in names}
     first, second = _upper(protect), _upper(prefer)
 
     def key(name):
         upper = name.upper()
-        return (0 if upper in first else 1 if upper in second else 2,
-                score[name], -count[name], name)
+        if upper in first:
+            return (0, first.index(upper))
+        group = 1 if upper in second else 3 if len(holds[name]) > 1 else 2
+        return (group, score[name], 0 if family(name) else 1, -year(name),
+                -count[name], name)
     return sorted(names, key=key), pairs
 
 
@@ -463,7 +685,8 @@ def rules(data: RVData, sources: Optional[Dict[str, str]] = None,
     """
     sources = sources or {}
     tols = links(data, sources)
-    order, pairs = ranking(data, tols, protect, prefer)
+    order, pairs = ranking(data, tols, protect, prefer,
+                           star_signal(data) if tols else None)
     asked = [name for name in order if name.upper() in _upper(exclude)]
     held = _upper(protect) + _upper(prefer)
     used = [name for name in order if name not in asked]
@@ -566,7 +789,7 @@ def _better(row: Dict[str, Any]) -> str:
     if row['by'] == 'noise' and row.get('extra') is not None:
         if not row['precision'] > row['precision_better']:
             return (f'{row["better"]} (as precise on the spectra they '
-                    f'share, or preferred)')
+                    f'share: preferred)')
         return (f'{row["better"]}, the more precise ({row["name"]} '
                 f'scatters {row["extra"]:.2f} m/s more, in quadrature, on '
                 f'the spectra they share)')

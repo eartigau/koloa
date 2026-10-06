@@ -235,3 +235,143 @@ def test_a_weak_dataset_that_is_mostly_a_release():
     assert row['same'] == 146
     assert '146 of its 150 points' in datasets.told(row)
     assert used.instruments == ['HARPS (Trifonov+ 2020)']
+
+
+def test_a_table_of_two_spectrographs_that_names_none():
+    """a paper's table that names no instrument and holds the velocities
+    of two spectrographs: those that are spectra of HARPS (a minute
+    apart: UTC and TDB) are HARPS's, whatever the others are"""
+    rng = np.random.default_rng(12)
+    time = np.sort(rng.uniform(56000, 58000, 200))
+    harps = _set('HARPS03', time, 1.0, rng)
+    # 30 of HARPS's spectra and 150 of another spectrograph, the same
+    #   nights, hours later
+    mixed = _set('Paper+ 2019', np.concatenate([
+        time[:30] + 1.08 / 1440, time[40:190] + 0.2]), 2.5, rng)
+    data = merge([harps, mixed])
+    assert datasets.tolerance(data, 'HARPS03', 'Paper+ 2019') \
+        == datasets.SAME_FAMILY
+    used, rows = datasets.choose(data, protect=['HARPS03'], auto=False)
+    row = _rows(rows)['Paper+ 2019']
+    assert row['status'] == 'part' and row['same'] == 30
+    assert row['used'] == 150 and used.n == 350
+    # with the other spectrograph named too: the table holds the spectra
+    #   of two under one name (one offset), and comes last, however
+    #   precise its velocities
+    hires = _set('HIRES (Survey+ 2021)', time[40:190] + 0.2, 4.0, rng)
+    data = merge([harps, mixed, hires])
+    order, _ = datasets.ranking(data, datasets.links(data))
+    assert order[-1] == 'Paper+ 2019'
+    used, rows = datasets.choose(data, auto=False)
+    assert _rows(rows)['Paper+ 2019']['status'] == 'release'
+    assert used.n == 350
+
+
+def test_as_precise_the_named_and_the_latest_release_first():
+    """the same velocities in three releases: the one that names its
+    spectrograph before the table that does not, the latest of two"""
+    rng = np.random.default_rng(13)
+    time = np.sort(rng.uniform(56000, 58000, 80))
+    full = _set('HIRES (Old+ 2017)', time, 2.0, rng)
+
+    def copy(name, num):
+        return RVData(time=full.time[:num], rv=full.rv[:num],
+                      err=full.err[:num], inst=np.array([name] * num),
+                      name='star')
+    data = merge([full, copy('Table+ 2022', 80),
+                  copy('HIRES (New+ 2019)', 80)])
+    order, _ = datasets.ranking(data, datasets.links(data))
+    assert order == ['HIRES (New+ 2019)', 'HIRES (Old+ 2017)', 'Table+ 2022']
+    assert datasets.year('HIRES (Teklu+ 2025)') == 2025
+    assert datasets.year('HARPS03') == 9999
+
+
+def test_the_ratings_of_several_releases():
+    """three releases compared two by two, and a fourth compared with the
+    worst only: the order of their noises, the fourth not first for having
+    met a poor one"""
+    pairs = {('A', 'B'): dict(ratio=0.5, n=100), ('B', 'C'): dict(ratio=0.5,
+                                                                  n=100),
+             ('A', 'C'): dict(ratio=0.25, n=100),
+             ('D', 'C'): dict(ratio=0.9, n=100)}
+    rate = datasets.ratings(['A', 'B', 'C', 'D', 'E'], pairs)
+    assert rate['A'] < rate['B'] < rate['D'] < rate['C']
+    assert rate['B'] - rate['A'] == pytest.approx(np.log(2), abs=1e-5)
+    assert rate['E'] == 0.0
+    # compared and found the same: the same rating, to the last digit
+    same = datasets.ratings(['A', 'B', 'C'], {
+        ('A', 'B'): dict(ratio=1.0, n=50), ('B', 'C'): dict(ratio=1.0, n=80)})
+    assert same['A'] == same['B'] == same['C'] == 0.0
+
+
+def test_what_the_star_does_is_taken_out_first():
+    """two releases of the spectra of a star with a strong planet: told
+    apart once its signal is out of both, not before; and the curve taken
+    out holds the planet, not the noise"""
+    rng = np.random.default_rng(14)
+    time = np.sort(rng.uniform(56000, 58000, 180))
+    star = 40.0 * np.sin(2 * np.pi * time / 5.37) \
+        + 15.0 * np.sin(2 * np.pi * time / 12.9 + 1.0)
+
+    def release(name, noise):
+        return RVData(time=time, rv=star + rng.normal(0, noise, len(time)),
+                      err=np.full(len(time), 1.2), inst=np.array(
+                          [name] * len(time)), name='star')
+    data = merge([release('HARPS03', 1.5), release('HARPS03 (RVBank)', 1.0)])
+    curve = datasets.star_signal(data)
+    assert sorted(np.round(curve.periods, 1)) == [5.4, 12.9]
+    assert np.std(star - curve(time) - np.mean(star - curve(time))) < 0.5
+    plain = datasets.compare(data, 'HARPS03', 'HARPS03 (RVBank)')
+    clean = datasets.compare(data, 'HARPS03', 'HARPS03 (RVBank)',
+                             signal=curve)
+    # with the planets in, chance decides (the noises do not stand out of
+    #   30 m/s of signal); without them, the noisier is the noisier
+    assert plain['ratio'] == 1.0
+    assert clean['ratio'] > 1.2
+    assert clean['one'] == pytest.approx(1.5, rel=0.25)
+    assert clean['other'] == pytest.approx(1.0, rel=0.3)
+    used, rows = datasets.choose(data, auto=False)
+    assert used.instruments == ['HARPS03 (RVBank)']
+    # a quiet star: nothing but a line is taken out (no sinusoid fitted
+    #   to the noise)
+    quiet = merge([RVData(time=time, rv=rng.normal(0, 2.0, len(time)),
+                          err=np.full(len(time), 2.0),
+                          inst=np.array(['A'] * len(time)), name='star')])
+    assert datasets.star_signal(quiet).periods == []
+
+
+def test_a_release_binned_by_night_is_compared_bin_for_bin():
+    """a paper that gives one velocity for the three exposures of a night
+    is not the more precise for it: against the mean of the other's three
+    exposures, the same noise; and the comparison reads the same from
+    either side"""
+    rng = np.random.default_rng(15)
+    nights = np.sort(rng.choice(np.arange(56000, 58000), 90, replace=False))
+    time = np.sort(np.concatenate([nights + 0.5 + it * 4.0 / 1440
+                                   for it in range(3)]))
+    star = _star(time)
+    exposures = RVData(time=time, rv=star + rng.normal(0, 2.0, len(time)),
+                       err=np.full(len(time), 2.0),
+                       inst=np.array(['HIRES (Survey+ 2021)'] * len(time)),
+                       name='star')
+    binned = RVData(time=nights + 0.5 + 4.0 / 1440, rv=_star(
+        nights + 0.5 + 4.0 / 1440) + rng.normal(0, 2.0 / np.sqrt(3), 90),
+        err=np.full(90, 2.0 / np.sqrt(3)),
+        inst=np.array(['HIRES (Paper+ 2010)'] * 90), name='star')
+    data = merge([exposures, binned])
+    one = datasets.compare(data, 'HIRES (Survey+ 2021)',
+                           'HIRES (Paper+ 2010)')
+    other = datasets.compare(data, 'HIRES (Paper+ 2010)',
+                             'HIRES (Survey+ 2021)')
+    assert one['by'] == 'noise' and one['ratio'] == 1.0
+    assert other['ratio'] == 1.0
+    assert one['n'] == 270 and other['n'] == 90
+    assert one['one'] == pytest.approx(other['other'])
+    # whichever is used (as precise: chance can make one look better),
+    #   each night is used once
+    used, rows = datasets.choose(data, auto=False)
+    assert len(used.instruments) == 1
+    assert len(np.unique(np.floor(used.time))) == 90
+    # with nothing to tell them by, the latest release
+    order, _ = datasets.ranking(data, datasets.links(data))
+    assert order == ['HIRES (Survey+ 2021)', 'HIRES (Paper+ 2010)']

@@ -164,9 +164,14 @@ batch and the analysis script:
 1. A spectrum that several datasets have is taken from the most precise
    of them. On the spectra two releases share, the star does the same in
    both: their difference is noise alone, and the covariance of each with
-   that difference is its own noise, with no model of the star. A release
-   left with fewer than three spectra of its own is left out; one that has
-   spectra the better release lacks keeps those.
+   that difference is its own noise, with no model of the star (its
+   strongest signals are taken out of both first, only to sharpen the
+   comparison; a release binned by night is compared bin for bin). When
+   the noises cannot be told apart: a dataset that names its spectrograph
+   before a table that names none, then the latest release, then the one
+   with the more spectra. A release left with fewer than three spectra of
+   its own is left out; one that has spectra the better release lacks
+   keeps those.
 2. A dataset that constrains nothing is left out: a line is fitted to the
    nightly means (an offset per dataset, one slope), and a dataset is
    dropped when taking it away makes the error of the mean and that of
