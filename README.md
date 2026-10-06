@@ -33,6 +33,7 @@ exactly. That is what makes the outlier-aware FIP affordable.
 | `koloa.dace` | the public velocities of a star on DACE, every instrument, one instrument per era, with every column kept |
 | `koloa.gui` | koloa in the browser (`koloa --gui`): a SIMBAD resolver, the velocities by instrument, the gathering and the detailed report, each run shown as the command line it is |
 | `koloa.gather` | everything public about a star from its SIMBAD name, kept in one folder: the velocities of DACE and of CARMENES DR1, the TESS light curves, the identifiers and periods of variability of SIMBAD, and a manifest of what each archive gave |
+| `koloa.datasets` | which datasets of a star are used: a spectrum that several have (HARPS on DACE and by SERVAL, HIRES in three surveys) is taken from the most precise release, told by the noise of each on the spectra they share; a dataset that constrains neither the mean nor the slope of a line through the nightly means is left out; everything stays on disk and can be asked back |
 | `koloa.archive` | the names of a star (CDS Sesame) and its planets in the NASA Exoplanet Archive, with every published solution; a fitted K against them, the most recent first |
 | `koloa.radvel_bridge` | `OutlierRVLikelihood`, a drop-in replacement for radvel's `RVLikelihood` |
 | `koloa.doppler` | relativistic Doppler conversions (velocity, wavelength ratio, log-wavelength shift) |
@@ -143,7 +144,7 @@ file per instrument era, with the indicators), those of CARMENES DR1
 velocities published on VizieR (`rv/published/`, `koloa.published`: the
 surveys of Keck HIRES, the APF, the Lick Hamilton and HARPS by SERVAL,
 asked only when the star is in their lists, and the tables of the star's
-papers, a spectrum published twice kept once; `--no-vizier` not to,
+papers, each source kept whole; `--no-vizier` not to,
 `--vizier-sources teklu25 cls21 papers` for some of them only), the
 TESS light curves of every sector, every velocity of DACE and CARMENES together in
 `rv/all_rv.csv`, the identifiers and the periods of variability SIMBAD
@@ -152,6 +153,35 @@ lists in `target.json`, and what each archive gave (or why not) in
 and `koloa.gather.load('archives/GJ_436')` reads it back. DACE is filtered
 from some networks: it is then reported as unreachable and the rest goes
 on.
+
+The archives of a star often hold the same spectra more than once
+(HARPS through the ESO pipeline on DACE, through SERVAL on VizieR, in a
+paper with a reduction of its own), and old velocities too imprecise to
+constrain anything. Everything is kept on disk, and `koloa.datasets`
+chooses what an analysis uses, the same way in the report, the GUI, a
+batch and the analysis script:
+
+1. A spectrum that several datasets have is taken from the most precise
+   of them. On the spectra two releases share, the star does the same in
+   both: their difference is noise alone, and the covariance of each with
+   that difference is its own noise, with no model of the star. A release
+   left with fewer than three spectra of its own is left out; one that has
+   spectra the better release lacks keeps those.
+2. A dataset that constrains nothing is left out: a line is fitted to the
+   nightly means (an offset per dataset, one slope), and a dataset is
+   dropped when taking it away makes the error of the mean and that of
+   the slope grow by less than 1 %, the weakest first. The error of a
+   night holds what the star does about a line (the same for every
+   instrument), so a few nights among hundreds weigh little whatever
+   their precision.
+
+The datasets of a file you give are never left out. `--exclude` leaves
+datasets out, `--include` asks back those the rules would leave out (a
+release asked back is preferred to the others for the spectra they
+share), `--no-rules` keeps every dataset (a spectrum is still used once).
+From Python, `koloa.datasets.choose(data, sources)` gives the series used
+and what was done with each dataset, and `koloa.datasets.told(row)` says
+it in words.
 
 `koloa --gui` (or `koloanui`, the same in one word) does the same in the
 browser, from this machine: a SIMBAD

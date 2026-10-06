@@ -349,20 +349,43 @@ async function plotVelocities() {
   const note = $('rvnote');
   note.innerHTML = `<span class="spin"></span> ${esc(t('loading'))}`;
   const auto = !filesNow().length && archivesByDefault(await diskState());
-  // the archives the report will use, and only those
-  const asked = readOptions('detailed');
-  const q = new URLSearchParams({ files: JSON.stringify(filesNow()), target: $('target').value.trim(), root: $('root').value.trim(),
-    dace: asked.dace ? '1' : '', carmenes: asked.carmenes ? '1' : '', vizier: asked.vizier ? '1' : '' });
+  // plotted anew: the rules of now (not those of a result recalled)
+  if (rulesMode === 'legacy') rulesMode = 'on';
+  rulesAuto = true;
   try {
-    const res = await api(`/api/rv?${q}`);
+    const res = await api(`/api/rv?${rvQuery()}`);
     // the quick FIP on its own for one instrument; for several, once those
     //   to leave out are unticked (it can take minutes)
     if (await drawVelocities(res, auto ? [t('arch_auto')] : [])) {
-      if (res.instruments.length === 1) startQuick(); else quickPrompt();
+      if (kept().length === 1) startQuick(); else quickPrompt();
     }
   } catch (err) {
     note.innerHTML = `<span class="bad">${esc(err.message)}</span>`;
   }
+}
+
+// what is asked of /api/rv: the files, the archives ticked, the datasets
+//   left out and asked back
+function rvQuery() {
+  const asked = readOptions('detailed');
+  return new URLSearchParams({ files: JSON.stringify(filesNow()), target: $('target').value.trim(), root: $('root').value.trim(),
+    dace: asked.dace ? '1' : '', carmenes: asked.carmenes ? '1' : '', vizier: asked.vizier ? '1' : '',
+    exclude: $('exclude').value, include: $('include').value, rules: rulesMode });
+}
+// the velocities asked again after a tick, when datasets share spectra
+//   (the points of each change with which of them are used): drawn again
+//   as they are, the FIP left as it is (said stale)
+let rvAgain = 0;
+async function refreshVelocities() {
+  if (!lastRes) return;
+  const mine = ++rvAgain;
+  const keep = view ? { x: view.x.slice(), y: view.y.slice() } : null;
+  try {
+    const res = await api(`/api/rv?${rvQuery()}`);
+    if (mine !== rvAgain) return;
+    await drawVelocities(res, lastRes.extra);
+    if (keep && view) { view.x = keep.x; view.y = keep.y; applyView(); }
+  } catch (err) { /* the plot as it was */ }
 }
 
 // the velocities by instrument (from /api/rv, or a result recalled)
@@ -467,11 +490,27 @@ async function drawVelocities(res, extra) {
     div.on('plotly_relayout', fromZoom);
   }
   view = null;
-  $('rvtable').innerHTML = `<table class="mini"><tr><th>${esc(t('use'))}</th><th>${esc(t('inst'))}</th><th>${esc(t('source'))}</th><th>${esc(t('n'))}</th><th>${esc(t('rms'))}</th></tr>`
+  // the datasets the rules leave out are unticked, before the table says
+  //   why: a tick asks one back (it is then preferred, so the rules no
+  //   longer leave it out, and the release used before it is the one
+  //   unticked)
+  if (rulesAuto && rulesMode === 'on') {
+    const ex = excludedSet();
+    const gone = res.instruments.filter((inst) => ruleOffNow(inst) && !ex.has(inst.name.toUpperCase())).map((inst) => inst.name);
+    if (gone.length) {
+      $('exclude').value = namesOf($('exclude').value).concat(gone).join(', ');
+      gone.forEach((name) => setIncluded(name, false));
+      updateCommands();
+    }
+  }
+  const anyRule = res.instruments.some((inst) => ruleNote(inst));
+  $('rvtable').innerHTML = `<table class="mini"><tr><th>${esc(t('use'))}</th><th>${esc(t('inst'))}</th><th>${esc(t('source'))}</th><th>${esc(t('n'))}</th><th>${esc(t('rms'))}</th>`
+    + `${anyRule ? `<th>${esc(t('ds_why'))} <button type="button" class="info" data-help="datasets" aria-label="?">i</button></th>` : ''}</tr>`
     + res.instruments.map((inst, i) => `<tr data-row="${esc(inst.name)}"><td><input type="checkbox" data-inst="${esc(inst.name)}" checked></td>`
       + `<td><span class="swatch" style="background:${COLOURS[i % 8]}"></span>${esc(inst.name)}</td>`
       + `<td class="src${(inst.source || '').startsWith('file') ? ' src-file' : ''}">${esc((inst.source || '').startsWith('file') ? inst.source.replace('file', t('src_file')) : inst.source)}</td>`
-      + `<td class="num">${inst.n}</td><td class="num">${inst.rms.toFixed(2)}</td></tr>`).join('') + '</table>';
+      + `<td class="num">${inst.total && inst.total !== inst.n ? `${inst.n}/${inst.total}` : inst.n}</td><td class="num">${inst.rms.toFixed(2)}</td>`
+      + `${anyRule ? `<td class="why">${esc(ruleNote(inst))}</td>` : ''}</tr>`).join('') + '</table>';
   if (window.Plotly && div.on) {
     div.removeAllListeners && div.removeAllListeners('plotly_legendclick');
     div.on('plotly_legendclick', (ev) => {
@@ -695,7 +734,54 @@ function fromZoom(ev) {
 let lastRV = null;
 // the names of the field, separated by commas or spaces: a name with its
 //   source in brackets is one ('HIRES (CLS)', 'HIRES (Teklu+ 2025)')
-const namesOf = (text) => (String(text || '').match(/[^\s,(]+(?:\s*\([^)]*\))?/g) || []).map((s) => s.replace(/\s+/g, ' ').trim());
+//   and so is a paper that names no instrument, between commas ('Gomes da
+//   Silva+ 2012')
+const namesOf = (text) => String(text || '').split(',').flatMap((chunk) => {
+  const one = chunk.replace(/\s+/g, ' ').trim();
+  if (/\+ \d{4}$/.test(one) && !one.includes('(')) return [one];
+  return (one.match(/[^\s,(]+(?:\s*\([^)]*\))?/g) || []).map((s) => s.replace(/\s+/g, ' ').trim());
+});
+// the rules of the datasets (koloa.datasets): on, off, or legacy (a result
+//   remembered before there were rules, recalled as it was); and whether
+//   what they leave out is unticked by the page (not in a result recalled
+//   as it was)
+let rulesMode = 'on';
+let rulesAuto = true;
+// left out by the rules when nothing is asked; left out by them now (a
+//   release asked back takes the spectra of the one used before it)
+const ruleOff = (inst) => !!inst.rule && (inst.rule.status === 'release' || inst.rule.status === 'weak');
+const ruleOffNow = (inst) => inst.status === 'release' || inst.status === 'weak';
+function includedSet() {
+  return new Set(namesOf($('include').value).map((s) => s.toUpperCase()));
+}
+// a dataset asked back or not: the field of the report (its --include)
+function setIncluded(name, on) {
+  const kept = namesOf($('include').value).filter((s) => s.toUpperCase() !== name.toUpperCase());
+  if (on) kept.push(name);
+  $('include').value = kept.join(', ');
+}
+// what the rules say of a dataset, in the language of the page
+function ruleNote(inst) {
+  const r = inst.rule || {};
+  const f = (v, d) => (v === null || v === undefined ? '?' : (+v).toFixed(d));
+  const pct = (v) => (v === null || v === undefined ? '?' : (100 * v).toFixed(2));
+  const how = () => {
+    if (r.precision === null || r.precision === undefined) return '';
+    if (r.by === 'noise') return r.precision > r.precision_better ? fill(t('ds_more'), { extra: f(r.extra, 2) }) : t('ds_tie');
+    return fill(t('ds_err'), { a: f(r.precision_better, 2), b: f(r.precision, 2) });
+  };
+  // asked back: what the rules do with it by default, in brackets
+  const said = (words) => (excludedSet().has(inst.name.toUpperCase()) ? words : `${t('ds_back')} (${words})`);
+  if (r.status === 'release') return said(fill(t('ds_release'), { better: r.better, how: how() }));
+  if (r.status === 'weak') {
+    return said(r.better ? fill(t('ds_weak_part'), { same: r.same, better: r.better, how: how(), left: r.left })
+      : fill(t(r.nights === 1 ? 'ds_weak_one' : 'ds_weak'), { nights: r.nights ?? '?', mean: pct(r.mean), slope: pct(r.slope) }));
+  }
+  if (inst.status === 'part') return fill(t('ds_part'), { used: inst.n, n: inst.total, better: inst.better });
+  // its spectra are now those of a release asked back
+  if (inst.status === 'release' && inst.better) return fill(t('ds_release'), { better: inst.better, how: t('ds_asked') });
+  return '';
+}
 function excludedSet() {
   return new Set(namesOf($('exclude').value).map((s) => s.toUpperCase()));
 }
@@ -704,9 +790,15 @@ function setExcluded(name, off) {
   const kept = namesOf($('exclude').value).filter((s) => s.toUpperCase() !== name.toUpperCase());
   if (off) kept.push(name);
   $('exclude').value = kept.join(', ');
+  // a dataset the rules leave out, ticked: asked back (and preferred to
+  //   the other releases of its spectra); unticked: no longer
+  const inst = (lastRV || []).find((one) => one.name.toUpperCase() === name.toUpperCase());
+  if (inst && rulesMode === 'on') setIncluded(inst.name, !off && ruleOff(inst));
   updateCommands();
   styleExcluded();
   checkStale();
+  // datasets that share spectra: which points each has depends on the others
+  if (rulesMode !== 'legacy' && (lastRV || []).some((one) => one.better || (one.rule && one.rule.better))) refreshVelocities();
 }
 
 function styleExcluded() {
@@ -740,6 +832,8 @@ function shownOptions() {
   const asked = readOptions('detailed');
   return { files: filesNow(), target: $('target').value.trim(), root: $('root').value.trim(),
     dace: !!asked.dace, carmenes: !!asked.carmenes, vizier: !!asked.vizier, exclude: $('exclude').value,
+    // the datasets asked back, and the rules when not those of now
+    ...($('include').value.trim() ? { include: $('include').value } : {}), ...(rulesMode !== 'on' ? { rules: rulesMode } : {}),
     trend: !!asked.trend, curvature: !!asked.curvature, subtract: subtractList };
 }
 
@@ -1029,9 +1123,9 @@ function whyText(code, v, words) {
   if (!code || !TEXT.en[key]) return words || '';
   const f = (x, d) => (x === null || x === undefined ? '?' : (+x).toFixed(d));
   const chance = +v.chance || 0;
-  const fill = { snr: f(v.snr, 1), n: v.n, drop: f(v.drop || 0, 1), need: f(v.need, 0), top: f(v.top || 0, 1), trials: v.trials,
+  const vals = { snr: f(v.snr, 1), n: v.n, drop: f(v.drop || 0, 1), need: f(v.need, 0), top: f(v.top || 0, 1), trials: v.trials,
     chance: chance.toExponential(0), odds: (1 / Math.max(chance, 1e-12)).toFixed(0) };
-  return t(key).replace(/\{(\w+)\}/g, (all, name) => (name in fill ? fill[name] : all));
+  return fill(t(key), vals);
 }
 // the numbers of a verdict: of a search (the panel), of a line of the batch
 function whyOfSearch(res) {
@@ -1905,6 +1999,7 @@ function resetPage() {
   $('targetsrc').textContent = '';
   starNow = {};
   daceSeen.clear();
+  rulesMode = 'on'; rulesAuto = true;
   $('rvnote').textContent = '';
   $('rvtable').innerHTML = '';
   if (window.Plotly) Plotly.purge($('rvplot'));
@@ -1966,7 +2061,7 @@ function showTab(name) {
 // the page as it is: what a recall puts back
 function pageState() {
   return { target: $('target').value.trim(), files: filesNow(), root: $('root').value.trim(), outdir: $('outdir').value.trim(),
-    detailed: readOptions('detailed'), clip: $('clip').checked, subtract: subtractList,
+    detailed: readOptions('detailed'), clip: $('clip').checked, subtract: subtractList, rules: rulesMode,
     // the signals ticked, and the FIP of what is left after each (its curve and its peaks)
     ticks: ticked.slice(), stages: stageLists().map((list) => stages.get(tickKey(list))).filter((st) => st && st.job && st.job.result)
       .map((st) => ({ key: st.key, ids: st.ids, label: st.label, period: st.job.result.period, family: st.job.result.family,
@@ -2033,9 +2128,12 @@ async function recallResult(id) {
 async function applyRecall(res) {
   showTab('analysis');
   resetPage();
-  // a result recalled keeps the instruments it had
+  // a result recalled keeps the instruments it had, chosen as they were
+  //   (before there were rules, for a result of then)
   (res.rv && res.rv.instruments || []).forEach((inst) => daceSeen.add(inst.name));
   const page = res.page;
+  rulesMode = page.rules || (res.entry && res.entry.id ? 'legacy' : 'on');
+  rulesAuto = false;
   $('target').value = page.target || '';
   $('root').value = page.root || 'archives';
   $('outdir').value = page.outdir || '';
@@ -2102,7 +2200,7 @@ async function runBatch() {
   if (!batchFiles.length) return;
   try {
     batch = await api('/api/batch', { paths: batchFiles, options: readOptions('detailed'), archives: $('batcharchives').checked,
-      regather: $('batchregather').checked, root: $('root').value.trim() });
+      regather: $('batchregather').checked, rules: $('batchrules').checked, root: $('root').value.trim() });
     pollBatch(batch.id);
   } catch (err) {
     $('batchstatus').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
@@ -2204,7 +2302,10 @@ function renderBatch() {
       else if (r.status === 'waiting') state = `<span class="hint">${esc(t('batch_waiting'))}</span>`;
       const acc = r.accel !== null && r.accel !== undefined ? `${r.accel >= 0 ? '+' : '\u2212'}${Math.abs(r.accel).toPrecision(3)} \u00b1 ${r.accel_err.toPrecision(2)}` : '';
       if (r.note) state += ` <span class="hint" title="${esc(r.note)}">\u24d8</span>`;
-      const nights = batch.archives ? `<td class="insts">${r.n ? `<b>${r.n}</b>` : ''}${instCell(r)}</td>` : `<td class="num">${r.n ?? ''}</td>`;
+      // with the archives: the datasets used of those the star has, what the rules did under the cursor
+      const sets = r.datasets && r.datasets.all > r.datasets.used
+        ? `<span class="hint" title="${esc((r.datasets.told || []).join('\n'))}">${r.datasets.used}/${r.datasets.all} ${esc(t('ds_sets'))}</span>` : '';
+      const nights = batch.archives ? `<td class="insts">${r.n ? `<b>${r.n}</b>` : ''}${instCell(r)}${sets}</td>` : `<td class="num">${r.n ?? ''}</td>`;
       return `<tr><td class="bname" title="${esc(r.path)}">${esc(r.name).replace(/_/g, '_<wbr>')}</td><td>${objectCell(r)}</td>${nights}<td class="num">${num(r.baseline, 0)}</td>`
         + `<td class="num">${num(r.period, 4)}${periodMark(r)}</td><td class="num">${fipCell(r.fip)}</td><td class="num">${fipCell(r.fip_alone)}</td>`
         + `<td class="num">${r.K !== null && r.K !== undefined ? `${r.K.toFixed(2)} \u00b1 ${r.K_err.toFixed(2)}` : ''}</td><td class="num">${num(r.rms, 2)}</td>`

@@ -820,6 +820,8 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
                       detection_map: Any = False,
                       map_ninj: int = 10,
                       exclude: Optional[Sequence[str]] = None,
+                      include: Optional[Sequence[str]] = None,
+                      rules: bool = True,
                       rotation: Optional[float] = None,
                       trend: bool = True, curvature: bool = False,
                       instruments: Optional[Sequence[Optional[str]]] = None,
@@ -930,6 +932,14 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
     :param exclude: list of str or None, instruments left out of the
                     analysis once the series is assembled (the file, DACE,
                     CARMENES, VizieR), by name (any case): NIRPS, HARPS03...
+    :param include: list of str or None, datasets used though the rules
+                    would leave them out (koloa.datasets), and preferred
+                    to the other releases of their spectra
+    :param rules: bool, which datasets are used chosen by koloa.datasets
+                  (a spectrum several datasets have taken from the most
+                  precise; a release left with nothing of its own, and a
+                  dataset that constrains nothing, left out); False for
+                  the rules to leave nothing out
     :param nightly: bool, analyse the nightly means of the series once it is
                     assembled (RVData.nightly, koloa's default: an outlier
                     is then a night); False keeps the exposures; None is
@@ -1018,6 +1028,12 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
                if fip_gp == 'sho' else ''), 'value')
     out['ident'], out['known'] = ident, known
     step('more velocities: DACE, CARMENES, VizieR')
+    # the datasets of the file (never left out by the rules, their spectra
+    #   the file's), and where each dataset comes from (two datasets of one
+    #   origin are not the same spectra; two origins can hold the same)
+    mine = list(data.instruments) if data is not None else []
+    ftimes = data.time.copy() if data is not None else None
+    origin = {inst: 'file' for inst in mine}
     # 3. more velocities: DACE, CARMENES, the ones given, the ones on VizieR
     sources = [] if data is None else [
         dict(kind='file', label=_label(src), n=int(part.n),
@@ -1036,6 +1052,7 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
                           times=data.time if data else None,
                           refresh=refresh)
         if more is not None:
+            origin.update({inst: 'DACE' for inst in more.instruments})
             data = (more if data is None
                     else merge([data, more], name=data.name))
             log(f'with DACE: {data.n} exposures in {data.nseq} visits, '
@@ -1060,6 +1077,7 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
         more, note = _carmenes(ident, star, dace_folder or outdir, data,
                                refresh)
         if more is not None:
+            origin.update({inst: 'CARMENES DR1' for inst in more.instruments})
             data = (more if data is None
                     else merge([data, more], name=data.name))
             log(f'with CARMENES DR1: {data.n} exposures, ' + ', '.join(
@@ -1121,6 +1139,7 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
         # no file and nothing on DACE or CARMENES: the first published
         #   series is the base
         data = others.pop(0)
+        origin.update({inst: labels[0] for inst in data.instruments})
         sources.append(dict(kind=kinds[0][0], label=labels.pop(0),
                             n=int(data.n), instruments=_counts(data),
                             note=kinds.pop(0)[2]))
@@ -1131,8 +1150,13 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
     if source is None:
         data.name = name or star
     if others:
-        data, added = klit.add(data, others, labels)
+        # each published series whole, but for the spectra of the file:
+        #   which release of the same spectra is used is chosen below
+        data, added = klit.add(data, others, labels, whole=True,
+                               times=ftimes)
         for series, info, (kind, cat, note) in zip(others, added, kinds):
+            origin.update({inst: info['label']
+                           for inst in info['instruments']})
             words = [cat] if cat else []
             if info['same']:
                 words.append(f'{info["same"]} left out: the same spectra as '
@@ -1147,25 +1171,40 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
             f'over {data.baseline:.0f} d, ' + ', '.join(
                 f'{inst} {np.sum(data.inst == inst)}'
                 for inst in data.instruments), 'value')
-    if exclude:
-        wanted = {str(name).strip().upper() for name in exclude}
-        drop = [inst for inst in data.instruments if inst.upper() in wanted]
-        missing = wanted - {inst.upper() for inst in data.instruments}
+    # which datasets are used (koloa.datasets): a spectrum several have
+    #   from the most precise, not a release left with nothing of its own
+    #   nor a dataset that constrains nothing, nor those left out as asked
+    from koloa import datasets as kdatasets
+    for kind, names in (('leave out', exclude), ('ask back', include)):
+        missing = {str(item).strip().upper() for item in names or []} \
+            - {inst.upper() for inst in data.instruments}
         if missing:
-            log(f'not in the series, nothing to leave out: '
+            log(f'not in the series, nothing to {kind}: '
                 f'{", ".join(sorted(missing))}', 'warn')
-        if drop:
-            keep = ~np.isin(data.inst, drop)
-            if not np.any(keep):
-                raise ValueError('every instrument is left out (exclude=)')
-            counts = {inst: int(np.sum(data.inst == inst)) for inst in drop}
-            data = data.select(keep)
-            sources.append(dict(kind='left out', label=', '.join(drop),
-                                n=-sum(counts.values()), instruments=counts,
-                                note='left out of the analysis, as asked'))
-            log('left out, as asked: ' + ', '.join(
-                f'{inst} ({num})' for inst, num in counts.items())
-                + f'; {data.n} exposures remain', 'value')
+    used, rows = kdatasets.choose(data, origin, protect=mine,
+                                  include=include or (),
+                                  exclude=exclude or (), auto=rules)
+    if used is None:
+        raise ValueError('every instrument is left out (exclude=)')
+    for row in rows:
+        if row['status'] == 'on':
+            continue
+        words = kdatasets.told(row)
+        log(words, 'value' if row['used'] else 'warn')
+        gone = int(row['n'] - row['used'])
+        sources.append(dict(
+            kind=('left out' if row['status'] == 'asked' else
+                  'not used' if not row['used'] else 'in part'),
+            label=row['name'], n=-gone, instruments={row['name']: gone},
+            note=('left out of the analysis, as asked' if row['status']
+                  == 'asked' else words.split(': ', 1)[1])))
+    if used.n < data.n:
+        log(f'{used.n} of {data.n} exposures used, ' + ', '.join(
+            f'{inst} {np.sum(used.inst == inst)}'
+            for inst in used.instruments), 'value')
+    data = used
+    out['datasets'] = [{key: val for key, val in row.items() if key != 'keep'}
+                       for row in rows]
     out['sources'] = sources
     nexp = data.n
     if nightly is None:
@@ -1524,6 +1563,8 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
                           rotation=(f'{float(rotation):g} d, given' if rotation
                                     else 'the archive\'s'),
                           exclude=', '.join(exclude or []) or 'none',
+                          include=', '.join(include or []) or 'none',
+                          rules=bool(rules),
                           vizier=vizier,
                           literature=len(literature or []),
                           periods=', '.join(f'{per}' for per in periods or [])

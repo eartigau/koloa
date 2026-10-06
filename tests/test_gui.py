@@ -33,6 +33,20 @@ def test_the_command_lines():
                     '--outdir', 'out', '--kmax', '4', '--periods', '113.46',
                     '27', '--no-fip-gp', '--exclude', 'NIRPS', 'HARPS03',
                     '--detection-map', '--no-tess']
+    # a dataset asked back, and no rule at all; a paper as a name is one
+    asked = gui.command('detailed', dict(
+        target='GJ 436', dace=True, exclude='HARPS03 (RVBank), Bryan+ 2019',
+        include='HARPS03', rules='off'))
+    assert asked[asked.index('--exclude'):asked.index('--dace')] == [
+        '--exclude', 'HARPS03 (RVBank)', 'Bryan+ 2019', '--include',
+        'HARPS03', '--no-rules']
+    assert '--no-rules' not in gui.command('detailed', dict(
+        target='GJ 436', dace=True, rules='on'))
+    assert gui.rules_mode(None) == 'on' and gui.rules_mode(False) == 'off'
+    assert gui.rules_mode('legacy') == 'legacy'
+    assert gui.instrument_names('NIRPS HARPS03 (RVBank), Gomes da Silva+ 2012'
+                                ) == ['NIRPS', 'HARPS03 (RVBank)',
+                                      'Gomes da Silva+ 2012']
     assert gui.line(args).startswith("koloa star.rdb --detailed --target "
                                      "'GJ 436'")
     # a rotation that can be trusted: an SHO at it, unless asked otherwise
@@ -869,6 +883,10 @@ def test_a_batch_fip_with_every_archive(tmp_path, monkeypatch):
     assert [first['summary']['sources'][name] for name in insts
             if name != 'HARPS15'] == ['file: gl1.csv']
     assert abs(first['summary']['period'] / 5.3 - 1) < 0.01
+    # the rules of koloa.datasets, on by default: both datasets used
+    assert state['rules'] and first['datasets'] == dict(used=2, all=2,
+                                                       told=[])
+    assert first['summary']['transit']['why_code'] == 'plausible'
     # the transit in TESS at the best peak: flagged
     assert first['summary']['transit']['plausible'], \
         first['summary']['transit']['why']

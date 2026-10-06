@@ -38,11 +38,14 @@ any star. CARMENES DR1 (Ribas et al. 2023) is not looked at as a paper:
 koloa gathers it as an archive of its own.
 
 Only an instrument whose median error is below MAX_ERROR is kept (no km/s
-velocities of a binary survey); a velocity that is a spectrum already kept
-is left out: within SAME_ANY of one of any instrument, or within
-SAME_FAMILY of one of the same spectrograph (HIRES of two surveys, their
-times a few minutes apart: the start of an exposure, its middle), the
-surveys first in the order of SURVEYS, then the papers, the latest first.
+velocities of a binary survey). Each source is kept whole: the same
+spectra are often published more than once (HIRES in three surveys, HARPS
+on DACE and by SERVAL), and which release of them is used is chosen when
+the series is put together (koloa.datasets: the most precise, the others
+left on disk to be asked back). Two velocities are the same spectrum
+within SAME_ANY, or within SAME_FAMILY for one spectrograph (the start of
+an exposure, its middle); a note says how many of a source's spectra the
+sources before it have.
 
 Created on 2026-10-03
 
@@ -461,20 +464,25 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
     notes, kept = [], []
 
     def keep(data, note):
-        """a source's velocities, its imprecise instruments and its spectra
-        already kept left out"""
+        """a source's velocities, its imprecise instruments left out: kept
+        whole, with how many of its spectra the sources before it have
+        (the release used is chosen later: koloa.datasets)"""
         if data is not None:
             data = _keep_precise(data)
             if data is None:
                 note['note'] += f'; no instrument below {MAX_ERROR:.0f} m/s'
         if data is not None:
             fresh = _new(data, kept)
-            if fresh is None:
-                note['note'] += '; every spectrum already kept'
-            data = fresh
-        if data is not None:
+            note['shared'] = int(data.n - (fresh.n if fresh is not None
+                                           else 0))
+            if note['shared']:
+                note['note'] += (f'; {note["shared"]} of its spectra in '
+                                 f'the sources before it')
             kept.append((data.time, np.array([family(val)
                                               for val in data.inst])))
+            # every release of a spectrum is on disk (a folder gathered
+            #   before 2026-10-06 has the first one only)
+            note['whole'] = True
             note['file'] = f'{note["key"]}.csv'
             note['n'] = int(data.n)
             note['instruments'] = {str(inst): int(np.sum(data.inst == inst))
@@ -601,6 +609,35 @@ def _safe(func, *args):
         return func(*args)
     except (OSError, ValueError, ElementTree.ParseError):
         return None
+
+
+def origins(folder: str) -> Dict[str, str]:
+    """
+    Where each instrument of the published velocities kept in a folder
+    came from: its survey or its paper (two datasets of one source are not
+    the same spectra; two sources can publish the same ones)
+
+    :return: dict, {instrument: reference}
+    """
+    index = os.path.join(folder, 'published.json')
+    if not os.path.exists(index):
+        return {}
+    with open(index) as handle:
+        notes = json.load(handle)
+    return {str(inst): str(note['reference']) for note in notes
+            if note.get('file') for inst in note.get('instruments') or {}}
+
+
+def whole(folder: str) -> bool:
+    """whether a folder of published velocities has every source whole
+    (gathered since each release of a spectrum is kept: before, a spectrum
+    was kept from the first source that had it)"""
+    index = os.path.join(folder, 'published.json')
+    if not os.path.exists(index):
+        return True
+    with open(index) as handle:
+        notes = json.load(handle)
+    return all(note.get('whole') for note in notes if note.get('file'))
 
 
 def load(folder: str) -> Optional[RVData]:

@@ -23,7 +23,8 @@ from koloa import kit
 SETTINGS = dict(TITLE='a test', MADE='made here', STAR="'GJ 1'",
                 FILES="[('data/files/0_a.csv', None)]",
                 ARCHIVE_FOLDER="'GJ_1'", USE_DACE=True, USE_CARMENES=False,
-                USE_VIZIER=False, EXCLUDE='[]', TREND=1, KMAX=2, NSWEEP=200,
+                USE_VIZIER=False, EXCLUDE='[]', INCLUDE='[]', RULES=True,
+                TREND=1, KMAX=2, NSWEEP=200,
                 NBURN=50, PMIN=1.1, PMAX='None', FIP_GP="'none'",
                 ROTATION='None', PERIODS='[]', NIGHTLY=True, MSTAR='0.5',
                 MSTAR_ERR='0.05')

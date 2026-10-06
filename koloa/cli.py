@@ -193,6 +193,18 @@ def main(argv=None):
                         help='with --detailed: instruments left out of the '
                              'analysis (NIRPS, HARPS03...), once the file, '
                              'DACE, CARMENES and VizieR are put together')
+    parser.add_argument('--include', nargs='+', default=None,
+                        metavar='INST',
+                        help='with --detailed: datasets used though the '
+                             'rules would leave them out (another release '
+                             'of the same spectra is more precise, or they '
+                             'constrain nothing: koloa.datasets), and '
+                             'preferred to the other releases')
+    parser.add_argument('--no-rules', action='store_true',
+                        help='with --detailed: every dataset used (a '
+                             'spectrum several have still once, from the '
+                             'most precise): none left out by the rules '
+                             'of koloa.datasets')
     parser.add_argument('--refresh-apero', action='store_true',
                         help="a new copy of APERO's database of names "
                              '(koloa.apero_names: the astrometrics of its '
@@ -246,7 +258,8 @@ def main(argv=None):
                           target=args.target, archive=not args.no_archive,
                           dace=args.dace and not args.no_dace,
                           carmenes=args.carmenes and not args.no_carmenes,
-                          exclude=args.exclude, refresh=args.refresh,
+                          exclude=args.exclude, include=args.include,
+                          rules=not args.no_rules, refresh=args.refresh,
                           literature=args.literature,
                           vizier=args.vizier and not args.no_vizier,
                           periods=args.periods,

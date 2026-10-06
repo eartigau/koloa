@@ -240,7 +240,8 @@ def _summary(rep: Dict[str, Any]) -> str:
              f'{data.baseline:.0f}\\,d ({insts}).']
     kinds = [src['kind'] for src in rep['sources']]
     added = [src for src in rep['sources']
-             if src['kind'] not in ('file', 'left out') and src['n'] > 0]
+             if src['kind'] not in ('file', 'left out', 'not used',
+                                    'in part') and src['n'] > 0]
     if added:
         items[-1] += ((' Added to the file: ' if 'file' in kinds else
                        ' From the archives: ') + '; '.join(
@@ -252,6 +253,15 @@ def _summary(rep: Dict[str, Any]) -> str:
             ', '.join(f'{escape(inst)} ({num})'
                       for inst, num in src['instruments'].items())
             for src in dropped) + '.')
+    # by the rules of koloa.datasets: another release of the same spectra
+    #   is more precise, or the dataset constrains nothing
+    unused = [src for src in rep['sources'] if src['kind'] == 'not used']
+    if unused:
+        items[-1] += (' Not used (another release of the same spectra is '
+                      'more precise, or the dataset constrains nothing; see '
+                      'the table of the sources): ' + ', '.join(
+            f'{escape(inst)} ({num})' for src in unused
+            for inst, num in src['instruments'].items()) + '.')
     acc = rep.get('acceleration') or {}
     if acc.get('accel'):
         val, low, high = acc['accel']
@@ -419,13 +429,18 @@ def _data(rep: Dict[str, Any], folder: str) -> str:
                    f'{src["n"]} & {note or "--"} \\\\')
     out.append('\\bottomrule\n\\end{tabularx}\n')
     if any(src['kind'] in ('VizieR', 'given') for src in rep['sources']):
-        out.append('{\\small\\color{muted}A published velocity within a '
-                   'minute of an exposure already in the series is the same '
-                   'spectrum, and is left out; a published instrument that '
-                   'shares its name with one of the series keeps its own '
-                   'offset. The published velocities are used as published '
-                   '(their authors may have corrected offsets or activity).}'
-                   '\n')
+        out.append('{\\small\\color{muted}A spectrum that several datasets '
+                   'have (a published velocity within minutes of an '
+                   'exposure of the same spectrograph) is used once, from '
+                   'the most precise of them: on the spectra two releases '
+                   'share, their difference is noise alone and tells the '
+                   'noise of each. A dataset whose removal changes the '
+                   'errors of the mean and of the slope of a line through '
+                   'the nightly means by less than 1\\,\\% is not used. A '
+                   'published instrument that shares its name with one of '
+                   'the series keeps its own offset. The published '
+                   'velocities are used as published (their authors may '
+                   'have corrected offsets or activity).}\n')
     out.append(_figure(rep['figures'].get('rv'), folder,
                        'The velocities of every instrument, each exposure '
                        'coloured by its probability of being an outlier.',

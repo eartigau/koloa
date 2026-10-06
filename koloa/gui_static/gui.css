@@ -75,6 +75,9 @@ table.mini td.num { font-family: "IBM Plex Mono", monospace; text-align: right; 
 table.mini tr.off td { opacity: 0.4; text-decoration: line-through; }
 table.mini tr.off td:first-child { text-decoration: none; opacity: 1; }
 td.src { font-size: 0.8rem; color: var(--muted); }
+/* what the rules say of a dataset: read even when it is left out */
+table.mini td.why { font-size: 0.8rem; color: var(--muted); max-width: 46em; }
+table.mini tr.off td.why { opacity: 0.85; text-decoration: none; }
 td.src-file { color: var(--accent); font-weight: 500; }
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
 

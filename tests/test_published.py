@@ -95,8 +95,9 @@ def test_a_paper_that_only_mentions_the_star(monkeypatch):
 
 
 def test_a_star_fetched_and_read_back(tmp_path, monkeypatch):
-    """the surveys then the papers; a spectrum twice kept once, an
-    imprecise instrument left out; kept as CSVs and read back"""
+    """the surveys then the papers, each kept whole (a spectrum two
+    sources have is in both: which is used is chosen later), an imprecise
+    instrument left out; kept as CSVs and read back"""
     monkeypatch.setattr(published, 'CACHE', str(tmp_path / 'cache'))
 
     def survey(item, ra, dec, timeout=60.0):
@@ -131,16 +132,25 @@ def test_a_star_fetched_and_read_back(tmp_path, monkeypatch):
     ident = dict(main='GJ 1', aliases=['HIP 1'], ra=1.0, dec=2.0)
     notes = published.fetch(ident, str(tmp_path / 'pub'))
     got = {note['key']: note['n'] for note in notes}
-    assert got['teklu25'] == 2 and got['cls21'] == 1
+    assert got['teklu25'] == 2 and got['cls21'] == 2
     assert got['J_A_A_600_A10'] == 2 and got['J_A_A_601_A11'] == 0
+    # the spectrum CLS shares with Teklu: said, and kept in both
+    shared = {note['key']: note.get('shared') for note in notes}
+    assert shared['cls21'] == 1 and shared['teklu25'] == 0
+    assert 'of its spectra in the sources before it' in [
+        note for note in notes if note['key'] == 'cls21'][0]['note']
     data = published.load(str(tmp_path / 'pub'))
-    assert data.n == 5 and 'HARPS (X+ 2020)' in data.instruments
+    assert data.n == 6 and 'HARPS (X+ 2020)' in data.instruments
+    assert published.whole(str(tmp_path / 'pub'))
+    assert published.origins(str(tmp_path / 'pub')) == {
+        'HIRES (Teklu+ 2025)': 'Teklu et al. 2025',
+        'HIRES (CLS)': 'Rosenthal et al. 2021 (California Legacy Survey)',
+        'HARPS (X+ 2020)': 'X+ 2020'}
     # kept: read back, nothing asked
     asked = published.survey_velocities
     monkeypatch.setattr(published, 'survey_velocities', None)
     assert published.fetch(ident, str(tmp_path / 'pub')) == notes
-    # some of the sources only: asked again, the others left out (the
-    #   spectrum CLS shares with Teklu now its own)
+    # some of the sources only: asked again, the others left out
     monkeypatch.setattr(published, 'survey_velocities', asked)
     some = published.fetch(ident, str(tmp_path / 'pub'),
                            sources=['cls21', 'rvbank20'])
@@ -159,8 +169,10 @@ def test_a_star_fetched_and_read_back(tmp_path, monkeypatch):
 
 
 def test_the_page_with_the_published_velocities(tmp_path):
-    """the published velocities of the archives on the page, their spectra
-    the archives already have left out"""
+    """the published velocities of the archives on the page: every
+    dataset whole, with what the rules do with each (the release of the
+    same spectra that is used, a single velocity that constrains nothing);
+    and as it was before the rules, for a result remembered then"""
     from koloa import gui
     from koloa.gather import write_rv
     star = tmp_path / 'arch' / 'GJ_436'
@@ -185,9 +197,36 @@ def test_the_page_with_the_published_velocities(tmp_path):
                                         n=2)]))
     res = gui.velocities('', 'GJ 436', str(tmp_path / 'arch'), dace=True,
                          vizier=True)
+    got = {inst['name']: (inst['source'], inst['n'], inst['rule']['status'])
+           for inst in res['instruments']}
+    # RVBank has the spectrum DACE has, and more of them: DACE's HARPS03
+    #   is left with one of its own; the APF has a single velocity
+    assert got == {'HARPS03': ('DACE', 2, 'release'),
+                   'HARPS03 (RVBank)': ('VizieR', 4, 'on'),
+                   'HIRES (Teklu+ 2025)': ('VizieR', 3, 'on'),
+                   'APF (CLS)': ('VizieR', 1, 'weak')}
+    rule = {inst['name']: inst['rule'] for inst in res['instruments']}
+    assert rule['HARPS03']['better'] == 'HARPS03 (RVBank)'
+    assert res['n'] == 7 and res['rules'] == 'on'
+    # asked back: DACE's HARPS03 whole, RVBank's without the spectrum of it
+    res = gui.velocities('', 'GJ 436', str(tmp_path / 'arch'), dace=True,
+                         vizier=True, include='HARPS03')
+    got = {inst['name']: (inst['n'], inst['status'])
+           for inst in res['instruments']}
+    assert got['HARPS03'] == (2, 'on')
+    assert got['HARPS03 (RVBank)'] == (3, 'part')
+    # the series the quick FIP runs on: the same choice
+    data, _, notes = gui.selection(dict(target='GJ 436', dace=True,
+                                        vizier=True,
+                                        root=str(tmp_path / 'arch')))
+    assert data.n == 7 and 'HARPS03' not in data.instruments
+    assert any(note.startswith('HARPS03: left out') for note in notes)
+    # as before the rules (a result remembered then): the spectrum DACE
+    #   has left out of RVBank; the APF of a single velocity too
+    res = gui.velocities('', 'GJ 436', str(tmp_path / 'arch'), dace=True,
+                         vizier=True, rules='legacy')
     got = {inst['name']: (inst['source'], inst['n'])
            for inst in res['instruments']}
-    # the spectrum DACE has left out; the APF of a single velocity too
     assert got == {'HARPS03': ('DACE', 2),
                    'HARPS03 (RVBank)': ('VizieR', 3),
                    'HIRES (Teklu+ 2025)': ('VizieR', 3)}

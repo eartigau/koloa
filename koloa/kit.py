@@ -155,6 +155,22 @@ an old instrument with large errors, or one whose velocities look wrong.""",
         fr="""Les instruments écartés de l'analyse, par leur nom (['HARPS03'],
 par exemple) : un vieil instrument aux grandes erreurs, ou un dont les
 vitesses semblent fausses."""),
+    'settings_rules': dict(
+        en="""Which datasets are used (koloa.datasets). The archives often
+hold the same spectra twice (HARPS on DACE and by SERVAL on VizieR) and
+old velocities that constrain nothing. RULES = True: a spectrum several
+datasets have is taken from the most precise, a release left with nothing
+of its own and a dataset that constrains nothing are left out. INCLUDE: the
+datasets used all the same (and preferred to the other releases of their
+spectra). RULES = False: every dataset, each spectrum still once.""",
+        fr="""Quels jeux de données sont utilisés (koloa.datasets). Les
+archives ont souvent les mêmes spectres deux fois (HARPS sur DACE et par
+SERVAL sur VizieR) et de vieilles vitesses qui ne contraignent rien.
+RULES = True : un spectre que plusieurs jeux ont est pris du plus précis,
+une publication à qui il ne reste rien en propre et un jeu qui ne
+contraint rien sont écartés. INCLUDE : les jeux utilisés quand même (et
+préférés aux autres publications de leurs spectres). RULES = False : tous
+les jeux, chaque spectre toujours une seule fois."""),
     'settings_trend': dict(
         en="""The trend in time fitted with the signals: 0 none, 1 a straight
 line (the acceleration of the star, from a companion too far out to show
@@ -260,15 +276,14 @@ poses à moins d'une minute d'une pose des fichiers (le même spectre, pas
 compté deux fois)."""),
     'read_vizier': dict(
         en="""Then the velocities published on VizieR (rv/published/, see
-published.json for their sources): each source keeps its own offset, and
-new_spectra leaves out the spectra the other series already have (a
-spectrum published twice); enough leaves out an instrument with too few
-velocities for an offset of its own.""",
+published.json for their sources): each source keeps its own offset and
+is read whole, but for the spectra of the files (new_spectra). A spectrum
+that two sources publish, or that DACE has too, is told apart below.""",
         fr="""Puis les vitesses publiées sur VizieR (rv/published/, voir
 published.json pour leurs sources) : chaque source garde son propre
-offset, et new_spectra écarte les spectres que les autres séries ont déjà
-(un spectre publié deux fois) ; enough écarte un instrument qui a trop peu
-de vitesses pour un offset à lui."""),
+offset et est lue entière, sauf les spectres des fichiers (new_spectra).
+Un spectre que deux sources publient, ou que DACE a aussi, est départagé
+plus bas."""),
     'merge': dict(
         en="""merge puts the series together: one series, its instruments
 kept apart, each about its own zero point (its median: data.zero_point);
@@ -278,10 +293,18 @@ instruments gardés à part, chacun autour de son propre point zéro (sa
 médiane : data.zero_point) ; l'analyse ajuste de toute façon un offset par
 instrument."""),
     'exclude': dict(
-        en="""The instruments of EXCLUDE left out (select keeps a part of a
-series).""",
-        fr="""Les instruments de EXCLUDE écartés (select garde une partie
-d'une série)."""),
+        en="""The datasets used (datasets.choose): those of EXCLUDE left out,
+a spectrum several datasets have taken from the most precise of them (on
+the spectra two releases share, their difference is noise alone and tells
+the noise of each), and, with RULES, not the datasets that constrain
+neither the mean nor the slope of a line through the nightly means. What
+was done with each dataset is printed.""",
+        fr="""Les jeux utilisés (datasets.choose) : ceux de EXCLUDE écartés, un
+spectre que plusieurs jeux ont pris du plus précis (sur les spectres que
+deux publications partagent, leur différence n'est que du bruit et donne
+le bruit de chacune) et, avec RULES, pas les jeux qui ne contraignent ni
+la moyenne ni la pente d'une droite par les moyennes par nuit. Ce qui a
+été fait de chaque jeu est affiché."""),
     'plot_series': dict(
         en="""4. A first look: every velocity, instrument by instrument, each
 about its median. Look for what does not belong: an instrument off the
@@ -549,7 +572,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from koloa import kepler, published, secular, stars
+from koloa import datasets, kepler, published, secular, stars
 from koloa.aliases import same_family
 from koloa.bandfip import as_result, banded_fip
 from koloa.data import merge
@@ -579,6 +602,10 @@ USE_VIZIER = {{USE_VIZIER}}
 
 #> settings_exclude
 EXCLUDE = {{EXCLUDE}}
+
+#> settings_rules
+RULES = {{RULES}}
+INCLUDE = {{INCLUDE}}
 
 #> settings_trend
 TREND = {{TREND}}
@@ -627,16 +654,18 @@ def read_star():
 # =============================================================================
 def read_velocities():
     #> read_files
-    series = []
+    series, origin = [], {}
     if FILES:
         series = read_files([str(HERE / path) for path, _ in FILES],
                             [label for _, label in FILES])
         for (path, _), part in zip(FILES, series):
+            origin.update({inst: 'file' for inst in part.instruments})
             print(f'{path}: {part.n} velocities, ' + ', '.join(
                 f'{inst} {np.sum(part.inst == inst)}'
                 for inst in part.instruments))
     files = (series[0] if len(series) == 1 else merge(series)) \\
         if series else None
+    mine = list(origin)
 
     #> read_archives
     if (USE_DACE or USE_CARMENES) and (ARCHIVES / 'rv' / 'all_rv.csv').exists():
@@ -652,6 +681,7 @@ def read_velocities():
                 part = distinct(part, files.instruments, files.time, tag)
             if part is not None:
                 series.append(part)
+                origin.update({inst: tag for inst in part.instruments})
                 print(f'{tag}: {part.n} velocities, ' + ', '.join(
                     f'{inst} {np.sum(part.inst == inst)}'
                     for inst in part.instruments))
@@ -660,10 +690,13 @@ def read_velocities():
     folder = ARCHIVES / 'rv' / 'published'
     if USE_VIZIER and folder.exists():
         pub = published.load(str(folder))
-        if pub is not None:
-            pub = published.enough(published.new_spectra(pub, series))
+        if pub is not None and files is not None:
+            pub = published.new_spectra(pub, [files])
         if pub is not None:
             series.append(pub)
+            came = published.origins(str(folder))
+            origin.update({inst: came.get(inst, 'VizieR')
+                           for inst in pub.instruments})
             print(f'VizieR: {pub.n} velocities, ' + ', '.join(
                 f'{inst} {np.sum(pub.inst == inst)}'
                 for inst in pub.instruments))
@@ -674,11 +707,14 @@ def read_velocities():
     #> merge
     data = series[0] if len(series) == 1 else merge(series, name=STAR)
     #> exclude
-    if EXCLUDE:
-        drop = [name.upper() for name in EXCLUDE]
-        data = data.select(~np.isin(np.char.upper(data.inst.astype(str)),
-                                    drop))
-    print(f'Together: {data.n} velocities of {len(data.instruments)} '
+    data, rows = datasets.choose(data, origin, protect=mine, include=INCLUDE,
+                                 exclude=EXCLUDE, auto=RULES)
+    for row in rows:
+        if row['status'] != 'on':
+            print(datasets.told(row))
+    if data is None:
+        raise SystemExit('Every dataset is left out: see EXCLUDE.')
+    print(f'Used: {data.n} velocities of {len(data.instruments)} '
           f'instruments over {data.baseline:.0f} days')
     return data
 
@@ -1202,7 +1238,7 @@ def build(opts: Dict[str, Any], lang: str = 'en') -> bytes:
     """
     from koloa.gather import folder_name
     from koloa.gui import (DEFAULTS, _files, _number, instrument_names,
-                           trend_order)
+                           rules_mode, trend_order)
     target = str(opts.get('target') or '').strip()
     paths, labels = _files(opts)
     folder = folder_name(target) if target else 'series'
@@ -1278,6 +1314,8 @@ def build(opts: Dict[str, Any], lang: str = 'en') -> bytes:
             ARCHIVE_FOLDER=repr(folder), USE_DACE=asked['dace'],
             USE_CARMENES=asked['carmenes'], USE_VIZIER=asked['vizier'],
             EXCLUDE=repr(instrument_names(opts.get('exclude'))),
+            INCLUDE=repr(instrument_names(opts.get('include'))),
+            RULES=rules_mode(opts.get('rules', True)) == 'on',
             TREND=trend_order(opts),
             KMAX=number('kmax', int) or DEFAULTS['kmax'],
             NSWEEP=number('nsweep', int) or DEFAULTS['nsweep'],

@@ -73,9 +73,21 @@ def _number(value: Any, kind=float) -> Optional[float]:
 def instrument_names(text: Any) -> List[str]:
     """the instruments a field names, separated by commas or spaces: a
     name with its source in brackets is one ('HIRES (CLS)', 'HIRES
-    (Teklu+ 2025)', 'HARPS03 (RVBank)'), its spaces made single"""
-    return [re.sub(r'\s+', ' ', name).strip() for name in re.findall(
-        r'[^\s,(]+(?:\s*\([^)]*\))?', str(text or ''))]
+    (Teklu+ 2025)', 'HARPS03 (RVBank)'), and so is a paper that names no
+    instrument, between commas ('Gomes da Silva+ 2012'); their spaces
+    made single"""
+    if isinstance(text, (list, tuple)):
+        return [re.sub(r'\s+', ' ', str(name)).strip() for name in text
+                if str(name).strip()]
+    names: List[str] = []
+    for chunk in str(text or '').split(','):
+        chunk = re.sub(r'\s+', ' ', chunk).strip()
+        if re.search(r'\+ \d{4}$', chunk) and '(' not in chunk:
+            names.append(chunk)
+        else:
+            names += [re.sub(r'\s+', ' ', name).strip() for name in
+                      re.findall(r'[^\s,(]+(?:\s*\([^)]*\))?', chunk)]
+    return names
 
 
 def _files(opts: Dict[str, Any]):
@@ -162,6 +174,11 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
     exclude = instrument_names(opts.get('exclude'))
     if exclude:
         args += ['--exclude'] + exclude
+    include = instrument_names(opts.get('include'))
+    if include:
+        args += ['--include'] + include
+    if rules_mode(opts.get('rules', True)) != 'on':
+        args.append('--no-rules')
     dmap = opts.get('detection_map') or 'none'
     if dmap == 'fip':
         args.append('--detection-map')
@@ -570,19 +587,46 @@ def gathering(target: str, root: str = '') -> bool:
                and job.outputs == folder for job in JOBS.values())
 
 
-def series_of(files: Any = '', target: str = '', root: str = '',
-              dace: bool = False, carmenes: bool = False,
-              vizier: bool = False):
+def rules_mode(value: Any) -> str:
     """
-    The series of the page: its files, and the archives gathered for the
-    star that are asked for (set apart from the files as the report does)
+    How the datasets of a series are chosen: 'on' (the rules of
+    koloa.datasets), 'off' (they leave nothing out; a spectrum several
+    datasets have is still used once, from the most precise) or 'legacy'
+    (as before the rules: the files, then DACE, then CARMENES, then
+    VizieR, a spectrum taken from the first that has it; a result
+    remembered then is recalled as it was)
+    """
+    if value == 'legacy':
+        return 'legacy'
+    if value is False or str(value).strip().lower() in ('off', '0', 'false',
+                                                        'no'):
+        return 'off'
+    return 'on'
 
-    :return: tuple, RVData or None, the source of each instrument, notes
+
+def whole_series(files: Any = '', target: str = '', root: str = '',
+                 dace: bool = False, carmenes: bool = False,
+                 vizier: bool = False, legacy: bool = False):
+    """
+    Every dataset of the page, whole: its files, and the archives gathered
+    for the star that are asked for (set apart from the files as the
+    report does). The same spectra can be in several of them (HARPS on
+    DACE and by SERVAL on VizieR): koloa.datasets says which is used
+
+    :param legacy: bool, the published velocities as they were put with
+                   the others before the rules: without the spectra any
+                   other series has, nor an instrument left with fewer
+                   than koloa.published.MIN_POINTS
+
+    :return: tuple, RVData or None, the source of each instrument (as the
+             page shows it), notes, where each instrument came from (two
+             datasets of one origin are not the same spectra), and the
+             instruments of the files (never left out by the rules)
     """
     from koloa.data import merge
     from koloa.detailed import distinct, read_files
     from koloa.gather import folder_name, load
-    series, notes, source = [], [], {}
+    series, notes, source, origin, mine = [], [], {}, {}, []
     filedata = None
     if isinstance(files, str):
         files = [dict(path=files)] if files else []
@@ -592,6 +636,10 @@ def series_of(files: Any = '', target: str = '', root: str = '',
         for path, part in zip(paths, parts):
             source.update({name: f'file: {os.path.basename(path)}'
                            for name in part.instruments})
+            # two files of one instrument are two reductions to compare:
+            #   the files are one origin, never set against each other
+            origin.update({name: 'file' for name in part.instruments})
+            mine += [name for name in part.instruments if name not in mine]
             notes.append(f'{os.path.basename(path)}: {part.n} points')
         series += parts
         filedata = parts[0] if len(parts) == 1 else merge(parts)
@@ -626,61 +674,174 @@ def series_of(files: Any = '', target: str = '', root: str = '',
                     continue
                 series.append(part)
                 source.update({name: arch for name in part.instruments})
+                origin.update({name: arch for name in part.instruments})
                 notes.append(f'{arch} ({folder}): {part.n} points')
         else:
             notes.append(f'nothing gathered in {folder} yet')
-        # the velocities published on VizieR (koloa.published), their
-        #   spectra already in the series left out
+        # the velocities published on VizieR (koloa.published), each
+        #   source whole; the spectra of the files are the files'
         pdir = os.path.join(folder, 'rv', 'published')
         from koloa import published as kpub
         pub = kpub.load(pdir) if os.path.isdir(pdir) else None
         if pub is not None and not vizier:
             notes.append(f'VizieR: {pub.n} points gathered, not ticked')
         elif pub is not None:
-            # the spectra the series has left out, and then an instrument
-            #   with too few velocities for an offset of its own
-            fresh = kpub.enough(kpub.new_spectra(pub, series))
+            if legacy:
+                fresh = kpub.enough(kpub.new_spectra(pub, series))
+            else:
+                fresh = (pub if filedata is None
+                         else kpub.new_spectra(pub, [filedata]))
             if fresh is not None:
                 series.append(fresh)
                 source.update({name: 'VizieR' for name in fresh.instruments})
+                came = kpub.origins(pdir)
+                origin.update({name: came.get(name, 'VizieR')
+                               for name in fresh.instruments})
                 notes.append(f'VizieR ({pdir}): {fresh.n} points'
                              + (f' ({pub.n - fresh.n} the same spectra as '
-                                f'the others)' if fresh.n < pub.n else ''))
+                                f'the files)' if fresh.n < pub.n else ''))
+                if not legacy and not kpub.whole(pdir):
+                    notes.append('VizieR: gathered before each release of '
+                                 'a spectrum was kept (gather again to '
+                                 'choose among them)')
             else:
-                notes.append('VizieR: only spectra the others have')
+                notes.append('VizieR: only spectra the files have')
     if not series:
-        return None, source, notes
-    return (series[0] if len(series) == 1 else merge(series)), source, notes
+        return None, source, notes, origin, mine
+    return ((series[0] if len(series) == 1 else merge(series)), source,
+            notes, origin, mine)
+
+
+def chosen_series(files: Any = '', target: str = '', root: str = '',
+                  dace: bool = False, carmenes: bool = False,
+                  vizier: bool = False, exclude: Any = '',
+                  include: Any = '', rules: Any = True):
+    """
+    The datasets of the page and what is used of them (koloa.datasets):
+    a spectrum several have is taken from the most precise, the releases
+    left with nothing of their own and the datasets that constrain
+    nothing are left out, unless asked back (include); those left out as
+    asked (exclude) are
+
+    :param exclude: str or list, the datasets left out as asked
+    :param include: str or list, datasets used though the rules would
+                    leave them out
+    :param rules: bool or str, how they are chosen (rules_mode): False
+                  for the rules to leave nothing out, 'legacy' as before
+                  there were rules
+
+    :return: tuple, every dataset whole (RVData or None), the series used
+             (RVData or None), the source of each instrument, notes, what
+             was done with each dataset (koloa.datasets.rules), and what
+             the rules do when nothing is asked (the same list when
+             nothing is)
+    """
+    from koloa import datasets as kdatasets
+    mode = rules_mode(rules)
+    whole, source, notes, origin, mine = whole_series(
+        files, target, root, dace, carmenes, vizier, mode == 'legacy')
+    if whole is None:
+        return None, None, source, notes, [], []
+    left, back = instrument_names(exclude), instrument_names(include)
+    if mode == 'legacy':
+        # as it was: every spectrum already once, the instruments left out
+        #   as asked taken out
+        gone = {name.upper() for name in left}
+        rows = []
+        for name in whole.instruments:
+            index = np.where(whole.inst == name)[0]
+            out = name.upper() in gone
+            rows.append(dict(
+                name=name, n=int(len(index)), used=0 if out else len(index),
+                keep=index[:0] if out else index,
+                status='asked' if out else 'on', better=None, same=0,
+                by=None, extra=None, precision=None, precision_better=None,
+                mean=None, slope=None, left=None, nights=None,
+                source=origin.get(name, '')))
+        keep = np.sort(np.concatenate([row['keep'] for row in rows]))
+        used = (None if not len(keep) else whole if len(keep) == whole.n
+                else whole.select(keep))
+        return whole, used, source, notes, rows, rows
+    used, rows = kdatasets.choose(whole, origin, protect=mine, include=back,
+                                  exclude=left, auto=mode == 'on')
+    default = rows if not (left or back) else kdatasets.rules(
+        whole, origin, protect=mine, auto=mode == 'on')
+    return whole, used, source, notes, rows, default
+
+
+def series_of(files: Any = '', target: str = '', root: str = '',
+              dace: bool = False, carmenes: bool = False,
+              vizier: bool = False, exclude: Any = '', include: Any = '',
+              rules: Any = True):
+    """
+    The series of the page: its files, and the archives gathered for the
+    star that are asked for (set apart from the files as the report does),
+    what the rules of koloa.datasets and the page leave out taken out
+
+    :return: tuple, RVData or None, the source of each instrument, notes
+             (with what the rules did)
+    """
+    from koloa import datasets as kdatasets
+    _, used, source, notes, rows, _ = chosen_series(
+        files, target, root, dace, carmenes, vizier, exclude, include, rules)
+    notes = notes + [kdatasets.told(row) for row in rows
+                     if row['status'] != 'on']
+    return used, source, notes
+
+
+#: what the page is told of a dataset by the rules
+RULE_KEYS = ('status', 'n', 'used', 'better', 'same', 'by', 'extra',
+             'precision', 'precision_better', 'mean', 'slope', 'left',
+             'nights')
 
 
 def velocities(files: Any = '', target: str = '', root: str = '',
                dace: bool = False, carmenes: bool = False,
-               vizier: bool = False) -> Dict[str, Any]:
+               vizier: bool = False, exclude: Any = '', include: Any = '',
+               rules: Any = True) -> Dict[str, Any]:
     """
     The velocities of a file and of a star's gathered archives, by
-    instrument (each with its median taken out), for the plot of the page
+    instrument (each with its median taken out), for the plot of the page:
+    every dataset, the ones the rules leave out too (the page unticks
+    them, and says why), those used in part with the points used
+
+    :return: dict, instruments (each with its points, its status now and
+             rule: what the rules do with it when nothing is asked),
+             notes, n and baseline (of the series used)
     """
-    data, source, notes = series_of(files, target, root, dace, carmenes,
-                                    vizier)
-    if data is None:
+    whole, used, source, notes, rows, default = chosen_series(
+        files, target, root, dace, carmenes, vizier, exclude, include, rules)
+    if whole is None:
         return dict(instruments=[], notes=notes)
     out = []
-    berv = _berv(data)
-    for name in data.instruments:
-        sel = data.inst == name
+    berv = _berv(whole)
+    first = {row['name']: row for row in default}
+    for row in rows:
+        name = row['name']
+        # the points used of a dataset used in part; all of them otherwise
+        sel = np.zeros(whole.n, dtype=bool)
+        if row['status'] == 'part':
+            sel[row['keep']] = True
+        else:
+            sel = whole.inst == name
         # each instrument about its own median, whatever came before
-        rv = data.rv[sel] - np.median(data.rv[sel])
-        out.append(dict(name=name, n=int(sel.sum()),
+        rv = whole.rv[sel] - np.median(whole.rv[sel])
+        out.append(dict(name=name, n=int(sel.sum()), total=int(row['n']),
                         source=source.get(name, ''),
-                        median=float(np.median(data.rv[sel])),
-                        time=np.round(data.time[sel], 6).tolist(),
+                        median=float(np.median(whole.rv[sel])),
+                        time=np.round(whole.time[sel], 6).tolist(),
                         rv=np.round(rv, 3).tolist(),
-                        err=np.round(data.err[sel], 3).tolist(),
+                        err=np.round(whole.err[sel], 3).tolist(),
                         berv=(_listed(berv[sel], 3) if berv is not None
                               and np.any(np.isfinite(berv[sel])) else None),
-                        rms=float(np.std(data.rv[sel]))))
-    return dict(instruments=out, notes=notes, n=int(data.n),
-                baseline=float(data.baseline))
+                        rms=float(np.std(whole.rv[sel])),
+                        status=row['status'], better=row['better'],
+                        rule=_finite({key: first[name].get(key)
+                                      for key in RULE_KEYS})))
+    return dict(instruments=out, notes=notes,
+                n=int(used.n) if used is not None else 0,
+                baseline=float(used.baseline) if used is not None else 0.0,
+                rules=rules_mode(rules))
 
 
 # =============================================================================
@@ -703,16 +864,15 @@ _QUICK_DATA: Dict[str, Dict[str, Any]] = {}
 
 
 def selection(opts: Dict[str, Any]):
-    """the series the page shows, its instruments left out taken out"""
-    data, source, notes = series_of(
+    """the series the page shows: its instruments left out taken out, as
+    the rules have it (koloa.datasets; rules False for none) but for the
+    datasets asked back (include)"""
+    return series_of(
         opts.get('files') or opts.get('file') or '', opts.get('target', ''),
         opts.get('root', ''), bool(opts.get('dace')),
-        bool(opts.get('carmenes')), bool(opts.get('vizier')))
-    left = {name.upper() for name in instrument_names(opts.get('exclude'))}
-    if data is not None and left:
-        keep = ~np.isin(np.char.upper(data.inst.astype(str)), list(left))
-        data = data.select(keep) if keep.any() else None
-    return data, source, notes
+        bool(opts.get('carmenes')), bool(opts.get('vizier')),
+        opts.get('exclude') or '', opts.get('include') or '',
+        opts.get('rules', True))
 
 
 def known_periods(target: str) -> List[Dict[str, Any]]:
@@ -2030,7 +2190,7 @@ BATCHES: Dict[str, Dict[str, Any]] = {}
 
 def batch_fip(paths: List[str], opts: Dict[str, Any],
               archives: bool = False, regather: bool = False,
-              root: str = '') -> Dict[str, Any]:
+              root: str = '', rules: bool = True) -> Dict[str, Any]:
     """
     The quick FIP of many files, one after the other, in a thread, the
     trend as the report's boxes say; each kept as a quick FIP of its own,
@@ -2039,13 +2199,16 @@ def batch_fip(paths: List[str], opts: Dict[str, Any],
     every archive of that star is gathered (DACE, CARMENES DR1, VizieR;
     koloa.gather, kept in root, again with regather) and put with the file
     (set apart from it as the report does), and its known planets go into
-    the second pass; without, each file is on its own
+    the second pass; without, each file is on its own. Of the archives of
+    a star, the rules of koloa.datasets say which datasets are used (the
+    best release of the same spectra, not those that constrain nothing)
 
     :param paths: list of str, the files of velocities
     :param opts: dict, the options of the page (trend, curvature)
     :param archives: bool, the archives of each star with its file
     :param regather: bool, gather the archives again (not those on disk)
     :param root: str, the folder of the archives
+    :param rules: bool, False for the rules to leave no dataset out
 
     :return: dict, the state of the batch (batch_state)
     """
@@ -2057,7 +2220,7 @@ def batch_fip(paths: List[str], opts: Dict[str, Any],
     BATCHES[bid] = dict(id=bid, status='running', start=time.time(),
                         end=None, cancel=False, trend=trend_order(opts),
                         archives=bool(archives), regather=bool(regather),
-                        root=root or 'archives',
+                        rules=bool(rules), root=root or 'archives',
                         items=[dict(path=path, name=os.path.basename(path),
                                     status='waiting', qid=None, error=None,
                                     summary=None, star=None, stage=None,
@@ -2144,9 +2307,10 @@ def _batch_archives(batch: Dict[str, Any], item: Dict[str, Any]):
             item['note'] = f'archives not gathered ({type(err).__name__}: ' \
                 f'{err})'
     item['stage'] = None
-    data, source, _ = series_of([dict(path=item['path'])], target,
-                                batch['root'], dace=True, carmenes=True,
-                                vizier=True)
+    asked = dict(files=[dict(path=item['path'])], target=target,
+                 root=batch['root'], dace=True, carmenes=True, vizier=True,
+                 rules=batch.get('rules', True))
+    whole, data, source, _, rows, _ = chosen_series(**asked)
     # the DACE copy of an instrument of the file (NIRPS_DACE: the same
     #   spectra through DACE's pipeline, less precise than LBL's) left out,
     #   as the page does by default
@@ -2154,13 +2318,29 @@ def _batch_archives(batch: Dict[str, Any], item: Dict[str, Any]):
                                      else []) if str(inst).upper()
               .endswith('_DACE')]
     if copies and len(copies) < len(data.instruments):
-        data = data.select(~np.isin(data.inst.astype(str), copies))
-        for name in copies:
-            source.pop(name, None)
+        _, data, source, _, rows, _ = chosen_series(
+            **asked, exclude=copies)
         item['note'] = ((item.get('note') + '; ') if item.get('note') else
                         '') + (f'{", ".join(copies)} left out (DACE\'s copy '
                                f'of the file\'s spectra)')
         item['dace_copies'] = copies
+    # what the rules left out, for the page that opens the file and for
+    #   the table (how many datasets of how many)
+    from koloa import datasets as kdatasets
+    from koloa.log import log
+    gone = kdatasets.left_out(rows)
+    item['left_out'] = gone
+    for row in rows:
+        if row['status'] != 'on':
+            log(f'{item["name"]}, {kdatasets.told(row)}',
+                'value' if row['used'] else 'warn')
+    item['datasets'] = dict(
+        used=sum(1 for row in rows if row['used']), all=len(rows),
+        told=[kdatasets.told(row) for row in rows
+              if row['status'] in ('release', 'weak', 'part')])
+    if data is not None:
+        source = {name: val for name, val in source.items()
+                  if name in data.instruments}
     return data, source, target
 
 
@@ -2275,12 +2455,15 @@ def batch_state(bid: str) -> Dict[str, Any]:
         one = {key: item[key] for key in ('path', 'name', 'status', 'qid',
                                           'error', 'summary', 'star',
                                           'stage', 'note')}
+        # with its archives: how many datasets are used, what the rules did
+        one['datasets'] = item.get('datasets')
         job = QUICKS.get(item['qid']) if item['qid'] else None
         if job is not None and item['status'] == 'running':
             one.update(step=job.get('step'), progress=job.get('progress'))
         items.append(one)
     return dict(id=bid, status=batch['status'], items=items,
                 archives=batch.get('archives', False),
+                rules=batch.get('rules', True),
                 elapsed=(batch['end'] or time.time()) - batch['start'])
 
 
@@ -2306,14 +2489,17 @@ def batch_open(bid: str, index: int) -> Dict[str, Any]:
     arch = bool(batch.get('archives'))
     target = ((item.get('star') or {}).get('target') or '') if arch else ''
     root = batch.get('root', '') if arch else ''
+    mode = 'on' if batch.get('rules', True) else 'off'
+    left = (item.get('dace_copies') or []) + (item.get('left_out') or [])
     detailed = dict(trend=batch['trend'] >= 1, curvature=batch['trend'] >= 2,
                     dace=arch, carmenes=arch, vizier=arch,
-                    exclude=', '.join(item.get('dace_copies') or []))
+                    exclude=', '.join(left), include='')
     page = dict(target=target, files=[dict(path=item['path'], label='')],
                 root=root, outdir='', detailed=detailed, clip=False,
-                view=None, periods=None, subtract=[])
+                view=None, periods=None, subtract=[], rules=mode)
     return dict(page=page, rv=velocities([dict(path=item['path'])], target,
-                                         root, arch, arch, arch),
+                                         root, arch, arch, arch,
+                                         exclude=left, rules=mode),
                 quick=quick_state(item['qid']), notes=[],
                 entry=dict(id='', target=target or item['name'], note='',
                            created=time.strftime('%Y-%m-%d %H:%M')))
@@ -3386,7 +3572,10 @@ def _remember_into(folder: str, rid: str, target: str,
                     arch['copy'] if arch else root,
                     dace=bool(detailed.get('dace')),
                     carmenes=bool(detailed.get('carmenes')),
-                    vizier=bool(detailed.get('vizier')))
+                    vizier=bool(detailed.get('vizier')),
+                    exclude=str(detailed.get('exclude') or ''),
+                    include=str(detailed.get('include') or ''),
+                    rules=page.get('rules', 'legacy'))
     # the files by their own names, not their copies'
     names = {os.path.basename(row['copy']): os.path.basename(row['path'])
              for row in files}
@@ -3504,6 +3693,9 @@ def page_options(page: Dict[str, Any]) -> Dict[str, Any]:
                 carmenes=bool(detailed.get('carmenes')),
                 vizier=bool(detailed.get('vizier')),
                 exclude=str(detailed.get('exclude') or ''),
+                include=str(detailed.get('include') or ''),
+                # a page remembered before the rules: as it was
+                rules=page.get('rules', 'legacy'),
                 trend=detailed.get('trend', True),
                 curvature=bool(detailed.get('curvature')),
                 subtract=page.get('subtract') or [])
@@ -3645,7 +3837,10 @@ class Handler(BaseHTTPRequestHandler):
                     files, query.get('target', ''), query.get('root', ''),
                     dace=query.get('dace') == '1',
                     carmenes=query.get('carmenes') == '1',
-                    vizier=query.get('vizier') == '1'))
+                    vizier=query.get('vizier') == '1',
+                    exclude=query.get('exclude', ''),
+                    include=query.get('include', ''),
+                    rules=query.get('rules', 'on')))
             if url.path == '/api/jobs':
                 return self._json([job.state(0) for job in JOBS.values()])
             if url.path == '/api/job':
@@ -3751,7 +3946,9 @@ class Handler(BaseHTTPRequestHandler):
                                             body.get('options') or {},
                                             bool(body.get('archives')),
                                             bool(body.get('regather')),
-                                            body.get('root') or ''))
+                                            body.get('root') or '',
+                                            body.get('rules', True)
+                                            is not False))
             if path == '/api/batchstop':
                 return self._json(stop_batch(body.get('id', '')))
             if path == '/api/batch_open':

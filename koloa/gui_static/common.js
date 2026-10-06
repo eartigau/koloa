@@ -9,6 +9,15 @@ const TEXT = {
     resolve: 'Resolve', velocities: 'Velocities',
     velocities_hint: 'Your files of velocities (LBL .rdb, csv, DACE csv), and the archives gathered for the star when DACE or CARMENES DR1 is ticked in the report: what the report will use. Untick an instrument (or click it in the legend) to leave it out of the report.',
     use: 'Used', exclude: 'Instruments left out', source: 'Source', src_file: 'input file',
+    include: 'Datasets asked back', ds_why: 'By default', ds_back: 'asked back', ds_sets: 'datasets',
+    ds_release: 'left out: the same spectra as {better}{how}',
+    ds_more: ', the more precise (this one scatters {extra} m/s more, in quadrature, on the spectra they share)',
+    ds_tie: ' (as precise, with more spectra)', ds_err: ' (median errors of {a} against {b} m/s)',
+    ds_weak: 'left out: its {nights} nights constrain neither the mean ({mean} % of its error) nor the slope ({slope} %)',
+    ds_weak_one: 'left out: one night constrains neither the mean nor the slope', ds_asked: ', asked back',
+    ds_weak_part: 'left out: {same} of its points are spectra of {better}{how}; the {left} others constrain neither the mean nor the slope',
+    ds_part: '{used} of {n} points: the others are spectra of {better}',
+    batch_rules: 'of them, the best release of the same spectra, and not the datasets that constrain nothing',
     file: 'File (optional)', root: 'Archives folder', plot: 'Plot', browse: 'Browse...', picking: 'choosing...',
     var_pending: 'SIMBAD’s periods of variability are on their way (its service is slow today)',
     p_valid: 'P(valid)', p_valid_low: 'P(valid) < 50 %',
@@ -129,6 +138,15 @@ const TEXT = {
     resolve: 'Résoudre', velocities: 'Vitesses',
     velocities_hint: 'Vos fichiers de vitesses (LBL .rdb, csv, csv de DACE), et les archives récupérées pour l’étoile quand DACE ou CARMENES DR1 est cochée dans le rapport : ce que le rapport utilisera. Décochez un instrument (ou cliquez-le dans la légende) pour l’écarter du rapport.',
     use: 'Utilisé', exclude: 'Instruments écartés', source: 'Source', src_file: 'fichier d’entrée',
+    include: 'Jeux de données rappelés', ds_why: 'Par défaut', ds_back: 'rappelé', ds_sets: 'jeux',
+    ds_release: 'écarté : les mêmes spectres que {better}{how}',
+    ds_more: ', le plus précis (celui-ci disperse {extra} m/s de plus, en quadrature, sur les spectres communs)',
+    ds_tie: ' (aussi précis, avec plus de spectres)', ds_err: ' (erreurs médianes de {a} contre {b} m/s)',
+    ds_weak: 'écarté : ses {nights} nuits ne contraignent ni la moyenne ({mean} % de son erreur) ni la pente ({slope} %)',
+    ds_weak_one: 'écarté : une seule nuit ne contraint ni la moyenne ni la pente', ds_asked: ', rappelé',
+    ds_weak_part: 'écarté : {same} de ses points sont des spectres de {better}{how} ; les {left} autres ne contraignent ni la moyenne ni la pente',
+    ds_part: '{used} points sur {n} : les autres sont des spectres de {better}',
+    batch_rules: 'parmi elles, la meilleure publication des mêmes spectres, et pas les jeux qui ne contraignent rien',
     file: 'Fichier (facultatif)', root: 'Dossier des archives', plot: 'Tracer', browse: 'Parcourir...', picking: 'choix en cours...',
     var_pending: 'les périodes de variabilité de SIMBAD arrivent (son service est lent aujourd’hui)',
     p_valid: 'P(valide)', p_valid_low: 'P(valide) < 50 %',
@@ -252,6 +270,8 @@ const SYMBOLS = ['circle', 'square', 'diamond', 'triangle-up', 'triangle-down', 
 let lang = 'en';
 try { lang = localStorage.getItem('koloa-lang') || ((navigator.language || '').startsWith('fr') ? 'fr' : 'en'); } catch (e) { /* no storage */ }
 const t = (key) => (TEXT[lang] && TEXT[lang][key]) || TEXT.en[key] || key;
+// a sentence with its {names} filled
+const fill = (text, vals) => String(text).replace(/\{(\w+)\}/g, (all, name) => (name in vals ? vals[name] : all));
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 // a FIP in powers of ten (HTML): one too small for a float, below 1e-300
@@ -451,8 +471,16 @@ const HELP = {
     fr: 'Les TOI à ajuster, par numéro, séparés par des espaces : 175.01 175.02 par exemple. Vide avec la case cochée : tous les TOI de l’étoile sauf les faux positifs (FP, FA). Cliquez un TOI dans le résolveur pour l’ajouter ici.',
   },
   exclude: {
-    en: 'Instruments left out of the report, by their names in the plot, separated by spaces: NIRPS_DACE HARPS03 for instance. Untick an instrument in the table under the plot, or click it in the legend, to add it here. They are left out once the files, DACE, CARMENES and VizieR are put together. Empty: none.',
-    fr: 'Les instruments écartés du rapport, par leurs noms dans le graphique, séparés par des espaces : NIRPS_DACE HARPS03 par exemple. Décochez un instrument dans le tableau sous le graphique, ou cliquez-le dans la légende, pour l’ajouter ici. Ils sont écartés une fois les fichiers, DACE, CARMENES et VizieR rassemblés. Vide : aucun.',
+    en: 'Instruments left out of the report, by their names in the plot, separated by commas: NIRPS_DACE, HARPS03, HIRES (CLS) for instance. Those the rules leave out by default are put here when the velocities are plotted (the table says why). Untick an instrument in the table under the plot, or click it in the legend, to add it here. They are left out once the files, DACE, CARMENES and VizieR are put together. Empty: none.',
+    fr: 'Les instruments écartés du rapport, par leurs noms dans le graphique, séparés par des virgules : NIRPS_DACE, HARPS03, HIRES (CLS) par exemple. Ceux que les règles écartent par défaut y sont mis quand les vitesses sont tracées (le tableau dit pourquoi). Décochez un instrument dans le tableau sous le graphique, ou cliquez-le dans la légende, pour l’ajouter ici. Ils sont écartés une fois les fichiers, DACE, CARMENES et VizieR rassemblés. Vide : aucun.',
+  },
+  include: {
+    en: 'Datasets used though the rules would leave them out (koloa.datasets: another release of the same spectra is more precise, or the dataset constrains nothing), by their names in the plot, separated by commas. Tick such a dataset in the table under the plot to add it here: it is then preferred to the other releases of its spectra. Empty: the rules as they are.',
+    fr: 'Les jeux de données utilisés bien que les règles les écartent (koloa.datasets : une autre publication des mêmes spectres est plus précise, ou le jeu ne contraint rien), par leurs noms dans le graphique, séparés par des virgules. Cochez un tel jeu dans le tableau sous le graphique pour l’ajouter ici : il est alors préféré aux autres publications de ses spectres. Vide : les règles telles quelles.',
+  },
+  datasets: {
+    en: 'Which datasets are used. The archives often hold the same spectra more than once (HARPS on DACE and by SERVAL, HIRES in three surveys), and old velocities too imprecise to constrain anything. Everything is plotted and can be ticked; by default:\n\n1. A spectrum several datasets have is taken from the most precise of them. On the spectra two releases share the star does the same in both, so their difference is noise alone, and it tells the noise of each: no model of the star is needed. A release left with nothing of its own is unticked; one that has spectra the better one lacks keeps those (40/200 in the table).\n\n2. A dataset that constrains nothing is unticked. A line is fitted to the nightly means (an offset per dataset, one slope): a dataset is left out when taking it away makes the error of the mean and that of the slope grow by less than 1 %. The error of a night holds what the star does about a line, the same for every instrument, so a few nights among hundreds weigh little whatever their precision.\n\nTick a dataset to ask it back: a release asked back is preferred to the others for the spectra they share (untick the other to see it whole). The datasets of your own files are never left out. The report makes the same choice (--exclude, --include; --no-rules for no rule), and so does the batch.',
+    fr: 'Quels jeux de données sont utilisés. Les archives ont souvent les mêmes spectres plus d’une fois (HARPS sur DACE et par SERVAL, HIRES dans trois relevés), et de vieilles vitesses trop peu précises pour contraindre quoi que ce soit. Tout est tracé et peut être coché ; par défaut :\n\n1. Un spectre que plusieurs jeux ont est pris du plus précis. Sur les spectres que deux publications partagent, l’étoile fait la même chose dans les deux : leur différence n’est que du bruit, et elle donne le bruit de chacune, sans modèle de l’étoile. Une publication à qui il ne reste rien en propre est décochée ; celle qui a des spectres que la meilleure n’a pas garde ceux-là (40/200 dans le tableau).\n\n2. Un jeu qui ne contraint rien est décoché. Une droite est ajustée aux moyennes par nuit (un offset par jeu, une pente) : un jeu est écarté quand le retirer fait croître l’erreur de la moyenne et celle de la pente de moins de 1 %. L’erreur d’une nuit contient ce que fait l’étoile autour d’une droite, pareil pour chaque instrument : quelques nuits parmi des centaines pèsent peu, quelle que soit leur précision.\n\nCochez un jeu pour le rappeler : une publication rappelée est préférée aux autres pour les spectres communs (décochez l’autre pour la voir entière). Les jeux de vos propres fichiers ne sont jamais écartés. Le rapport fait le même choix (--exclude, --include ; --no-rules pour aucune règle), et le lot aussi.',
   },
   detection_map: {
     en: 'Which planets the series could have found, as a map of period and K. By the FIP: planets injected into the data (the signals found taken out) and looked for by the same FIP, with the same GP, as the decision itself; adaptive rounds by period band give the K found at 50 % and 90 %; hours on a long series. Blind search: a periodogram search instead, in minutes; it misses a planet that lands on an alias and has no GP, so it is pessimistic. Default: none.',
@@ -647,6 +675,7 @@ const OPTIONS = {
     { key: 'rotation', label: 'rotation_p', help: 'rotation', kind: 'number', id: 'rotation', value: '', attrs: 'step="any" min="0"' },
     { key: 'tois', label: 'tois', kind: 'text', id: 'tois', value: '' },
     { key: 'exclude', label: 'exclude', kind: 'text', id: 'exclude', value: '' },
+    { key: 'include', label: 'include', kind: 'text', id: 'include', value: '' },
     { key: 'detection_map', label: 'dmap', help: 'detection_map', kind: 'select',
       choices: [['none', 'dmap_none'], ['fip', 'dmap_fip'], ['search', 'dmap_search']] },
   ],

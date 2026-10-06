@@ -476,7 +476,8 @@ def fetch(known: Dict[str, Any], names: Sequence[str], folder: str,
     return series, notes
 
 
-def add(data: RVData, others: Sequence[RVData], labels: Sequence[str]
+def add(data: RVData, others: Sequence[RVData], labels: Sequence[str],
+        whole: bool = False, times: Optional[np.ndarray] = None
         ) -> Tuple[RVData, List[Dict[str, Any]]]:
     """
     A series with published ones merged in: an exposure within a minute of
@@ -486,14 +487,23 @@ def add(data: RVData, others: Sequence[RVData], labels: Sequence[str]
     :param data: RVData, the series
     :param others: list of RVData, the published series
     :param labels: list of str, their papers (or files)
+    :param whole: bool, each published series kept whole but for the
+                  exposures of times (the file's): the releases of the same
+                  spectra are then chosen among by koloa.datasets
+    :param times: np.ndarray or None, with whole, the times of the
+                  exposures a published one is left out for
 
     :return: tuple, the merged series, and per published series: label, n
-             (kept), same (left out), renamed ({old: new})
+             (kept), same (left out), renamed ({old: new}), instruments
+             (their names in the merged series)
     """
     out, info = data, []
     for other, label in zip(others, labels):
-        near = np.min(np.abs(other.time[:, None] - out.time[None, :]),
-                      axis=1)
+        against = out.time if not whole else (
+            np.asarray(times, dtype=float) if times is not None
+            else np.array([]))
+        near = (np.min(np.abs(other.time[:, None] - against[None, :]),
+                       axis=1) if len(against) else np.full(other.n, np.inf))
         same = near < SAME
         kept = other.select(~same) if np.any(same) else other
         renamed = {}
@@ -511,7 +521,8 @@ def add(data: RVData, others: Sequence[RVData], labels: Sequence[str]
                               inst=insts.astype(str), name=kept.name)
             out = merge([out, kept], name=data.name)
         info.append(dict(label=label, n=int(kept.n), same=int(np.sum(same)),
-                         renamed=renamed))
+                         renamed=renamed,
+                         instruments=list(kept.instruments) if kept.n else []))
     return out, info
 
 
