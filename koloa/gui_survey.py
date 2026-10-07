@@ -113,6 +113,8 @@ def check(body: Dict[str, Any]) -> Dict[str, Any]:
         try:
             survey.check(stars, root, dace=body.get('dace', True)
                          is not False,
+                         carmenes=body.get('carmenes', True) is not False,
+                         vizier=body.get('vizier', True) is not False,
                          progress=lambda done, total: job['check'].update(
                              done=done))
             job['check']['status'] = 'done'
@@ -153,7 +155,8 @@ def _targets(job: Dict[str, Any], names: Any) -> List[Dict[str, Any]]:
 
 def run(body: Dict[str, Any]) -> Dict[str, Any]:
     """the batch of the stars ticked, here: each with its files and every
-    archive of it (the batch tab shows it)"""
+    archive of it (the batch tab shows it), and with report, the detailed
+    report of each star that has a candidate, in reports/<star>/"""
     from koloa import gui
     stars = _targets(SURVEYS[body['id']], body.get('names'))
     return gui.batch_fip([], body.get('options') or {}, True,
@@ -162,8 +165,14 @@ def run(body: Dict[str, Any]) -> Dict[str, Any]:
                          body.get('rules', True) is not False,
                          targets=[dict(name=star['name'],
                                        files=star.get('files') or [],
-                                       sptype=star.get('sptype'))
-                                  for star in stars])
+                                       sptype=star.get('sptype'),
+                                       distance=star.get('distance'),
+                                       rotation=star.get('rotation') or [])
+                                  for star in stars],
+                         report=(dict(fip=_number(body.get('report_fip'),
+                                                  survey.REPORT_FIP),
+                                      folder='reports')
+                                 if body.get('report') else None))
 
 
 def pack(body: Dict[str, Any]) -> Dict[str, Any]:
@@ -195,6 +204,9 @@ def pack(body: Dict[str, Any]) -> Dict[str, Any]:
                 jobs=int(_number(body.get('jobs'), 6)),
                 rules=body.get('rules', True) is not False,
                 trend=gui.trend_order(body.get('options') or {}),
+                report=bool(body.get('report')),
+                report_fip=_number(body.get('report_fip'),
+                                   survey.REPORT_FIP),
                 progress=told)
             # as the page shows them: from the folder koloa runs in
             made.update(folder_shown=gui._path_shown(made['folder']),
@@ -243,7 +255,8 @@ def results(body: Dict[str, Any]) -> Dict[str, Any]:
             status=res['status'], qid=qid, error=res.get('error'),
             summary=res.get('summary'), star=res.get('star'), stage=None,
             note=res.get('note'), datasets=res.get('datasets'),
-            left_out=[]))
+            left_out=[], reading=res.get('reading'),
+            report=_report_here(root, res.get('report'))))
     if not items:
         raise ValueError(f'no star done yet in {root}')
     bid = uuid.uuid4().hex[:8]
@@ -261,6 +274,53 @@ def results(body: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _report_here(root: str, told: Optional[Dict[str, Any]]
+                 ) -> Optional[Dict[str, Any]]:
+    """the detailed report of a star of a batch folder, its files where
+    they are on this machine (the folder names them from itself)"""
+    if not told:
+        return None
+    out = dict(told)
+    for key in ('pdf', 'text', 'folder'):
+        if out.get(key) and not os.path.isabs(out[key]):
+            out[key] = os.path.join(root, out[key])
+    return out
+
+
+def summary(body: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    The summary of a batch folder as one PDF (koloa.batchpdf.summary): the
+    table of its stars, the candidates first, then the page of each; made
+    from what the batch kept, nothing computed
+
+    :param body: dict, root: the batch folder; again: make it even when
+                 it is there
+
+    :return: dict, path (the PDF) and root
+    """
+    from koloa import batchpdf, gui
+    root = os.path.abspath(os.path.expanduser(str(body.get('root') or '')))
+    survey.targets_of(root)
+    path = os.path.join(root, 'results', 'summary.pdf')
+    newest = max([os.path.getmtime(one) for one in (
+        survey.result_path(root, star['name'])
+        for star in survey.targets_of(root)['targets'])
+        if os.path.exists(one)] or [0.0])
+    if body.get('again') or not os.path.exists(path) \
+            or os.path.getmtime(path) < newest:
+        made = batchpdf.summary(root)
+        if made is None:
+            raise ValueError(f'no star done yet in {root}')
+    return dict(path=gui._path_shown(path), root=root)
+
+
+def summary_file(root: str) -> str:
+    """the summary of a batch folder, and no other file: where it is"""
+    root = os.path.abspath(os.path.expanduser(str(root or '')))
+    survey.targets_of(root)
+    return os.path.join(root, 'results', 'summary.pdf')
+
+
 def route(path: str, body: Dict[str, Any]) -> Dict[str, Any]:
     """the questions of the survey tab (/api/survey...)"""
     if path == '/api/survey':
@@ -268,7 +328,8 @@ def route(path: str, body: Dict[str, Any]) -> Dict[str, Any]:
                                                                0))
     try:
         func = dict(sample=sample, check=check, files=files, run=run,
-                    pack=pack, results=results)[path.rsplit('/', 1)[-1]]
+                    pack=pack, results=results,
+                    summary=summary)[path.rsplit('/', 1)[-1]]
     except KeyError:
         raise ValueError(f'no such question: {path}') from None
     return func(body)

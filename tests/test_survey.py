@@ -208,6 +208,9 @@ def _batch(tmp_path, monkeypatch, nstar=3):
     from koloa.gather import write_rv
     from koloa.simulate import simulate
     monkeypatch.setenv('KOLOA_CACHE', str(tmp_path / 'cache_here'))
+    from koloa import archive
+    monkeypatch.setattr(archive, 'resolve', lambda name, **kw: dict(
+        name=name, main=name, aliases=[]))
     (tmp_path / 'cache_here' / 'archive').mkdir(parents=True)
     (tmp_path / 'cache_here' / 'archive' / 'kept.json').write_text('{}')
     (tmp_path / 'cache_here' / 'carmenes_objects.json').write_text('[]')
@@ -283,6 +286,7 @@ def test_a_batch_folder_packed(tmp_path, monkeypatch):
             '          m_dwarfs_15pc/results/') in readme
     lines = readme[readme.index('9. THE STARS'):].splitlines()
     assert lines[4].split()[:4] == ['GJ', '1', 'M3V', '5.00']
+    assert lines[3].endswith('P rot [d]  its archives')
     assert lines[4].split()[4:] == ['1', 'none']
     assert lines[5].split()[4:] == ['0', 'DACE', '30']
     assert str(tmp_path) not in readme and '{' not in readme
@@ -348,6 +352,13 @@ def test_a_batch_run_where_it_was_carried(tmp_path, monkeypatch):
     #   with the archives of a star is not fetched, and the table says so
     assert asked and not any(asked)
     assert rows[0]['transit'] == 'no light curve'
+    # how each star reads (no known planet here: a candidate), no report
+    #   unless asked, the summary of them all, and its page first in the
+    #   PDF of each star
+    assert [row['verdict'] for row in rows] == ['candidate', 'candidate']
+    assert [row['report'] for row in rows] == ['none', 'none']
+    assert os.path.getsize(os.path.join(moved, 'results',
+                                        'summary.pdf')) > 20000
     for star in ('GJ_1', 'GJ_2'):
         for part in ('result.json', 'quick.json', 'quicklook.pdf'):
             assert os.path.exists(os.path.join(moved, 'results', star, part))
@@ -355,6 +366,9 @@ def test_a_batch_run_where_it_was_carried(tmp_path, monkeypatch):
         res = json.load(handle)
     assert res['summary']['instruments'] == dict(HARPS15=30)
     assert res['datasets']['used'] == 1
+    assert res['reading']['kind'] == 'candidate'
+    assert res['reading']['peaks'][0]['counts']
+    assert res['reading']['line'].startswith('candidate: #1 at 7.')
     table = open(os.path.join(moved, 'results', 'table.csv')).read()
     assert table.splitlines()[0].startswith('name,sptype,distance,status')
     assert len(table.splitlines()) == 3
@@ -414,13 +428,20 @@ def test_the_survey_tab_of_the_page(tmp_path, monkeypatch):
     # the batch of those ticked: the stars as a batch takes them
     asked = {}
 
-    def batch_fip(paths, opts, archives, regather, root, rules, targets=None):
-        asked.update(targets=targets, root=root, rules=rules)
+    def batch_fip(paths, opts, archives, regather, root, rules, targets=None,
+                  report=None):
+        asked.update(targets=targets, root=root, rules=rules, report=report)
         return dict(id='b1')
     monkeypatch.setattr(gui, 'batch_fip', batch_fip)
     assert gui_survey.route('/api/survey/run', dict(
         id=sid, names=['GJ 876'], root='arch', rules=False)) == dict(id='b1')
     assert asked['targets'][0]['name'] == 'GJ 876' and not asked['rules']
+    # its published rotation goes with the star; no report unless asked
+    assert asked['targets'][0]['rotation'][0]['period'] == 82.8
+    assert asked['report'] is None
+    gui_survey.route('/api/survey/run', dict(
+        id=sid, names=['GJ 876'], report=True, report_fip='0.001'))
+    assert asked['report'] == dict(fip=0.001, folder='reports')
     assert asked['targets'][0]['files'][0].endswith('lbl_GL876_GL876.rdb')
     with pytest.raises(ValueError, match='no star ticked'):
         gui_survey.route('/api/survey/run', dict(id=sid, names=[]))
@@ -523,3 +544,144 @@ def test_where_a_batch_is_and_its_stop(tmp_path, monkeypatch):
         for proc in (part, other):
             if proc.poll() is None:
                 proc.kill()
+
+
+def test_how_a_star_of_a_batch_reads():
+    """the peaks of a quick look: a known planet, the rotation, a drift, a
+    candidate; and the verdict of the star"""
+    from koloa import batchpdf
+
+    def told(peaks, known=(), spins=(), baseline=1000.0, status='done'):
+        res = dict(status=status, error='boom', summary=dict(
+            baseline=baseline))
+        quick = dict(result=dict(
+            peak_list=[dict(id=it + 1, period=per, family=fip, alone=fip,
+                            named=True) for it, (per, fip) in
+                       enumerate(peaks)],
+            folds=[dict(id=it + 1, K=5.0, K_err=0.5) for it in
+                   range(len(peaks))],
+            known=[dict(name=f'Star {name}', P=per) for name, per in known]))
+        return batchpdf.reading(res, quick, dict(
+            sptype='M3V', rotation=[dict(period=per, source='a paper')
+                                    for per in spins]))
+    # a peak that is nothing known: a candidate, with its minimum mass
+    out = told([(12.3, 1e-9), (40.0, 0.4)])
+    assert out['kind'] == 'candidate' and out['peaks'][0]['counts']
+    assert not out['peaks'][1]['counts']
+    assert out['line'].startswith('candidate: #1 at 12.3000 d, FIP 1.0e-09')
+    assert 5 < out['peaks'][0]['msini'][0] < 30
+    # the same peak when a planet is known there (within 1 %)
+    out = told([(12.3, 1e-9)], known=[('b', 12.25)])
+    assert out['kind'] == 'known' and 'Star b' in out['line']
+    assert told([(12.3, 1e-9)], known=[('b', 13.0)])['kind'] == 'candidate'
+    # a known planet and another peak: the other is the candidate
+    out = told([(12.3, 1e-30), (33.0, 1e-5)], known=[('b', 12.3)])
+    assert out['kind'] == 'candidate' and '#2 at 33.0000 d' in out['line']
+    # as long as the series: a drift
+    assert told([(900.0, 1e-9)])['kind'] == 'drift'
+    # at the rotation, or its half: still a candidate, and said
+    out = told([(50.5, 1e-9)], spins=[101.0])
+    assert out['kind'] == 'candidate'
+    assert out['peaks'][0]['notes'] == ['at the rotation / 2 (101 d)']
+    assert 'at the rotation / 2' in out['line']
+    # nothing below the limit; a star that failed
+    out = told([(12.3, 0.2)])
+    assert out['kind'] == 'nothing' and '12.3000 d' in out['line']
+    assert told([(12.3, 1e-9)], status='failed')['kind'] == 'failed'
+    assert batchpdf.reading(dict(status='done'), None)['kind'] == 'nothing'
+
+
+def test_the_detailed_report_of_a_candidate(tmp_path, monkeypatch):
+    """a star with a candidate has its detailed report on the series its
+    quick look used: an SHO GP at its published rotation, by band without
+    one; kept in its result, its table and its summary; a report that was
+    stopped is taken again without the quick look"""
+    import subprocess
+    from koloa import batchpdf, gui
+    stars = _batch(tmp_path, monkeypatch, nstar=2)
+    stars[0]['rotation'] = [dict(period=41.5, source='2023A&A...672A..52F'),
+                            dict(period=40.0, source='CARMENES DR1')]
+    made = survey.pack(stars, 'two', out=str(tmp_path / 'out'),
+                       root=str(tmp_path / 'arch'), gather=False, tar=False,
+                       report=True, report_fip=0.001)
+    root = made['folder']
+    script = open(os.path.join(root, 'run_batch.py')).read()
+    assert 'REPORT = True' in script and 'REPORT_FIP = 0.001' in script
+    assert '--summary' in script
+    held = survey.targets_of(root)
+    assert held['targets'][0]['rotation'][0]['period'] == 41.5
+    assert held['options']['report'] is True
+    monkeypatch.setattr(gui, 'known_periods', lambda target: [])
+    monkeypatch.setattr(gui, 'transits_of', lambda target, known: [])
+    monkeypatch.setattr(gui, '_star_planets', lambda target: ([], []))
+    monkeypatch.setattr(gui, 'QUICK', dict(kmax=1, nsweep=150, nburn=80))
+    monkeypatch.setattr(gui, 'space_light', lambda target, root='',
+                        fetch=False, mission='tess': (None, 'none', {}))
+    # the report itself: its command line, and what it leaves
+    ran = []
+
+    def fake(cmd, env=None, stdout=None, stderr=None):
+        ran.append(cmd)
+        out = cmd[cmd.index('--outdir') + 1]
+        stem = cmd[cmd.index('--name') + 1].replace(' ', '_')
+        with open(os.path.join(out, f'{stem}_summary.json'), 'w') as handle:
+            json.dump(dict(known=dict(star={}), orbits=[dict(
+                P=[5.3, 0.1, 0.1], K=[9.0, 0.3, 0.3], msini=[11.0, 1, 1])],
+                duck={'5.3000': 'PLANET CANDIDATE: it quacks'}), handle)
+        open(os.path.join(out, f'{stem}_report.txt'), 'w').write('a report')
+        return subprocess.CompletedProcess(cmd, 0)
+    monkeypatch.setattr(subprocess, 'run', fake)
+    rows = survey.run(root, report=True, report_fip=0.001)
+    assert [row['report'] for row in rows] == ['done', 'done']
+    first, second = ran
+    assert first[1:3] == ['-m', 'koloa.cli'] and '--detailed' in first
+    assert first[3].endswith(os.path.join('GJ_1', 'report', 'velocities.csv'))
+    # the first rotation published: an SHO at it; none: the archive's, else
+    #   by band; nothing asked of the network; the rules already applied
+    assert first[first.index('--rotation') + 1] == '41.5'
+    assert '--rotation' not in second
+    assert second[second.index('--fip-gp') + 1] == 'sho'
+    assert '--no-tess' in first and '--no-rules' in first
+    assert first[first.index('--target') + 1] == 'GJ 1'
+    with open(survey.result_path(root, 'GJ 1')) as handle:
+        res = json.load(handle)
+    rep = res['report']
+    assert rep['gp'] == 'SHO at the rotation, 41.5 d (2023A&A...672A..52F)'
+    assert rep['signals'] == ['5.3000 d, K = 9.00 m/s, m sin i = 11.0 ME: '
+                              'PLANET CANDIDATE: it quacks']
+    assert rep['text'] == os.path.join('results', 'GJ_1', 'report',
+                                       'GJ_1_report.txt')
+    assert str(tmp_path) not in json.dumps(rep)
+    with open(survey.result_path(root, 'GJ 2')) as handle:
+        assert json.load(handle)['report']['gp'] == (
+            'local, by period band (no rotation published)')
+    # the series the report was made on: the one of the quick look
+    kept = open(os.path.join(root, 'results', 'GJ_2', 'report',
+                             'velocities.csv')).read().splitlines()
+    assert kept[0].startswith('rjd,vrad,svrad,inst') and len(kept) == 31
+    told = survey.status(root)
+    assert told['state'] == 'done'
+    assert told['stars'][0]['told'].endswith('candidate; report done')
+    # the page of a star, from what is kept
+    fig = batchpdf.figure(res, None, held['targets'][0])
+    assert any('detailed report: done' in text.get_text()
+               for text in fig.texts)
+    # a report stopped half way: taken again, the quick look kept
+    res['report'] = dict(status='running')
+    survey._keep(root, res)
+    told = survey.status(root)
+    assert told['state'] == 'ready' and told['todo'] == 1
+    assert 'its detailed report was stopped' in told['stars'][0]['told']
+    done = []
+    monkeypatch.setattr(survey, 'run_target', lambda *args, **kw:
+                        done.append(args))
+    del ran[:]
+    survey.run(root, report=True)
+    assert done == [] and len(ran) == 1 and '--rotation' in ran[0]
+    with open(survey.result_path(root, 'GJ 1')) as handle:
+        assert json.load(handle)['report']['status'] == 'done'
+    # a report that fails: said, and the star is kept
+    monkeypatch.setattr(subprocess, 'run', lambda cmd, **kw:
+                        subprocess.CompletedProcess(cmd, 3))
+    out = survey.report_star(str(tmp_path / 'again'), None, 'GJ 1')
+    assert out['status'] == 'failed' and 'code 3' in out['error']

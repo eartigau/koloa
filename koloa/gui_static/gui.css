@@ -92,6 +92,13 @@ input.short { width: 5.2em; }
 #sv-batchcard .row:has(#sv-results) label { flex: 1 1 34em; display: flex; align-items: center; gap: 8px; }
 #sv-batchcard .row:has(#sv-results) .picker { flex: 1; display: flex; }
 #sv-name, #sv-out { min-width: 16em; }
+/* how a star of a batch reads, and its detailed report */
+.verdict { font-size: 0.72rem; padding: 0 6px; border-radius: 8px; border: 1px solid rgba(200, 220, 255, 0.25); color: var(--muted); white-space: nowrap; }
+.verdict.candidate { color: #3ddc97; border-color: #3ddc97; font-weight: 600; }
+.verdict.known { color: #6aa9ff; border-color: rgba(106, 169, 255, 0.6); }
+.verdict.drift { color: #f0b429; border-color: rgba(240, 180, 41, 0.6); }
+a.replink { font-size: 0.78rem; white-space: nowrap; }
+#sv-batchcard .row #sv-reportfip { width: 6em; flex: 0 0 6em; }
 /* a batch packed: where it is, in full, to be read and copied */
 #sv-packstatus p { margin: 3px 0; }
 #sv-packstatus p.svpacked { font-size: 0.92rem; }

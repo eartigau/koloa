@@ -35,6 +35,7 @@ exactly. That is what makes the outlier-aware FIP affordable.
 | `koloa.gather` | everything public about a star from its SIMBAD name, kept in one folder: the velocities of DACE and of CARMENES DR1, the TESS light curves, the identifiers and periods of variability of SIMBAD, and a manifest of what each archive gave |
 | `koloa.datasets` | which datasets of a star are used: a spectrum that several have (HARPS on DACE and by SERVAL, HIRES in three surveys) is taken from the most precise release, told by the noise of each on the spectra they share; a dataset that constrains neither the mean nor the slope of a line through the nightly means is left out; everything stays on disk and can be asked back |
 | `koloa.survey` | a survey: the stars of SIMBAD within a distance and a range of spectral types, which of them have velocities in the archives (DACE, CARMENES DR1, the surveys on VizieR), the files of velocities one has of them (LBL, through APERO's names), and their batch: run here, or packed as one folder and its tar (the files, the archives, koloa itself, a script whose first setting is where the folder is) for a server or a cluster |
+| `koloa.batchpdf` | the summary of a batch: how the quick look of each star reads (a candidate, a known planet, the rotation, a drift), a page for each star, and one PDF of them all, from what the batch kept |
 | `koloa.archive` | the names of a star (CDS Sesame) and its planets in the NASA Exoplanet Archive, with every published solution; a fitted K against them, the most recent first |
 | `koloa.radvel_bridge` | `OutlierRVLikelihood`, a drop-in replacement for radvel's `RVLikelihood` |
 | `koloa.doppler` | relativistic Doppler conversions (velocity, wavelength ratio, log-wavelength shift) |
@@ -239,6 +240,19 @@ being computed and how far, or to do), `--stop` (the processes of this
 batch, and no other), how long stars took, how to bring `results/` back,
 and what each column of the table is. Once a batch is packed, the page
 says where its tar is on this machine, in full.
+
+Each star of a batch has a page of summary, the first of its PDF
+(`koloa.batchpdf`): a verdict (a candidate: a peak below the FIP limit
+that is neither a known planet nor a drift; known planets; a drift;
+nothing), each peak with what it is (a known planet, the rotation of the
+star or a harmonic, a year), its FIP, its folds, its velocities, its
+datasets. `results/summary.pdf` is the batch in one PDF, the candidates
+first (`python run_batch.py --summary`, or Summary PDF in the page, make
+it again from what is done). With the report option (a tick of the Survey
+tab, `REPORT` in the script, `survey.run(..., report=True)`), a star that
+has a candidate has its detailed report too, on the series its quick look
+used, whatever it came from; the GP of its FIP is an SHO at the rotation
+period when one is published, a local GP by period band otherwise.
 
 Its plot is a quick look before the report: the velocities shown, with
 sliders on both axes, and under them a quick FIP of exactly what is shown

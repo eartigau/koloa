@@ -2192,7 +2192,8 @@ BATCHES: Dict[str, Dict[str, Any]] = {}
 def batch_fip(paths: List[str], opts: Dict[str, Any],
               archives: bool = False, regather: bool = False,
               root: str = '', rules: bool = True,
-              targets: Optional[List[Dict[str, Any]]] = None
+              targets: Optional[List[Dict[str, Any]]] = None,
+              report: Optional[Dict[str, Any]] = None
               ) -> Dict[str, Any]:
     """
     The quick FIP of many files, one after the other, in a thread, the
@@ -2215,7 +2216,12 @@ def batch_fip(paths: List[str], opts: Dict[str, Any],
     :param targets: list of dict or None, stars in place of files (a
                     survey: koloa.survey): name (its SIMBAD name), files
                     (its files of velocities, none for its archives
-                    alone), sptype; each with every archive of the star
+                    alone), sptype, rotation (its published rotation
+                    periods); each with every archive of the star
+    :param report: dict or None, the detailed report of each star that has
+                   a candidate (_batch_report): fip (the FIP below which a
+                   peak counts) and folder (where the reports go, a folder
+                   per star)
 
     :return: dict, the state of the batch (batch_state)
     """
@@ -2230,7 +2236,9 @@ def batch_fip(paths: List[str], opts: Dict[str, Any],
             items.append(dict(
                 path=files[0] if files else '', files=files,
                 name=str(star['name']), given=dict(
-                    name=str(star['name']), sptype=star.get('sptype')),
+                    name=str(star['name']), sptype=star.get('sptype'),
+                    distance=star.get('distance'),
+                    rotation=star.get('rotation') or []),
                 status='waiting', qid=None, error=None, summary=None,
                 star=None, stage=None, note=None))
     else:
@@ -2248,7 +2256,7 @@ def batch_fip(paths: List[str], opts: Dict[str, Any],
                         end=None, cancel=False, trend=trend_order(opts),
                         archives=bool(archives), regather=bool(regather),
                         rules=bool(rules), root=root or 'archives',
-                        items=items)
+                        report=report or None, items=items)
     threading.Thread(target=_run_batch, args=(bid,), daemon=True).start()
     return batch_state(bid)
 
@@ -2440,6 +2448,41 @@ def _batch_transit(batch: Dict[str, Any], item: Dict[str, Any],
         period=float(peak['period']))
 
 
+def _batch_report(batch: Dict[str, Any], item: Dict[str, Any],
+                  job: Dict[str, Any], data) -> None:
+    """the detailed report of a star of a batch that has a candidate (a
+    peak with a FIP below the limit that is neither a known planet nor a
+    drift: koloa.batchpdf.reading), on the series its quick look used, in
+    the folder of the reports (koloa.survey.report_star: an SHO GP at its
+    published rotation, by period band without one); its line says where"""
+    from koloa import batchpdf, survey
+    from koloa.gather import folder_name
+    asked = batch['report']
+    given = item.get('given') or {}
+    name = (item.get('star') or {}).get('target') or ''
+    told = batchpdf.reading(
+        dict(status='done', summary=item['summary'], star=item.get('star')),
+        dict(result=job['result']), given,
+        float(asked.get('fip') or batchpdf.FIP_LIMIT))
+    item['reading'] = dict(kind=told['kind'], line=told['line'])
+    if told['kind'] != 'candidate' or not name:
+        item['report'] = dict(status='none', why='no candidate')
+        return
+    item['stage'] = 'report'
+    try:
+        spins = [one for one in given.get('rotation') or []
+                 if one.get('period')]
+        item['report'] = survey.report_star(
+            os.path.join(str(asked.get('folder') or 'reports'),
+                         folder_name(name)), data, name,
+            spins[0] if spins else None, batch['trend'], network=True)
+    except Exception as err:  # the quick look is kept all the same
+        item['report'] = dict(status='failed', signals=[],
+                              error=f'{type(err).__name__}: {err}')
+    finally:
+        item['stage'] = None
+
+
 def _run_batch(bid: str) -> None:
     """the files of a batch: the star of each (its APERO name), then one
     quick FIP after the other (with the archives of its star when asked)"""
@@ -2481,6 +2524,11 @@ def _run_batch(bid: str) -> None:
                 item['summary'] = dict(_batch_summary(job['result'], data),
                                        sources=source)
                 _batch_transit(batch, item, job['result'], data)
+                if batch.get('keep'):
+                    # the series, for who runs the batch (koloa.survey)
+                    item['data'] = data
+                if batch.get('report'):
+                    _batch_report(batch, item, job, data)
         except Exception as err:
             item['status'] = 'failed'
             item['error'] = f'{type(err).__name__}: {err}'
@@ -2499,6 +2547,9 @@ def batch_state(bid: str) -> Dict[str, Any]:
                                           'stage', 'note')}
         # with its archives: how many datasets are used, what the rules did
         one['datasets'] = item.get('datasets')
+        # how its peaks read, and its detailed report when it has a candidate
+        one['reading'] = item.get('reading')
+        one['report'] = item.get('report')
         job = QUICKS.get(item['qid']) if item['qid'] else None
         if job is not None and item['status'] == 'running':
             one.update(step=job.get('step'), progress=job.get('progress'))
@@ -3440,7 +3491,8 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
                   overlay: Optional[int] = None,
                   fold_model: str = 'sine',
                   series_colour: str = 'inst',
-                  fip_view: str = 'each', series_zero: str = 'fit') -> bytes:
+                  fip_view: str = 'each', series_zero: str = 'fit',
+                  front: Any = None) -> bytes:
     """
     The quick look as a PDF, a LaTeX document: the velocities shown (the
     ranges of the page), the quick FIP with its peaks named, the folds at
@@ -3448,6 +3500,9 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
     what is shown, the FIP, its peaks and the known planets, the command
     line of the report); the figures alone (matplotlib) where there is no
     pdflatex
+
+    :param front: matplotlib Figure or None, a page put before them all
+                  (the summary of a star of a batch: koloa.batchpdf.figure)
 
     :return: bytes, the PDF
     """
@@ -3469,11 +3524,21 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
     try:
         for name, fig in figs:
             fig.savefig(os.path.join(tmp, f'{name}.pdf'))
+        if front is not None:
+            front.savefig(os.path.join(tmp, 'front.pdf'), dpi=160)
         tex = os.path.join(tmp, 'quicklook.tex')
         with open(tex, 'w') as handle:
-            handle.write(_quicklook_tex(data, source, quick, opts, xr, yr, pr,
-                                        [name for name, _ in figs],
-                                        command_line, each))
+            text = _quicklook_tex(data, source, quick, opts, xr, yr, pr,
+                                  [name for name, _ in figs],
+                                  command_line, each)
+            if front is not None:
+                # its own page, before the quick look
+                text = text.replace(
+                    '\\section*{koloa: a quick look at',
+                    '\\noindent\\includegraphics[width=\\textwidth,'
+                    'height=0.94\\textheight,keepaspectratio]{front.pdf}'
+                    '\n\\clearpage\n\\section*{koloa: a quick look at', 1)
+            handle.write(text)
         pdf = compile_pdf(tex)
         if pdf and os.path.exists(pdf):
             with open(pdf, 'rb') as handle:
@@ -3481,10 +3546,14 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
         # no pdflatex: the figures, one per page
         buf = io.BytesIO()
         with PdfPages(buf) as book:
+            if front is not None:
+                book.savefig(front, dpi=160)
             for _, fig in figs:
                 book.savefig(fig)
         return buf.getvalue()
     finally:
+        if front is not None:
+            plt.close(front)
         for _, fig in figs:
             plt.close(fig)
         shutil.rmtree(tmp, ignore_errors=True)
@@ -3892,6 +3961,19 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == '/api/job':
                 job = JOBS[query['id']]
                 return self._json(job.state(int(query.get('since', 0))))
+            if url.path == '/api/batchreport':
+                # the detailed report of a line of a batch, and only that
+                item = BATCHES[query['id']]['items'][int(query['index'])]
+                told = item.get('report') or {}
+                path = told.get('pdf') or told.get('text')
+                if not path:
+                    return self._json(dict(error='no report'), 404)
+                return self._file(os.path.abspath(path))
+            if url.path == '/api/batchsummary':
+                # the summary of a batch folder (results/summary.pdf), and
+                #   only that
+                from koloa import gui_survey
+                return self._file(gui_survey.summary_file(query['root']))
             if url.path == '/api/output':
                 # a file a run wrote, and only that
                 job = JOBS[query['id']]

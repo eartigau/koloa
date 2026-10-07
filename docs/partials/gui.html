@@ -430,6 +430,12 @@ koloanui</pre>
       sends it to the Batch FIP tab. Or <b>pack it</b> for another machine, a server or a cluster: one folder,
       and its <span class="mono">.tar.gz</span>, with everything the batch needs and no path of this machine in
       it.</p>
+      <p>With <b>a detailed report</b> ticked, each star that has a candidate has its detailed report too (the
+      one of <a href="#gui-panel-report">The report and the script</a>), on the series its quick look used,
+      whatever it came from: your files, the archives, or both. A candidate is a peak with a FIP below the limit
+      given beside the tick that is neither a known planet nor a drift as long as the series. The GP of the
+      report's FIP is an SHO at the rotation period of the star when one is published (the P rot column), a
+      local GP by period band otherwise. A report takes far longer than a quick look, and about four cores.</p>
       <figure class="lecture-figure">
         <img class="shot" src="figures/gui/survey_batch.png" alt="The batch of the stars ticked: run here, or packed for another machine">
         <figcaption>The batch packed: where its tar and its folder are on this machine, in full, and its ROOT,
@@ -444,7 +450,7 @@ koloanui</pre>
   archives/       # its archives, gathered before packing: no network needed there
   cache/          # what koloa fetched once (the NASA Exoplanet Archive, the lists of the surveys)
   koloa_src/      # koloa as it was when the batch was packed: nothing to install there
-  results/        # made by the batch: a folder per star, and table.csv
+  results/        # made by the batch: a folder per star, table.csv and summary.pdf
 
 # there
 tar xzf m_dwarfs_demo.tar.gz
@@ -452,11 +458,32 @@ cd m_dwarfs_demo
 python run_batch.py --root "$PWD" --check     # nothing computed: is everything there?
 nohup python -u run_batch.py --root "$PWD" &gt; run.log 2&gt;&amp;1 &amp;
 python run_batch.py --root "$PWD" --check     # again: where is each star?
-python run_batch.py --root "$PWD" --stop      # a batch stopped goes on where it was</pre>
+python run_batch.py --root "$PWD" --stop      # a batch stopped goes on where it was
+python run_batch.py --root "$PWD" --summary   # results/summary.pdf again, nothing computed</pre>
       <p>Each star done is kept as it goes (its line of the table, its FIP as the page draws it, a PDF of its
       quick look), and <span class="mono">results/table.csv</span> gathers them. Brought back, the results of a
-      batch folder open in the page as a batch: its table, and each star in the Analysis tab with its FIP as it
-      was computed.</p>
+      batch folder open in the page as a batch: its table, each star with how it reads and a link to its
+      detailed report, and each star in the Analysis tab with its FIP as it was computed.</p>
+      <h3 id="gui-batch-summary">A page for each star, and one PDF of them all</h3>
+      <p>The PDF of a star starts with a page of summary: what to think of it without reading the rest. Its
+      verdict comes first: a <b>candidate</b> (a peak below the FIP limit that is neither a known planet nor a
+      drift), <b>known</b> (its peaks are known planets, within 1&nbsp;% of the period of one of the NASA
+      Exoplanet Archive's), a <b>drift</b> (a period longer than half the series), or <b>nothing</b>. Then each
+      numbered peak with what it is (a known planet, at the rotation of the star or one of its harmonics, at a
+      year, a drift, or none of these), its FIP with the known planets and the rotation marked, its two best
+      folds, its velocities, its datasets and what the rules left out, its acceleration, the transit looked for,
+      its published rotation periods, and what its detailed report found.</p>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/survey_summary.png" alt="The page of summary of a star of a batch: its verdict, its peaks, its FIP, its folds, its velocities">
+        <figcaption>The page of a star of a batch, here a file of public HARPS velocities: both peaks of its
+        quick look are known planets.</figcaption>
+      </figure>
+      <p><span class="mono">results/summary.pdf</span> is the batch in one PDF: the table of the stars, the
+      candidates first, then the known planets, the drifts and the stars with nothing, each by its FIP, and
+      the page of each star in that order. It is made when the batch ends, and again at any time, from what is
+      done and with nothing computed, by <span class="mono">--summary</span> there or by <b>Summary PDF</b> in
+      the page, for a batch folder brought back. A verdict is a reading of a quick look, which has no GP: it
+      sorts the stars, it does not decide on a planet.</p>
       <!--AUTO:gui_survey_run--><!--/AUTO-->
       <h3 id="gui-batch-there">Running it there</h3>
       <p>The tar is copied and run outside koloa, by you or by a Claude session on the machine that runs it. Its

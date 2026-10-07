@@ -173,7 +173,7 @@ async function svCheck() {
   if (!survey) return;
   try {
     const now = await api('/api/survey/check', { id: survey.id, root: $('root').value.trim(), dace: $('sv-dace').checked,
-      names: svTicked.size ? [...svTicked] : null });
+      carmenes: $('sv-carmenes').checked, vizier: $('sv-vizier').checked, names: svTicked.size ? [...svTicked] : null });
     survey.check = now.check;
     svCheckStatus();
     svFollow();
@@ -207,7 +207,7 @@ async function svRun() {
   if (!survey || !svTicked.size) { $('sv-runstatus').textContent = t('sv_none_ticked'); return; }
   try {
     batch = await api('/api/survey/run', { id: survey.id, names: [...svTicked], root: $('root').value.trim(), rules: $('sv-rules').checked,
-      options: readOptions('detailed') });
+      report: $('sv-report').checked, report_fip: $('sv-reportfip').value, options: readOptions('detailed') });
     $('batcharchives').checked = true;
     showTab('batch');
     pollBatch(batch.id);
@@ -219,11 +219,23 @@ async function svPack() {
   try {
     const now = await api('/api/survey/pack', { id: survey.id, names: [...svTicked], name: $('sv-name').value, out: $('sv-out').value,
       root: $('root').value.trim(), server_root: $('sv-root').value, jobs: $('sv-jobs').value, rules: $('sv-rules').checked,
-      gather: $('sv-gather').checked, tess: $('sv-tess').checked, options: readOptions('detailed') });
+      gather: $('sv-gather').checked, tess: $('sv-tess').checked, report: $('sv-report').checked, report_fip: $('sv-reportfip').value,
+      options: readOptions('detailed') });
     survey.pack = now.pack;
     svPackStatus();
     svFollow();
   } catch (err) { $('sv-packstatus').innerHTML = `<span class="bad">${esc(err.message)}</span>`; }
+}
+
+// the summary of a batch folder as one PDF: made (from what the batch kept) when it is not there, then opened
+async function svSummary() {
+  const root = $('sv-results').value.trim();
+  $('sv-openstatus').innerHTML = `<span class="hourglass">⏳</span> ${esc(t('sv_summary_wait'))}`;
+  try {
+    const made = await api('/api/survey/summary', { root });
+    $('sv-openstatus').innerHTML = `<a target="_blank" href="/api/batchsummary?root=${encodeURIComponent(made.root)}">${esc(made.path)}</a>`;
+    window.open(`/api/batchsummary?root=${encodeURIComponent(made.root)}`, '_blank');
+  } catch (err) { $('sv-openstatus').innerHTML = `<span class="bad">${esc(err.message)}</span>`; }
 }
 
 async function svOpenResults() {
@@ -247,6 +259,7 @@ document.addEventListener('click', (e) => {
   else if (id === 'sv-run') svRun();
   else if (id === 'sv-pack') svPack();
   else if (id === 'sv-open') svOpenResults();
+  else if (id === 'sv-summary') svSummary();
   const sort = e.target.closest('[data-svsort]');
   if (sort) {
     const key = sort.dataset.svsort;

@@ -684,7 +684,7 @@ function syncSliders() {
     $(`${ax}sel`).style.left = `${100 * lo}%`;
     $(`${ax}sel`).style.width = `${100 * (hi - lo)}%`;
   }
-  $('rangetext').textContent = `x ${view.x[0].toFixed(0)} – ${view.x[1].toFixed(0)} · y ${view.y[0].toFixed(1)} – ${view.y[1].toFixed(1)} m/s`;
+  $('rangetext').textContent = `x [${view.x[0].toFixed(0)}, ${view.x[1].toFixed(0)}] · y [${view.y[0].toFixed(1)}, ${view.y[1].toFixed(1)}] m/s`;
   sizeYSlider();
 }
 
@@ -2299,6 +2299,7 @@ function renderBatch() {
       let state = '';
       if (r.status === 'running' && r.stage === 'gather') state = `<span class="hourglass">\u23f3</span> ${esc(t('batch_gather'))}`;
       else if (r.stage === 'tess') state = `<span class="hourglass">\u23f3</span> ${esc(t('batch_tess'))}`;
+      else if (r.stage === 'report') state = `<span class="hourglass">\u23f3</span> ${esc(t('batch_report'))}`;
       else if (r.status === 'running') {
         const p = r.progress;
         state = `<span class="hourglass">\u23f3</span> ${esc(t({ noise: 'quick_noise', fip1: 'quick_fip1', planets: 'quick_planets', fip2: 'quick_fip2' }[r.step] || 'quick_noise'))}`
@@ -2307,6 +2308,12 @@ function renderBatch() {
       else if (r.status === 'waiting') state = `<span class="hint">${esc(t('batch_waiting'))}</span>`;
       const acc = r.accel !== null && r.accel !== undefined ? `${r.accel >= 0 ? '+' : '\u2212'}${Math.abs(r.accel).toPrecision(3)} \u00b1 ${r.accel_err.toPrecision(2)}` : '';
       if (r.note) state += ` <span class="hint" title="${esc(r.note)}">\u24d8</span>`;
+      // how its peaks read (a candidate, a known planet, a drift, nothing), and its detailed report when it has one
+      if (r.reading && r.status === 'done') state += ` <span class="verdict ${esc(r.reading.kind)}" title="${esc(r.reading.line || '')}">${esc(t(`verdict_${r.reading.kind}`))}</span> `;
+      const rep = r.report || {};
+      if (rep.status === 'done') {
+        state += ` <a class="replink" target="_blank" href="/api/batchreport?id=${batch.id}&index=${r.i}" title="${esc([`GP: ${rep.gp || ''}`].concat(rep.signals || []).join('\n'))}">${esc(t('batch_report_done'))}</a> `;
+      } else if (rep.status === 'failed') state += ` <span class="bad" title="${esc(rep.error || '')}">${esc(t('batch_report_failed'))}</span> `;
       // with the archives: the datasets used of those the star has, what the rules did under the cursor
       const sets = r.datasets && r.datasets.all > r.datasets.used
         ? `<span class="hint" title="${esc((r.datasets.told || []).join('\n'))}">${r.datasets.used}/${r.datasets.all} ${esc(t('ds_sets'))}</span>` : '';

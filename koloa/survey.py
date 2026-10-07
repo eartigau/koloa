@@ -50,6 +50,14 @@ column of the table. Two more of its script, and here:
 It asks nothing of the network unless told to gather: a light curve that
 is not with the archives of a star is not fetched.
 
+Each star done has a page of summary (koloa.batchpdf: how its quick look
+reads, a candidate, a known planet, a drift, nothing), the first of its
+PDF, and the batch one PDF of them all (results/summary.pdf). With
+report=True (REPORT in the script), a star that has a candidate has its
+detailed report too (report_star: koloa --detailed on the series its
+quick look used, whatever it came from; an SHO GP at its published
+rotation period, a local GP by period band without one).
+
 The check asks no more than is needed to tell which stars have
 velocities: the lists of the stars of CARMENES DR1 and of the surveys on
 VizieR (kept on this machine: a position looked up), and DACE, star by
@@ -125,7 +133,11 @@ CORES = 3
 COLUMNS = ('name', 'sptype', 'distance', 'status', 'files', 'datasets',
            'nights', 'baseline', 'period', 'fip', 'fip_alone', 'K', 'K_err',
            'rms', 'accel', 'accel_err', 'accel_sigma', 'transit',
-           'transit_snr', 'elapsed', 'error')
+           'transit_snr', 'verdict', 'report', 'elapsed', 'error')
+#: the FIP below which a peak counts: a star with one that is neither a
+#: known planet nor a drift has a candidate, and a detailed report when
+#: the batch makes them
+REPORT_FIP = 0.01
 
 
 # =============================================================================
@@ -337,7 +349,8 @@ def ident_of(star: Dict[str, Any]) -> Dict[str, Any]:
 
 def check_star(star: Dict[str, Any], root: str = 'archives',
                dace: bool = True, api_key: Any = None,
-               refresh: bool = False) -> Dict[str, Any]:
+               refresh: bool = False, carmenes: bool = True,
+               vizier: bool = True) -> Dict[str, Any]:
     """
     What the archives have of one star of a sample, without gathering
     them: CARMENES DR1 and the surveys on VizieR by its position in their
@@ -349,6 +362,8 @@ def check_star(star: Dict[str, Any], root: str = 'archives',
     :param dace: bool, ask DACE (the network, a few seconds a star)
     :param api_key: str, None or False: a DACE API key (koloa.dace)
     :param refresh: bool, ask DACE even when its answer is on disk
+    :param carmenes: bool, look the star up in CARMENES DR1
+    :param vizier: bool, and in the lists of the surveys on VizieR
 
     :return: dict, set as star['archives'] too: dace (n, its instruments,
              or None; error when it could not be asked), carmenes (its
@@ -359,7 +374,7 @@ def check_star(star: Dict[str, Any], root: str = 'archives',
     from koloa.gather import carmenes_star, dace_rv, folder_name
     out: Dict[str, Any] = dict(dace=None, carmenes=None, surveys=[], n=0)
     try:
-        found = carmenes_star(star['ra'], star['dec'])
+        found = carmenes_star(star['ra'], star['dec']) if carmenes else None
         if found is not None:
             out['carmenes'] = int(float(found.get('nobs') or 0)) or 1
             # its rotation period, beside those SIMBAD lists
@@ -372,7 +387,7 @@ def check_star(star: Dict[str, Any], root: str = 'archives',
                     if _clean(found.get('p_rot_source')) else '')))
     except (OSError, ValueError) as err:
         out['carmenes_error'] = str(err)
-    for survey in kpub.SURVEYS:
+    for survey in kpub.SURVEYS if vizier else ():
         try:
             if kpub.nearest_star(kpub.survey_stars(survey), star['ra'],
                                  star['dec']):
@@ -474,13 +489,16 @@ def overview(stars: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
 def check(stars: Sequence[Dict[str, Any]], root: str = 'archives',
           dace: bool = True, api_key: Any = None, refresh: bool = False,
           workers: int = WORKERS,
-          progress: Optional[Callable[[int, int], None]] = None
+          progress: Optional[Callable[[int, int], None]] = None,
+          carmenes: bool = True, vizier: bool = True
           ) -> List[Dict[str, Any]]:
     """
     What the archives have of each star of a sample (check_star), a few
     stars at a time
 
     :param progress: callable or None, told (done, total) after each star
+    :param carmenes: bool, CARMENES DR1 among them
+    :param vizier: bool, and the surveys on VizieR
 
     :return: list of dict, the stars, each with its 'archives'
     """
@@ -488,15 +506,16 @@ def check(stars: Sequence[Dict[str, Any]], root: str = 'archives',
     from koloa.gather import carmenes_objects
     # the lists, once, before the stars are asked side by side
     try:
-        carmenes_objects()
-        for survey in kpub.SURVEYS:
+        if carmenes:
+            carmenes_objects()
+        for survey in kpub.SURVEYS if vizier else ():
             kpub.survey_stars(survey)
     except (OSError, ValueError) as err:
         log(f'survey: a list could not be fetched ({err})', 'warn')
     done = [0]
 
     def one(star):
-        check_star(star, root, dace, api_key, refresh)
+        check_star(star, root, dace, api_key, refresh, carmenes, vizier)
         done[0] += 1
         if progress is not None:
             progress(done[0], len(stars))
@@ -611,26 +630,175 @@ def result_path(root: str, name: str) -> str:
     return os.path.join(root, 'results', _folder(name), 'result.json')
 
 
+def report_star(out: str, data: Any, name: str,
+                rotation: Optional[Dict[str, Any]] = None, trend: int = 1,
+                network: bool = False) -> Dict[str, Any]:
+    """
+    The detailed report of a star (koloa --detailed) on the series its
+    quick look used, whatever it came from (files, archives, or both):
+    the series is written beside the report (velocities.csv, each dataset
+    its instrument), and the report is run on that file by a process of
+    its own, its log beside it (run.log)
+
+    The GP of its FIP is an SHO at the rotation period of the star when
+    one is published (the one given: SIMBAD's or CARMENES DR1's; else the
+    NASA Exoplanet Archive's), a local GP by period band otherwise.
+
+    :param out: str, the folder of the report
+    :param data: RVData or None, the series (None: the velocities.csv
+                 already there, of a report that was stopped)
+    :param name: str, the SIMBAD name of the star
+    :param rotation: dict or None, a published rotation: period [days]
+                     and source
+    :param trend: int, the order of the trend fitted (1: an acceleration)
+    :param network: bool, let the report ask for the light curves of TESS
+                    (False: nothing is asked of the network)
+
+    :return: dict, status (done, failed), gp (the GP of its FIP, in
+             words), signals (each signal it fitted, with its verdict),
+             pdf and text (its report, None when not written), folder,
+             command, elapsed, error
+    """
+    from koloa.gather import write_rv
+    start = time.time()
+    os.makedirs(out, exist_ok=True)
+    series = os.path.join(out, 'velocities.csv')
+    if data is not None:
+        write_rv(data, series)
+    # its files named after the star, as those of any report
+    args = [series, '--detailed', '--target', name, '--name', name,
+            '--outdir', out, '--no-rules']
+    if rotation and rotation.get('period'):
+        args += ['--rotation', f'{float(rotation["period"]):g}']
+    else:
+        args += ['--fip-gp', 'sho']  # the archive's rotation, else by band
+    if trend >= 2:
+        args.append('--curvature')
+    elif trend < 1:
+        args.append('--no-trend')
+    if not network:
+        args.append('--no-tess')
+    # koloa as this process has it
+    src = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = dict(os.environ, PYTHONPATH=src + os.pathsep + os.environ.get(
+        'PYTHONPATH', ''))
+    told = dict(status='failed', gp=None, signals=[], pdf=None, text=None,
+                folder=out, command='koloa ' + ' '.join(
+                    f"'{arg}'" if ' ' in arg else arg for arg in args),
+                error=None)
+    with open(os.path.join(out, 'run.log'), 'w') as handle:
+        code = subprocess.run([sys.executable, '-m', 'koloa.cli'] + args,
+                              env=env, stdout=handle,
+                              stderr=subprocess.STDOUT).returncode
+    told['elapsed'] = time.time() - start
+    for key, pattern in (('pdf', '*_report.pdf'), ('text', '*_report.txt')):
+        found = sorted(glob.glob(os.path.join(out, pattern)))
+        told[key] = found[0] if found else None
+    kept = sorted(glob.glob(os.path.join(out, '*_summary.json')))
+    if code != 0 or not kept:
+        last = ''
+        with open(os.path.join(out, 'run.log'), errors='replace') as handle:
+            lines = [line.strip() for line in handle if line.strip()]
+        if lines:
+            last = lines[-1].split(' | ', 1)[-1]
+        told['error'] = f'ended with code {code}' + (f': {last}' if last
+                                                     else '')
+        return told
+    with open(kept[0]) as handle:
+        summ = json.load(handle)
+    spin = ((summ.get('known') or {}).get('star') or {}).get('rotation')
+    if rotation and rotation.get('period'):
+        told['gp'] = (f'SHO at the rotation, {float(rotation["period"]):g} d'
+                      + (f' ({rotation["source"]})' if rotation.get('source')
+                         else ''))
+    elif spin:
+        told['gp'] = (f'SHO at the rotation, {float(spin):g} d (NASA '
+                      f'Exoplanet Archive)')
+    else:
+        told['gp'] = 'local, by period band (no rotation published)'
+    ducks = summ.get('duck') or {}
+    for orbit in summ.get('orbits') or []:
+        per, amp = orbit['P'][0], orbit['K'][0]
+        verdict = next((val for key, val in ducks.items()
+                        if abs(float(key) / per - 1) < 1e-3), '')
+        told['signals'].append(
+            f'{per:.4f} d, K = {amp:.2f} m/s'
+            + (f', m sin i = {orbit["msini"][0]:.1f} ME' if orbit.get('msini')
+               and np.isfinite(orbit['msini'][0]) else '')
+            + (f': {verdict}' if verdict else ''))
+    told['status'] = 'done'
+    return told
+
+
+def _report_of(root: str, star: Dict[str, Any], result: Dict[str, Any],
+               data: Any, gather: bool, trend: int) -> None:
+    """the detailed report of a star of a batch folder, in
+    results/<star>/report/, and what came of it in its result (kept)"""
+    name = str(star['name'])
+    out = os.path.join(os.path.dirname(result_path(root, name)), 'report')
+    spins = [one for one in star.get('rotation') or [] if one.get('period')]
+    log(f'batch: {name}, a candidate: its detailed report (GP: '
+        + (f'SHO at the rotation, {float(spins[0]["period"]):g} d' if spins
+           else 'SHO at the rotation of the archive, else by band')
+        + f'), its log in {os.path.join(out, "run.log")}', 'info')
+    try:
+        told = report_star(out, data, name, spins[0] if spins else None,
+                           trend, network=gather)
+    except Exception as err:  # the quick look is kept all the same
+        told = dict(status='failed', error=f'{type(err).__name__}: {err}',
+                    signals=[], gp=None, pdf=None, text=None, folder=out)
+    # as the folder holds them: no path of this machine
+    for key in ('pdf', 'text', 'folder'):
+        if told.get(key):
+            told[key] = os.path.relpath(told[key], root)
+    if told.get('command'):
+        told['command'] = told['command'].replace(root + os.sep, '')
+    told['where'] = told.get('pdf') or told.get('text') or told.get('folder')
+    result['report'] = told
+    log(f'batch: {name}, its detailed report {told["status"]}'
+        + (f' in {told.get("elapsed", 0):.0f} s' if told.get('elapsed')
+           else '') + (f' ({told["error"]})' if told.get('error') else ''),
+        'value' if told['status'] == 'done' else 'warn')
+
+
+def _keep(root: str, result: Dict[str, Any]) -> None:
+    """the result of a star of a batch folder, written whole"""
+    from koloa import gui
+    path = result_path(root, str(result['name']))
+    with open(path + '.part', 'w') as handle:
+        json.dump(gui._finite(result), handle, indent=1, default=_plain)
+    os.replace(path + '.part', path)
+
+
 def run_target(root: str, star: Dict[str, Any], rules: bool = True,
-               gather: bool = False, trend: int = 1) -> Dict[str, Any]:
+               gather: bool = False, trend: int = 1, report: bool = False,
+               report_fip: float = REPORT_FIP) -> Dict[str, Any]:
     """
     One star of a batch folder: the quick FIP of its files and of its
     archives (those of the folder; gathered when asked), its datasets
     chosen by koloa.datasets, a transit looked for at its best peak when
     its light curve is with its archives (fetched only with gather); kept
-    in results/<star>/:
-    result.json (its line of the table, what was done with each dataset),
-    quick.json (the FIP, as the page draws it) and quicklook.pdf
+    in results/<star>/: result.json (its line of the table, what was done
+    with each dataset, how its peaks read: koloa.batchpdf.reading),
+    quick.json (the FIP, as the page draws it) and quicklook.pdf, whose
+    first page is the summary of the star (koloa.batchpdf.figure).
+
+    With report, a star that has a candidate (a peak with a FIP below
+    report_fip that is neither a known planet nor a drift) has its
+    detailed report too, in results/<star>/report/ (report_star), on the
+    same series, whatever it came from.
 
     :param root: str, the batch folder
     :param star: dict, a target of targets.json
     :param rules: bool, False for the rules to leave no dataset out
     :param gather: bool, gather the archives the folder lacks (the network)
     :param trend: int, the order of the trend fitted (1: an acceleration)
+    :param report: bool, the detailed report of a star with a candidate
+    :param report_fip: float, the FIP below which a peak counts
 
     :return: dict, the result (also written)
     """
-    from koloa import gui
+    from koloa import batchpdf, gui
     name = str(star['name'])
     out = os.path.dirname(result_path(root, name))
     os.makedirs(out, exist_ok=True)
@@ -647,7 +815,7 @@ def run_target(root: str, star: Dict[str, Any], rules: bool = True,
         trend=int(trend), archives=True, regather=False, gather=bool(gather),
         # the network only when asked for (GATHER): a light curve that is
         #   not with the archives of the star is not fetched
-        fetch=bool(gather),
+        fetch=bool(gather), keep=True,
         rules=bool(rules), root=os.path.join(root, 'archives'), items=[item])
     # in this process, to its end (the page runs it in a thread)
     gui._run_batch(bid)
@@ -660,25 +828,67 @@ def run_target(root: str, star: Dict[str, Any], rules: bool = True,
                   elapsed=time.time() - start, made=time.strftime(
                       '%Y-%m-%d %H:%M:%S'))
     qid = item.get('qid')
+    quick = None
     if qid and (gui.QUICKS.get(qid) or {}).get('result'):
+        quick = gui._finite(gui.quick_state(qid))
         with open(os.path.join(out, 'quick.json'), 'w') as handle:
-            json.dump(gui._finite(gui.quick_state(qid)), handle,
-                      default=_plain)
+            json.dump(quick, handle, default=_plain)
+    # how its peaks read: a known planet, the rotation, a drift, a candidate
+    result['reading'] = batchpdf.reading(result, quick, star, report_fip)
+    result['report'] = dict(status='none', why=(
+        'not asked for' if not report else 'no candidate'))
+    if report and result['reading']['kind'] == 'candidate' \
+            and item.get('data') is not None:
+        # kept before it starts: a report stopped (the end of a job) is
+        #   taken again on its own, the quick look is not computed again
+        result['report'] = dict(status='running')
+        _keep(root, result)
+        _report_of(root, star, result, item['data'], gather, trend)
+        result['elapsed'] = time.time() - start
+    if quick is not None:
         try:
+            front = batchpdf.figure(result, quick, star,
+                                    batch=str(targets_of(root).get('name')
+                                              or ''), limit=report_fip)
             pdf = gui.quicklook_pdf(dict(
                 files=[dict(path=path) for path in files], target=name,
                 root=os.path.join(root, 'archives'), dace=True,
                 carmenes=True, vizier=True, rules='on' if rules else 'off',
                 exclude=', '.join(item.get('dace_copies') or []),
-                trend=trend >= 1, curvature=trend >= 2), qid=qid)
+                trend=trend >= 1, curvature=trend >= 2), qid=qid,
+                front=front)
             with open(os.path.join(out, 'quicklook.pdf'), 'wb') as handle:
                 handle.write(pdf)
         except Exception as err:  # the numbers are kept all the same
             result['pdf_error'] = f'{type(err).__name__}: {err}'
-    path = result_path(root, name)
-    with open(path + '.part', 'w') as handle:
-        json.dump(gui._finite(result), handle, indent=1, default=_plain)
-    os.replace(path + '.part', path)
+    _keep(root, result)
+    return result
+
+
+def resume_report(root: str, star: Dict[str, Any], gather: bool = False,
+                  trend: int = 1) -> Optional[Dict[str, Any]]:
+    """
+    The detailed report of a star whose report was stopped (the end of a
+    job, a kill) taken again on the series kept beside it; its quick look
+    is not computed again
+
+    :return: dict or None, the result (None when no report was left
+             unfinished)
+    """
+    path = result_path(root, str(star['name']))
+    if not os.path.exists(path):
+        return None
+    with open(path) as handle:
+        result = json.load(handle)
+    if (result.get('report') or {}).get('status') != 'running':
+        return None
+    series = os.path.join(os.path.dirname(path), 'report', 'velocities.csv')
+    if not os.path.exists(series):
+        result['report'] = dict(status='failed', error='stopped before its '
+                                'series was written', signals=[])
+    else:
+        _report_of(root, star, result, None, gather, trend)
+    _keep(root, result)
     return result
 
 
@@ -735,6 +945,8 @@ def table(root: str) -> List[Dict[str, Any]]:
             accel=summ.get('accel'), accel_err=summ.get('accel_err'),
             accel_sigma=summ.get('accel_sigma'),
             transit=trans.get('status'), transit_snr=trans.get('snr'),
+            verdict=(res.get('reading') or {}).get('kind'),
+            report=(res.get('report') or {}).get('status'),
             elapsed=res.get('elapsed'), error=res.get('error')))
     os.makedirs(os.path.join(root, 'results'), exist_ok=True)
     with open(os.path.join(root, 'results', 'table.csv'), 'w',
@@ -897,15 +1109,30 @@ def status(root: str, jobs: Optional[int] = None) -> Dict[str, Any]:
         has = os.path.isdir(os.path.join(root, 'archives', _folder(name)))
         out = os.path.dirname(result_path(root, name))
         mark = _marked(os.path.join(out, RUNNING))
+        left = False
         if os.path.exists(result_path(root, name)):
             with open(result_path(root, name)) as handle:
                 res = json.load(handle)
+            left = (res.get('report') or {}).get('status') == 'running'
+        if left:
+            # its quick look is done, its detailed report is not
+            alive = mark is not None and mark['alive'] is not False
+            state = 'running' if alive else 'to do'
+            told = ('its detailed report' + (
+                f' (on {mark.get("host")})' if alive and mark['alive'] is None
+                else '') if alive else 'its detailed report was stopped: '
+                'it starts over (its quick look is kept)')
+        elif os.path.exists(result_path(root, name)):
             summ = res.get('summary') or {}
             state = 'done' if res.get('status') == 'done' else 'failed'
             told = (f'P = {summ["period"]:.4f} d, FIP {_fip(summ["fip"])}, '
                     if summ.get('period') else '') + (
                 f'{res.get("elapsed") or 0:.0f} s' if state == 'done'
-                else str(res.get('error') or res.get('status')))
+                else str(res.get('error') or res.get('status'))) + (
+                f'; {res["reading"]["kind"]}' if res.get('reading') else ''
+                ) + (f'; report {res["report"]["status"]}' if (
+                    res.get('report') or {}).get('status') in (
+                        'done', 'failed') else '')
         elif mark is not None and mark['alive'] is not False:
             state = 'running'
             told = (lines.get(name) or 'started') + (
@@ -974,11 +1201,13 @@ def stop(root: str) -> int:
 
 def run(root: str, jobs: int = 1, rules: bool = True, gather: bool = False,
         only: Optional[Sequence[str]] = None, again: bool = False,
-        part: Optional[Tuple[int, int]] = None, trend: int = 1
+        part: Optional[Tuple[int, int]] = None, trend: int = 1,
+        report: bool = False, report_fip: float = REPORT_FIP
         ) -> List[Dict[str, Any]]:
     """
     The batch of a folder: each star not done yet (run_target), a few at
-    once
+    once; then its table, and the summary of its stars as one PDF
+    (koloa.batchpdf.summary: results/summary.pdf)
 
     Each star takes a Python of its own kind: with jobs above 1 this one
     starts that many more (python -m koloa.survey ROOT --part i/n), each
@@ -993,6 +1222,10 @@ def run(root: str, jobs: int = 1, rules: bool = True, gather: bool = False,
     :param again: bool, the stars already done too
     :param part: (int, int) or None, the stars i, i + n, i + 2n... only
     :param trend: int, the order of the trend fitted
+    :param report: bool, the detailed report of each star with a candidate
+                   (run_target; a report takes far longer than a quick
+                   look, and about four cores)
+    :param report_fip: float, the FIP below which a peak counts
 
     :return: list of dict, the table (table())
     """
@@ -1009,18 +1242,29 @@ def run(root: str, jobs: int = 1, rules: bool = True, gather: bool = False,
                         + '.pid')
     _mark(mine)
     try:
-        _run(root, stars, jobs, rules, gather, only, again, part, trend)
+        _run(root, stars, jobs, rules, gather, only, again, part, trend,
+             report, report_fip)
     finally:
         _unmark(mine)
     rows = table(root)
     log(f'batch: {len(rows)} of {len(targets_of(root)["targets"])} stars in '
         f'{os.path.join(root, "results", "table.csv")}', 'value')
+    if part is None:
+        # the summary of them all (a part leaves it to who started it; the
+        #   tasks of a job array, to the batch started once they ended)
+        try:
+            from koloa import batchpdf
+            batchpdf.summary(root)
+        except Exception as err:  # the table and the stars are kept
+            log(f'batch: its summary could not be made '
+                f'({type(err).__name__}: {err})', 'warn')
     return rows
 
 
 def _run(root: str, stars: List[Dict[str, Any]], jobs: int, rules: bool,
          gather: bool, only: Optional[Sequence[str]], again: bool,
-         part: Optional[Tuple[int, int]], trend: int) -> None:
+         part: Optional[Tuple[int, int]], trend: int, report: bool = False,
+         report_fip: float = REPORT_FIP) -> None:
     """the stars of run(): its parts started and waited for, or the stars
     of this part one after the other"""
     if part is None and jobs > 1 and len(stars) > 1:
@@ -1033,6 +1277,8 @@ def _run(root: str, stars: List[Dict[str, Any]], jobs: int, rules: bool,
                 '--trend', str(trend)]
         base += ([] if rules else ['--no-rules']) + (
             ['--gather'] if gather else []) + (['--again'] if again else [])
+        if report:
+            base += ['--report', '--report-fip', f'{report_fip:g}']
         if only:
             base += ['--only'] + [str(name) for name in only]
         procs = []
@@ -1054,7 +1300,11 @@ def _run(root: str, stars: List[Dict[str, Any]], jobs: int, rules: bool,
         seen = -1
         try:
             while any(proc.poll() is None for proc, _ in procs):
+                # done: its result there, and no report of it going on
                 done = sum(os.path.exists(result_path(root, star['name']))
+                           and not os.path.exists(os.path.join(
+                               os.path.dirname(result_path(
+                                   root, star['name'])), RUNNING))
                            for star in stars)
                 if done != seen:
                     seen = done
@@ -1076,8 +1326,14 @@ def _run(root: str, stars: List[Dict[str, Any]], jobs: int, rules: bool,
     else:
         mine = stars if part is None else stars[part[0]::part[1]]
         for it, star in enumerate(mine):
+            # done; or done but for its detailed report, which was stopped
+            left = False
             if os.path.exists(result_path(root, star['name'])) and not again:
-                continue
+                with open(result_path(root, star['name'])) as handle:
+                    left = (json.load(handle).get('report') or {}).get(
+                        'status') == 'running'
+                if not left:
+                    continue
             mark = os.path.join(os.path.dirname(result_path(
                 root, star['name'])), RUNNING)
             other = _marked(mark)
@@ -1088,17 +1344,22 @@ def _run(root: str, stars: List[Dict[str, Any]], jobs: int, rules: bool,
                     f'process of this batch ({other["pid"]}): left to it',
                     'warn')
                 continue
-            log(f'batch: {star["name"]} ({it + 1} of {len(mine)})', 'info')
+            log(f'batch: {star["name"]} ({it + 1} of {len(mine)})'
+                + (': its detailed report, which was stopped' if left
+                   else ''), 'info')
             _mark(mark)
             try:
-                res = run_target(root, star, rules, gather, trend)
+                res = (resume_report(root, star, gather, trend) if left else
+                       run_target(root, star, rules, gather, trend, report,
+                                  report_fip))
                 summ = res.get('summary') or {}
                 log(f'batch: {star["name"]} {res["status"]} in '
                     f'{res["elapsed"]:.0f} s' + (
                         f', P = {summ["period"]:.4f} d, FIP '
                         f'{_fip(summ["fip"])}' if summ.get('period') else '')
-                    + (f' ({res["error"]})' if res.get('error') else ''),
-                    'value')
+                    + (f' ({res["error"]})' if res.get('error') else '')
+                    + (f'; {res["reading"]["kind"]}' if res.get('reading')
+                       else ''), 'value')
             except Exception as err:  # the next star all the same
                 log(f'batch: {star["name"]} failed '
                     f'({type(err).__name__}: {err})', 'warn')
@@ -1121,6 +1382,8 @@ beside this script, says the whole of it.
     python run_batch.py                 # every star not done yet
     python run_batch.py --part 3/20     # the stars 3, 23, 43... (a job array)
     python run_batch.py --stop          # stop the batch that runs here
+    python run_batch.py --summary       # results/summary.pdf again, from
+                                        #   what is done (nothing computed)
     python run_batch.py --root /elsewhere/{name} ...
 
 Everything is found from ROOT: nothing else of this script names a path.
@@ -1154,6 +1417,14 @@ AGAIN = False
 
 # the trend fitted with the signals: 1 an acceleration, 2 its change too
 TREND = {trend}
+
+# the detailed report (koloa --detailed) of each star that has a candidate:
+#   a peak with a FIP below REPORT_FIP that is neither a known planet nor a
+#   drift as long as the series. The GP of its FIP is an SHO at the
+#   rotation period when one is published, by period band otherwise. A
+#   report takes far longer than a quick look, and about four cores.
+REPORT = {report}
+REPORT_FIP = {report_fip}
 
 
 # =============================================================================
@@ -1202,6 +1473,10 @@ def main():
     from koloa import survey
     if '--stop' in args:
         survey.stop(root)
+    elif '--summary' in args:
+        from koloa import batchpdf
+        survey.table(root)
+        batchpdf.summary(root)
     elif '--check' in args:
         # 0 when the batch can run (or runs, or is done), 1 when not
         told = survey.status(root, jobs=JOBS)
@@ -1209,7 +1484,8 @@ def main():
     else:
         try:
             survey.run(root, jobs=JOBS, rules=RULES, gather=GATHER,
-                       only=ONLY, again=AGAIN, part=part, trend=TREND)
+                       only=ONLY, again=AGAIN, part=part, trend=TREND,
+                       report=REPORT, report_fip=REPORT_FIP)
         except KeyboardInterrupt:  # stopped (--stop, Ctrl-C): said, and all
             raise SystemExit(130)
 
@@ -1262,8 +1538,10 @@ IN SHORT
     python run_batch.py --root "$PWD" --check     # again, to see where it is
 
 python is the Python 3.9 or later that has numpy, scipy and matplotlib:
-python3 on many machines. Then results/ is brought back (step 5) and
-opened in koloa's page (step 6).
+python3 on many machines. When it is over, results/summary.pdf is the
+batch in one PDF: the table of the stars, the candidates first, then a
+page for each. Then results/ is brought back (step 5) and opened in
+koloa's page (step 6).
 
 
 FOR A CLAUDE SESSION (OR ANOTHER AGENT) ASKED TO RUN THIS BATCH
@@ -1332,11 +1610,14 @@ this order:
 
   g. Then read results/table.csv (step 6 says what each column is) and
      report: how many stars are done and how many failed, each failure
-     with its error as the table gives it; the best peak of each star
-     (period, fip, K), or for a batch of many stars those with a fip
-     below 0.01, without calling any a planet (step 6: the table is a
-     list of questions); how long it took; and the line that brings
-     the results back (step 5) with the real path of this folder in it.
+     with its error as the table gives it; how the stars read (the
+     verdict column: candidate, known, drift, nothing) and the
+     candidates with their best peak (period, fip, K), without calling
+     any a planet (step 6: the table is a list of questions); which
+     detailed reports were made and which failed (the report column);
+     how long it took; where results/summary.pdf is; and the line that
+     brings the results back (step 5) with the real path of this folder
+     in it.
 
 What not to do, however convenient it looks:
 
@@ -1430,6 +1711,12 @@ A star with many datasets and a signal of hundreds of m/s can take far
 longer (GJ 876, 9 datasets: half of its first pass after 7 hours). The
 others do not wait for it: each star is on its own.
 
+With REPORT = True ({report} as packed), a star that has a candidate has
+its detailed report too (step 6). A report takes far longer than a quick
+look, tens of minutes to hours, and about four cores instead of three:
+count the cores with that. --check says "its detailed report" of a star
+that is at it.
+
 To stop it:
 
     python run_batch.py --root "$PWD" --stop
@@ -1460,12 +1747,16 @@ find the folder by that):
 
 A task ended by its time limit loses the star it was computing and no
 other: submit again with a longer --time, and only the stars not done are
-computed. When every task has ended,
+computed (a star whose quick look was done and whose detailed report was
+cut short keeps its quick look: only its report is taken again). With
+REPORT = True, give the tasks more time, and --cpus-per-task=4 is right.
+When every task has ended,
 
     python run_batch.py --root "$PWD"
 
-computes nothing more and writes the table of them all. To stop the
-tasks: scancel (--stop ends only what runs on the machine it is typed on).
+computes nothing more and writes the table of them all and
+results/summary.pdf. To stop the tasks: scancel (--stop ends only what
+runs on the machine it is typed on).
 
 The nodes of most clusters have no network: GATHER stays False, as packed.
 The archives are those of archives/, gathered before packing.
@@ -1494,11 +1785,51 @@ its FIP as it was computed, to fold, tick and report like any other.
 
 Without the page:
 
+    results/summary.pdf            the batch in one PDF: the table of the
+                                   stars, the candidates first, then the
+                                   page of each
     results/table.csv              a line for each star done
-    results/<star>/quicklook.pdf   its series, its FIP, its folds
-    results/<star>/result.json     its line of the table, and what was
-                                   done with each of its datasets and why
+    results/<star>/quicklook.pdf   its page of summary first, then its
+                                   series, its FIP, its folds, its numbers
+    results/<star>/report/         its detailed report, when it has a
+                                   candidate and REPORT is True
+    results/<star>/result.json     its line of the table, how its peaks
+                                   read, and what was done with each of
+                                   its datasets and why
     results/<star>/quick.json      the FIP itself, as the page draws it
+
+The page of a star says how its quick look reads. Its verdict:
+
+    candidate   a peak with a FIP below {report_fip} that is neither a
+                known planet nor a drift
+    known       its peaks below that FIP are known planets (within 1 % of
+                the period of one of the NASA Exoplanet Archive's)
+    drift       they are as long as the series (more than half of it)
+    nothing     no peak below that FIP
+
+then each numbered peak with what it is (a known planet, at the rotation
+of the star or one of its harmonics, at a year, a drift, or none of
+these), its FIP with the known planets and the rotation marked, its two
+best folds, its velocities, its datasets and what the rules left out, its
+acceleration, the transit looked for, its published rotation periods, and
+what its detailed report found. It is a reading of a quick look, which
+has no GP: it sorts the stars, it does not decide on a planet.
+
+    python run_batch.py --root "$PWD" --summary
+
+makes results/summary.pdf again from what is done, at any time, and
+computes nothing.
+
+The detailed report of a star (REPORT = True) is koloa's own (koloa
+--detailed), on the series the quick look used, whatever it came from:
+files, archives, or both. That series is beside it
+(report/velocities.csv), with its log (run.log), its figures, and
+<star>_report.pdf, or <star>_report.txt and .tex where there is no
+pdflatex. The GP of its FIP is an SHO at the rotation period of the star
+when one is published (the P rot of section 9; else the NASA Exoplanet
+Archive's), a local GP by period band otherwise; result.json says which.
+With GATHER = False it asks nothing of the network, so it has no TESS
+light curve to check its signals against.
 
 The columns of table.csv:
 
@@ -1525,6 +1856,10 @@ The columns of table.csv:
                              light curve of the star: plausible, or none,
                              with its signal to noise. "no light curve":
                              the batch was packed without the light curves
+    verdict                  how its quick look reads: candidate, known,
+                             drift, nothing (above)
+    report                   its detailed report: done, failed, none (no
+                             candidate, or not asked for), running
     elapsed                  how long the star took [s]
     error                    why a star failed
 
@@ -1546,9 +1881,12 @@ look. Each line is to be opened and looked at.
     ONLY     [] for every star, or a few of them: ['GJ 581', 'GJ 876']
     AGAIN    True computes again the stars already done
     TREND    1: an acceleration fitted with the signals. 2: its change too
+    REPORT   True: the detailed report of each star that has a candidate
+             (step 6). Hours, for a batch with many candidates
+    REPORT_FIP   the FIP below which a peak counts ({report_fip} as packed)
 
-and on the command line: --root PATH, --check, --stop, and --part I/N (the
-stars I, I+N, I+2N...: a task of a job array).
+and on the command line: --root PATH, --check, --stop, --summary, and
+--part I/N (the stars I, I+N, I+2N...: a task of a job array).
 
 To compute one star again: ONLY = ['GJ 581'] and AGAIN = True, then the
 batch as before; or delete results/GJ_581/ and start the batch again.
@@ -1568,7 +1906,7 @@ batch as before; or delete results/GJ_581/ and start the batch again.
                     the lists of the surveys, APERO's names
     koloa_src/      koloa as it was when the batch was packed
     results/        written by the batch: a folder for each star, and
-                    table.csv, table.json
+                    table.csv, table.json, summary.pdf
     logs/           written by the batch: the log of each part, and of
                     each task of a job array
 
@@ -1588,6 +1926,11 @@ batch as before; or delete results/GJ_581/ and start the batch again.
 "This Python (...) has no numpy" (or scipy, matplotlib), or
 ModuleNotFoundError
     This Python is not the one that has them: step 3.
+
+A detailed report is "failed"
+    results/<star>/report/run.log has the whole, and result.json its
+    last line. The quick look of the star is kept. To take it again:
+    ONLY = ['<star>'] and AGAIN = True.
 
 A star is "failed"
     Its line of results/table.csv, and results/<star>/result.json, say
@@ -1645,9 +1988,13 @@ def _packed(folder: str, star: Dict[str, Any]) -> Tuple[str, bool]:
             told = 'what the cross-match kept of DACE only (not gathered)'
     dist = star.get('distance')
     name, sptype = str(star['name'])[:24], str(star.get('sptype') or '')[:9]
+    # its published rotation period, the first: the one its detailed
+    #   report would take for its GP
+    spins = [one for one in star.get('rotation') or [] if one.get('period')]
+    spin = f'{float(spins[0]["period"]):.4g}' if spins else ''
     return (f'    {name:24s} {sptype:9s} '
             f'{f"{dist:7.2f}" if dist else "       "} '
-            f'{len(star.get("files") or []):5d}  {told}'), gathered
+            f'{len(star.get("files") or []):5d} {spin:>9s}  {told}'), gathered
 
 
 def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
@@ -1656,7 +2003,8 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
          rules: bool = True, trend: int = 1, refresh: bool = False,
          api_key: Any = None, tar: bool = True,
          progress: Optional[Callable[[int, int, str], None]] = None,
-         workers: int = 3) -> Dict[str, Any]:
+         workers: int = 3, report: bool = False,
+         report_fip: float = REPORT_FIP) -> Dict[str, Any]:
     """
     A batch folder, and its .tar.gz: everything the batch of some stars
     needs, to run it here or on another machine (see the module)
@@ -1683,6 +2031,9 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
     :param progress: callable or None, told (done, total, star)
     :param workers: int, the stars whose archives are gathered at once
                     (the tables of a star's papers take a minute or two)
+    :param report: bool, the REPORT of the script: the detailed report of
+                   each star with a candidate
+    :param report_fip: float, its REPORT_FIP
 
     :return: dict, folder, tar (None without), n (stars), files, size (of
              the tar [bytes]), and missing (the stars with nothing: no
@@ -1759,7 +2110,21 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
             name=star['name'], main=star.get('main'),
             sptype=star.get('sptype'), distance=star.get('distance'),
             ra=star.get('ra'), dec=star.get('dec'), files=files,
-            archives=star.get('archives')))
+            archives=star.get('archives'),
+            # its published rotation periods: its page says whether a peak
+            #   is at one, and its detailed report takes the first
+            rotation=star.get('rotation') or []))
+    # who each star is (its names, its type), kept with what koloa fetched
+    #   once: asked here, where there is the network, for the stars that
+    #   were never asked (the batch asks nothing where it runs)
+    def named(star):
+        try:
+            from koloa.archive import resolve
+            resolve(str(star['name']))
+        except Exception:  # the batch goes on without (said in its log)
+            pass
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        list(pool.map(named, stars))
     # what koloa fetched once, and koloa itself
     for part in CACHE_PARTS:
         src = cache(part)
@@ -1781,6 +2146,7 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
     words = dict(name=name, made=made, nstar=len(targets),
                  root=server_root or folder, jobs=int(jobs),
                  rules=bool(rules), gather=False, trend=int(trend),
+                 report=bool(report), report_fip=float(report_fip),
                  last=max(len(targets) - 1, 0), when=when,
                  version=__version__, needs=NEEDS,
                  cores=CORES * int(jobs), rule='=' * (17 + len(name)),
@@ -1797,11 +2163,13 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
                         'batch was packed).'), 76),
                  stars='\n'.join(
                      [f'    {"star":24s} {"type":9s} {"d [pc]":>7s} '
-                      f'{"files":>5s}  its archives']
+                      f'{"files":>5s} {"P rot [d]":>9s}  its archives']
                      + [line for line, _ in lines]))
     with open(os.path.join(folder, TARGETS), 'w') as handle:
         json.dump(dict(name=name, made=made, koloa=__version__,
-                       options=dict(rules=bool(rules), trend=int(trend)),
+                       options=dict(rules=bool(rules), trend=int(trend),
+                                    report=bool(report),
+                                    report_fip=float(report_fip)),
                        targets=targets), handle, indent=1, default=_plain)
     for file, text in (('run_batch.py', SCRIPT), ('submit.sh', SUBMIT),
                        ('README.txt', README)):
@@ -1856,6 +2224,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     parser.add_argument('--gather', action='store_true',
                         help='gather the archives the folder lacks')
     parser.add_argument('--trend', type=int, default=1)
+    parser.add_argument('--report', action='store_true',
+                        help='the detailed report of each star with a '
+                             'candidate')
+    parser.add_argument('--report-fip', type=float, default=REPORT_FIP,
+                        help='the FIP below which a peak counts')
     args = parser.parse_args(argv)
     part = None
     if args.part:
@@ -1864,7 +2237,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     try:
         run(args.root, jobs=args.jobs, rules=not args.no_rules,
             gather=args.gather, only=args.only, again=args.again, part=part,
-            trend=args.trend)
+            trend=args.trend, report=args.report,
+            report_fip=args.report_fip)
     except KeyboardInterrupt:  # stopped: said by run(), and all
         raise SystemExit(130)
 

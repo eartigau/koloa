@@ -251,8 +251,11 @@
     <section class="card span-3" id="sv-card" hidden>
       <div class="row">
         <button type="button" id="sv-check" class="go" data-i18n="sv_check">Cross-match with the archives</button>
+        <span data-i18n="sv_check_with">with</span>
         <label><input type="checkbox" id="sv-dace" checked> DACE</label>
-        <span class="hint" data-i18n="sv_check_hint">of the stars ticked (of all when none is): DACE, CARMENES DR1, the surveys on VizieR</span>
+        <label><input type="checkbox" id="sv-carmenes" checked> CARMENES DR1</label>
+        <label><input type="checkbox" id="sv-vizier" checked> <span data-i18n="sv_check_vizier">the surveys on VizieR</span></label>
+        <span class="hint" data-i18n="sv_check_hint">of the stars ticked (of all when none is)</span>
         <span class="hint" id="sv-checkstatus"></span>
       </div>
       <div id="sv-overview"></div>
@@ -280,6 +283,11 @@
         <label><input type="checkbox" id="sv-rules" checked> <span data-i18n="batch_rules">of them, the best release of the same spectra, and not the datasets that constrain nothing</span></label>
       </div>
       <div class="row">
+        <label><input type="checkbox" id="sv-report"> <span data-i18n="sv_report">a detailed report of each star that has a candidate: a peak with a FIP below</span></label>
+        <input id="sv-reportfip" type="number" value="0.01" step="any" min="0" max="1" class="short">
+        <button type="button" class="info" data-help="survey_report" aria-label="?">i</button>
+      </div>
+      <div class="row">
         <button type="button" id="sv-run" class="go" data-i18n="sv_run">Run it here</button>
         <span class="hint" data-i18n="sv_run_hint">each star with its files and every archive of it, in the Batch FIP tab</span>
         <span class="hint" id="sv-runstatus"></span>
@@ -296,7 +304,8 @@
       <div id="sv-packstatus"></div>
       <div class="row">
         <label><span data-i18n="sv_results">The results of a batch folder</span> <span class="picker"><input id="sv-results" type="text" autocomplete="off" class="wide"><button type="button" data-pick="folder" data-into="sv-results">...</button></span></label>
-        <button type="button" id="sv-open" data-i18n="sv_open">Open them</button><span class="hint" id="sv-openstatus"></span>
+        <button type="button" id="sv-open" data-i18n="sv_open">Open them</button>
+        <button type="button" id="sv-summary" data-i18n="sv_summary">Summary PDF</button><span class="hint" id="sv-openstatus"></span>
       </div>
     </section>
   </main>
