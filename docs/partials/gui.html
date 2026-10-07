@@ -494,9 +494,12 @@ python run_batch.py --root "$PWD" --summary   # results/summary.pdf again, nothi
       the table is, what to do when something goes wrong, and the list of its stars with what was packed of
       each. A section of it is written for an agent: the steps in order, what each must answer before the next,
       and what not to do (install, fetch, delete the results, start the batch twice, kill processes on a
-      guess, copy the data elsewhere).</p>
+      guess, copy the data elsewhere). It tells the agent to find how many cores the machine has and how many
+      are free, and to take two thirds of the free ones: that many stars at once, at about three cores a star
+      (<span class="mono">--jobs N</span>).</p>
       <p>Two options of the script are made for that. <span class="mono">--check</span> computes nothing: it
-      says which Python it is and what it has, the cores of the machine, and of each star whether it is done
+      says which Python it is and what it has, the cores of the machine, those that are free and the stars at
+      once that two thirds of them allow, and of each star whether it is done
       (its best peak), failed (why), being computed (how far its FIP is, and the time left) or to do; its last
       line is the state of the batch, <span class="mono">ready</span>, <span class="mono">running</span>,
       <span class="mono">done</span>, or <span class="mono">not ready</span> with what is missing.

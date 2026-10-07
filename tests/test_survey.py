@@ -261,6 +261,10 @@ def test_a_batch_folder_packed(tmp_path, monkeypatch):
     ast.parse(script)
     assert "ROOT = '/scratch/me/m_dwarfs_15pc'" in script
     assert 'JOBS = 4' in script and "if __name__ == '__main__':" in script
+    # the stars at once given where it runs, in place of the JOBS packed
+    assert "if '--jobs' in args:" in script and 'jobs=jobs' in script
+    assert 'N = (2/3 x free cores) / 3' in open(os.path.join(
+        folder, 'README.txt')).read()
     # no path of this machine in what the batch reads
     held = survey.targets_of(folder)
     assert [star['files'] for star in held['targets']] == [
@@ -334,6 +338,7 @@ def test_a_batch_run_where_it_was_carried(tmp_path, monkeypatch):
     # before: everything is there, nothing computed
     told = survey.status(moved, jobs=2)
     assert told['state'] == 'ready' and told['todo'] == 2
+    assert told['cores']['jobs'] >= 1 and told['cores']['each'] == 3
     assert told['missing'] == [] and not os.path.exists(
         os.path.join(moved, 'results', 'table.csv'))
     rows = survey.run(moved)
@@ -685,3 +690,32 @@ def test_the_detailed_report_of_a_candidate(tmp_path, monkeypatch):
                         subprocess.CompletedProcess(cmd, 3))
     out = survey.report_star(str(tmp_path / 'again'), None, 'GJ 1')
     assert out['status'] == 'failed' and 'code 3' in out['error']
+
+
+def test_the_stars_at_once_on_two_thirds_of_the_free_cores(monkeypatch):
+    """the cores of the machine that runs a batch, those that are free,
+    and the stars at once that two thirds of them allow"""
+    monkeypatch.setattr(os, 'cpu_count', lambda: 96)
+    monkeypatch.setattr(os, 'sched_getaffinity', lambda pid: set(range(96)),
+                        raising=False)
+    monkeypatch.setattr(os, 'getloadavg', lambda: (6.2, 5.0, 4.0))
+    have = survey.cores()
+    assert (have['total'], have['mine'], have['free']) == (96, 96, 90)
+    # two thirds of 90 free cores are 60: 20 stars of three cores each,
+    #   15 of four with their detailed reports
+    assert have['share'] == 60 and have['jobs'] == 20
+    assert survey.cores(report=True)['jobs'] == 15
+    # fewer cores for this process than the machine has (a scheduler)
+    monkeypatch.setattr(os, 'sched_getaffinity', lambda pid: set(range(8)),
+                        raising=False)
+    monkeypatch.setattr(os, 'getloadavg', lambda: (0.2, 0.2, 0.2))
+    have = survey.cores()
+    assert have['mine'] == 8 and have['free'] == 8 and have['jobs'] == 1
+    # a machine busier than it has cores, or that does not say: one star
+
+    def unknown():
+        raise OSError('no load average here')
+    monkeypatch.setattr(os, 'getloadavg', lambda: (40.0, 40.0, 40.0))
+    assert survey.cores()['jobs'] == 1 and survey.cores()['free'] == 1
+    monkeypatch.setattr(os, 'getloadavg', unknown)
+    assert survey.cores()['load'] is None and survey.cores()['free'] == 8

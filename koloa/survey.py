@@ -127,8 +127,13 @@ CACHE_PARTS = ('archive', 'published', 'tic', 'apero_astrometrics',
 RUNNING = 'running.json'
 #: what the batch needs of this Python
 NEEDS = ('numpy', 'scipy', 'matplotlib')
-#: the cores a star takes, about (its chains, and what starts them)
+#: the cores a star takes, about (its chains, and what starts them), and
+#: with its detailed report (the fits of its GP check, side by side)
 CORES = 3
+CORES_REPORT = 4
+#: the share of the free cores of a machine that a batch takes: the rest is
+#: left to the others, and to what the batch itself needs beside its stars
+SHARE = 2.0 / 3.0
 #: the columns of the table of a batch
 COLUMNS = ('name', 'sptype', 'distance', 'status', 'files', 'datasets',
            'nights', 'baseline', 'period', 'fip', 'fip_alone', 'K', 'K_err',
@@ -1057,21 +1062,55 @@ def _progress(root: str) -> Dict[str, str]:
     return out
 
 
-def status(root: str, jobs: Optional[int] = None) -> Dict[str, Any]:
+def cores(report: bool = False) -> Dict[str, Any]:
+    """
+    The cores of this machine, and how many stars a batch may compute at
+    once on two thirds of those that are free (SHARE)
+
+    :param report: bool, the batch makes the detailed report of its
+                   candidates (a star then takes four cores, not three)
+
+    :return: dict, total (the cores of the machine), mine (those this
+             process may use: fewer under a scheduler or a taskset), load
+             (the processes running, averaged over the last minute; None
+             when the system does not say), free (mine minus the load, at
+             least 1), share (two thirds of them, in cores), each (the
+             cores of a star) and jobs (the stars at once: at least 1)
+    """
+    total = os.cpu_count() or 1
+    mine = (len(os.sched_getaffinity(0))
+            if hasattr(os, 'sched_getaffinity') else total)
+    try:
+        load = float(os.getloadavg()[0])
+    except (OSError, AttributeError):
+        load = None
+    free = max(1, mine - int(round(load or 0.0)))
+    each = CORES_REPORT if report else CORES
+    return dict(total=total, mine=mine, load=load, free=free,
+                share=int(SHARE * free), each=each,
+                jobs=max(1, int(SHARE * free) // each))
+
+
+def status(root: str, jobs: Optional[int] = None,
+           report: Optional[bool] = None) -> Dict[str, Any]:
     """
     Where the batch of a folder is, said line by line and returned;
     nothing is computed. This Python and what it has of what the batch
-    needs, the cores of the machine, then each star: done (its best
+    needs, the cores of the machine and the stars at once that two thirds
+    of the free ones allow (cores()), then each star: done (its best
     peak), failed (why), being computed (how far), or to do; and whether
     the batch runs.
 
     :param root: str, the batch folder
-    :param jobs: int or None, the stars at once (for the cores they take)
+    :param jobs: int or None, the stars at once as the batch is set
+    :param report: bool or None, the batch makes detailed reports (None:
+                   as it was packed)
 
     :return: dict, state ('not ready': something lacks, see missing;
              'ready': nothing runs, stars are left; 'running'; 'done':
              every star has its result), n, done, failed, running, todo,
-             missing (list of str) and stars (name, state, told)
+             missing (list of str), stars (name, state, told) and cores
+             (cores(): its jobs is what to give as --jobs)
     """
     import importlib
     root = os.path.abspath(os.path.expanduser(root))
@@ -1089,16 +1128,22 @@ def status(root: str, jobs: Optional[int] = None) -> Dict[str, Any]:
         f'{held.get("made")}) in {root}', 'info')
     log(f'Python {sys.version.split()[0]} ({sys.executable}), '
         + ', '.join(found), 'value')
-    cores = os.cpu_count() or 1
-    mine = (len(os.sched_getaffinity(0))
-            if hasattr(os, 'sched_getaffinity') else cores)
-    log(f'{cores} cores on {socket.gethostname()}'
-        + (f', {mine} for this process' if mine != cores else '')
-        + (f'; {jobs} stars at once take about {CORES * int(jobs)}'
-           if jobs else ''), 'value')
-    if jobs and CORES * int(jobs) > mine:
-        log(f'more than there are: JOBS = {max(1, mine // CORES)} would '
-            f'fit', 'warn')
+    if report is None:
+        report = bool((held.get('options') or {}).get('report'))
+    have = cores(report)
+    log(f'{have["total"]} cores on {socket.gethostname()}'
+        + (f', {have["mine"]} for this process' if have['mine']
+           != have['total'] else '')
+        + (f', {have["load"]:.1f} busy over the last minute'
+           if have['load'] is not None else '') + f': {have["free"]} free',
+        'value')
+    # two thirds of the free cores, a star about three of them (four with
+    #   its detailed report): what to start the batch with
+    log(f'two thirds of them, {have["share"]} cores, at about '
+        f'{have["each"]} a star'
+        + (' (with its detailed report)' if report else '')
+        + f': {have["jobs"]} star' + ('s' if have['jobs'] != 1 else '')
+        + f' at once (--jobs {have["jobs"]})', 'value')
     lines = _progress(root)
     stars = []
     for star in held['targets']:
@@ -1156,6 +1201,11 @@ def status(root: str, jobs: Optional[int] = None) -> Dict[str, Any]:
         log(line, 'error')
     state = ('not ready' if missing else 'running' if runs else
              'done' if not count['to do'] else 'ready')
+    if jobs and state == 'ready' and int(jobs) > have['jobs']:
+        # the stars at once as the batch is set, when that is too many here
+        log(f'as set, {jobs} stars at once (about '
+            f'{have["each"] * int(jobs)} cores): more than two thirds of '
+            f'the free ones; start it with --jobs {have["jobs"]}', 'warn')
     log(f'state: {state}; {count["done"] + count["failed"]} of '
         f'{len(stars)} stars have their result'
         + (f' ({count["failed"]} failed)' if count['failed'] else '')
@@ -1163,7 +1213,8 @@ def status(root: str, jobs: Optional[int] = None) -> Dict[str, Any]:
         'error' if missing else 'info')
     return dict(state=state, n=len(stars), done=count['done'],
                 failed=count['failed'], running=count['running'],
-                todo=count['to do'], missing=missing, stars=stars)
+                todo=count['to do'], missing=missing, stars=stars,
+                cores=have)
 
 
 def stop(root: str) -> int:
@@ -1380,6 +1431,8 @@ beside this script, says the whole of it.
     python run_batch.py --check         # nothing computed: is all there,
                                         #   and where is the batch?
     python run_batch.py                 # every star not done yet
+    python run_batch.py --jobs 20       # the same, 20 stars at once
+                                        #   (--check says how many fit)
     python run_batch.py --part 3/20     # the stars 3, 23, 43... (a job array)
     python run_batch.py --stop          # stop the batch that runs here
     python run_batch.py --summary       # results/summary.pdf again, from
@@ -1400,7 +1453,9 @@ import sys
 #   from it.
 ROOT = {root!r}
 
-# the stars at once (each takes about three cores)
+# the stars at once (each takes about three cores, four with its detailed
+#   report). --check says how many two thirds of the free cores of this
+#   machine allow; --jobs N gives it without changing this line.
 JOBS = {jobs}
 
 # the datasets of each star chosen by koloa.datasets (the best release of
@@ -1432,10 +1487,12 @@ REPORT_FIP = {report_fip}
 #   this file again as they start and must not start the batch themselves)
 # =============================================================================
 def main():
-    root, part = ROOT, None
+    root, part, jobs = ROOT, None, JOBS
     args = sys.argv[1:]
     if '--root' in args:
         root = args[args.index('--root') + 1]
+    if '--jobs' in args:
+        jobs = int(args[args.index('--jobs') + 1])
     if '--part' in args:
         one, of = args[args.index('--part') + 1].split('/')
         part = (int(one), int(of))
@@ -1479,11 +1536,11 @@ def main():
         batchpdf.summary(root)
     elif '--check' in args:
         # 0 when the batch can run (or runs, or is done), 1 when not
-        told = survey.status(root, jobs=JOBS)
+        told = survey.status(root, jobs=jobs, report=REPORT)
         raise SystemExit(1 if told['state'] == 'not ready' else 0)
     else:
         try:
-            survey.run(root, jobs=JOBS, rules=RULES, gather=GATHER,
+            survey.run(root, jobs=jobs, rules=RULES, gather=GATHER,
                        only=ONLY, again=AGAIN, part=part, trend=TREND,
                        report=REPORT, report_fip=REPORT_FIP)
         except KeyboardInterrupt:  # stopped (--stop, Ctrl-C): said, and all
@@ -1534,8 +1591,11 @@ IN SHORT
     tar xzf {name}.tar.gz
     cd {name}
     python run_batch.py --root "$PWD" --check     # seconds; computes nothing
-    nohup python -u run_batch.py --root "$PWD" > run.log 2>&1 &
+    nohup python -u run_batch.py --root "$PWD" --jobs N > run.log 2>&1 &
     python run_batch.py --root "$PWD" --check     # again, to see where it is
+
+N is the stars computed at once: the number --check gives, two thirds of
+the free cores of the machine at about three cores a star.
 
 python is the Python 3.9 or later that has numpy, scipy and matplotlib:
 python3 on many machines. When it is over, results/summary.pdf is the
@@ -1578,18 +1638,37 @@ this order:
      here; do not start it again, go to f or g.
 
   d. Choose how to run it, from what the machine is.
-     - No scheduler (a server reached by ssh): step 3. First look at
-       what is free (nproc, uptime). The batch computes JOBS stars at
-       once ({jobs} as packed) and a star takes about three cores: about
-       {cores} cores. If that is more than is free, lower JOBS at the top
-       of run_batch.py, and say that you did.
-     - A cluster (sbatch exists): step 4, never on a login node.
+     - No scheduler (a server reached by ssh): step 3, on two thirds of
+       the cores that are free, no more and not many fewer. Find how
+       many cores there are and how many are busy yourself:
+
+           nproc           # the cores this shell may use
+           uptime          # the load: the cores busy, over 1, 5, 15 min
+
+       free cores = nproc - the 1 minute load (rounded). A star takes
+       about three cores (four when REPORT is True: {report} as packed).
+       So the stars at once are
+
+           N = (2/3 x free cores) / 3, rounded down, at least 1
+
+       (/ 4 with REPORT). --check does the same sum and prints it:
+       "... : N stars at once (--jobs N)". Check that your number and
+       its number agree; if they differ by more than one, look again
+       (a load that is changing, cores this process may not use) before
+       starting. The JOBS of the script ({jobs} as packed) was set on
+       another machine: do not use it, give N as --jobs. Look at the
+       memory too once it runs (free -g): if it runs short, stop the
+       batch (--stop) and start it again with a smaller N; nothing
+       done is lost.
+     - A cluster (sbatch exists): step 4, never on a login node. The
+       scheduler shares the cores there: the two thirds do not apply.
        submit.sh needs an account (--account); if you were not given
        one, ask.
 
-  e. Start it once, detached, so that it outlives your shell:
+  e. Start it once, detached, so that it outlives your shell, with the
+     N of step d:
 
-         nohup python -u run_batch.py --root "$PWD" > run.log 2>&1 &
+         nohup python -u run_batch.py --root "$PWD" --jobs N > run.log 2>&1 &
 
      It runs for minutes to many hours (step 3 has real timings). Do
      not wait for it in the foreground, and do not use tail -f, which
@@ -1615,9 +1694,10 @@ this order:
      candidates with their best peak (period, fip, K), without calling
      any a planet (step 6: the table is a list of questions); which
      detailed reports were made and which failed (the report column);
-     how long it took; where results/summary.pdf is; and the line that
-     brings the results back (step 5) with the real path of this folder
-     in it.
+     how many cores the machine has, how many were free, and the --jobs
+     you gave; how long it took; where results/summary.pdf is; and the
+     line that brings the results back (step 5) with the real path of
+     this folder in it.
 
 What not to do, however convenient it looks:
 
@@ -1685,9 +1765,9 @@ whether it is done, failed, running or to do. Its last line is the state
 of the batch: not ready (something is missing, named in the lines above;
 exit code 1), ready, running or done (exit code 0).
 
-Then the batch, left running after you log out:
+Then the batch, left running after you log out, N stars at once:
 
-    nohup python -u run_batch.py --root "$PWD" > run.log 2>&1 &
+    nohup python -u run_batch.py --root "$PWD" --jobs N > run.log 2>&1 &
 
 or the same without nohup inside screen or tmux. To see where it is:
 
@@ -1696,9 +1776,14 @@ or the same without nohup inside screen or tmux. To see where it is:
     tail logs/part_0.log            # one of the stars being computed
     ls results/                     # a folder for each star done
 
-Cores: {jobs} stars are computed at once (JOBS, in run_batch.py), each a
-Python of its own that takes about three cores, so about {cores} in all.
-Lower JOBS on a shared machine.
+Cores: each star is a Python of its own that takes about three cores.
+The batch is meant to take two thirds of the cores that are free on the
+machine, and leave the rest: N = (2/3 x free cores) / 3 stars at once,
+rounded down, where the free cores are those of the machine (nproc) less
+its load (uptime). --check prints the cores, the load and that N; give
+it as --jobs N. Without --jobs the batch takes the JOBS of run_batch.py
+({jobs} as packed, about {cores} cores), which was set where the batch was
+packed and knows nothing of this machine.
 
 How long: a star takes longer with more nights and with more datasets.
 Measured on a 24-core server in October 2026, each star with its archives:
@@ -1873,7 +1958,8 @@ look. Each line is to be opened and looked at.
 -------------------------------------------
 
     ROOT     where this folder is (step 2)
-    JOBS     the stars at once ({jobs} as packed), about three cores each
+    JOBS     the stars at once ({jobs} as packed), about three cores each;
+             --jobs N on the command line takes its place (step 3)
     RULES    True: of the datasets of a star, the best release of the same
              spectra, and not those that constrain nothing. False: all
     GATHER   False: the archives as packed. True asks the archives for
@@ -1885,8 +1971,9 @@ look. Each line is to be opened and looked at.
              (step 6). Hours, for a batch with many candidates
     REPORT_FIP   the FIP below which a peak counts ({report_fip} as packed)
 
-and on the command line: --root PATH, --check, --stop, --summary, and
---part I/N (the stars I, I+N, I+2N...: a task of a job array).
+and on the command line: --root PATH, --jobs N (the stars at once, in
+place of JOBS), --check, --stop, --summary, and --part I/N (the stars I,
+I+N, I+2N...: a task of a job array).
 
 To compute one star again: ONLY = ['GJ 581'] and AGAIN = True, then the
 batch as before; or delete results/GJ_581/ and start the batch again.
