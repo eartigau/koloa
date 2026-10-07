@@ -196,8 +196,7 @@ def pack(body: Dict[str, Any]) -> Dict[str, Any]:
                 rules=body.get('rules', True) is not False,
                 trend=gui.trend_order(body.get('options') or {}),
                 progress=told)
-            # as the page shows them: from the folder koloa runs in (where
-            #   its terminals start too)
+            # as the page shows them: from the folder koloa runs in
             made.update(folder_shown=gui._path_shown(made['folder']),
                         tar_shown=(gui._path_shown(made['tar'])
                                    if made['tar'] else None))

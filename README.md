@@ -35,7 +35,6 @@ exactly. That is what makes the outlier-aware FIP affordable.
 | `koloa.gather` | everything public about a star from its SIMBAD name, kept in one folder: the velocities of DACE and of CARMENES DR1, the TESS light curves, the identifiers and periods of variability of SIMBAD, and a manifest of what each archive gave |
 | `koloa.datasets` | which datasets of a star are used: a spectrum that several have (HARPS on DACE and by SERVAL, HIRES in three surveys) is taken from the most precise release, told by the noise of each on the spectra they share; a dataset that constrains neither the mean nor the slope of a line through the nightly means is left out; everything stays on disk and can be asked back |
 | `koloa.survey` | a survey: the stars of SIMBAD within a distance and a range of spectral types, which of them have velocities in the archives (DACE, CARMENES DR1, the surveys on VizieR), the files of velocities one has of them (LBL, through APERO's names), and their batch: run here, or packed as one folder and its tar (the files, the archives, koloa itself, a script whose first setting is where the folder is) for a server or a cluster |
-| `koloa.terminal` | a terminal in the GUI, to the machine that runs a batch, with the way there remembered |
 | `koloa.archive` | the names of a star (CDS Sesame) and its planets in the NASA Exoplanet Archive, with every published solution; a fitted K against them, the most recent first |
 | `koloa.radvel_bridge` | `OutlierRVLikelihood`, a drop-in replacement for radvel's `RVLikelihood` |
 | `koloa.doppler` | relativistic Doppler conversions (velocity, wavelength ratio, log-wavelength shift) |
@@ -229,11 +228,17 @@ where the folder is on the machine that runs it; there, `tar xzf`, then
 `python run_batch.py` (several stars at once; `submit.sh` is the same as
 a SLURM job array). Each star done is kept in `results/` (its line of
 the table, its FIP, a PDF), so a batch stopped goes on where it was, and
-the results brought back open in the page as a batch. The tab has a
-terminal to that machine (ssh as in any terminal), which remembers how
-you got there and types the copy, the launch and the return of the
-results for you to run; it answers only to the page opened with the key
-koloa prints when it starts.
+the results brought back open in the page as a batch.
+
+The tar is copied and run outside koloa, and its `README.txt` says the
+whole of it, for a person or for a Claude session on that machine: how to
+copy it, what it needs (Python 3.9 or later with numpy, scipy and
+matplotlib, no network), `python run_batch.py --check` (nothing computed:
+is everything there, and where is the batch: each star done, failed,
+being computed and how far, or to do), `--stop` (the processes of this
+batch, and no other), how long stars took, how to bring `results/` back,
+and what each column of the table is. Once a batch is packed, the page
+says where its tar is on this machine, in full.
 
 Its plot is a quick look before the report: the velocities shown, with
 sliders on both axes, and under them a quick FIP of exactly what is shown

@@ -10,10 +10,6 @@
   <link rel="stylesheet" href="/static/theme.css">
   <link rel="stylesheet" href="/static/gui.css">
   <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
-  <!-- the terminal of the survey tab -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 </head>
 <body>
   <div class="bg-orb orb-a"></div>
@@ -297,42 +293,11 @@
         <label><input type="checkbox" id="sv-tess"> <span data-i18n="sv_tess">with the light curves</span></label>
         <button type="button" id="sv-pack" class="go" data-i18n="sv_pack">Pack it</button>
       </div>
-      <p class="hint" id="sv-packstatus"></p>
+      <div id="sv-packstatus"></div>
       <div class="row">
         <label><span data-i18n="sv_results">The results of a batch folder</span> <span class="picker"><input id="sv-results" type="text" autocomplete="off" class="wide"><button type="button" data-pick="folder" data-into="sv-results">...</button></span></label>
         <button type="button" id="sv-open" data-i18n="sv_open">Open them</button><span class="hint" id="sv-openstatus"></span>
       </div>
-    </section>
-    <section class="card span-3" id="term-card">
-      <h2><span data-i18n="term_title">A terminal, to the machine that runs the batch</span> <button type="button" class="info" data-help="terminal" aria-label="?">i</button></h2>
-      <div class="row">
-        <button type="button" id="term-new" data-i18n="term_new">New terminal</button>
-        <select id="term-route"></select>
-        <button type="button" id="term-go" data-i18n="term_go">Go there</button>
-        <button type="button" id="term-remember" data-i18n="term_remember">Remember how I got here...</button>
-        <button type="button" id="term-forget" class="small" data-i18n="term_forget_btn">forget</button>
-        <span class="hint" id="term-status"></span>
-      </div>
-      <div class="row">
-        <span class="hint" data-i18n="term_types">Typed for you, to read then run with Enter:</span>
-        <button type="button" class="small" id="term-copy" data-i18n="term_copy">copy the tar there</button>
-        <button type="button" class="small" id="term-launch" data-i18n="term_launch">unpack and launch</button>
-        <button type="button" class="small" id="term-follow" data-i18n="term_follow">follow its log</button>
-        <button type="button" class="small" id="term-fetch" data-i18n="term_fetch">bring the results back</button>
-      </div>
-      <div id="term-tabs" class="row"></div>
-      <div id="term-box"></div>
-      <dialog id="route-dialog">
-        <h3 data-i18n="route_title">How to get there</h3>
-        <p class="hint" data-i18n="route_hint">The lines typed in this terminal that it showed (a password is never shown: never kept). Correct them: one line each, as you would type them.</p>
-        <label><span data-i18n="route_name">Name</span> <input id="route-name" type="text" autocomplete="off"></label>
-        <label><span data-i18n="route_host">Host, as ssh and rsync name it</span> <input id="route-host" type="text" autocomplete="off" placeholder="me@server"></label>
-        <label><span data-i18n="route_folder">Folder of the batches there</span> <input id="route-folder" type="text" autocomplete="off" class="wide" placeholder="/data/me/koloa_batches"></label>
-        <textarea id="route-lines" rows="6" spellcheck="false"></textarea>
-        <p class="hint bad" id="route-error"></p>
-        <div class="row"><button type="button" id="route-save" class="go" data-i18n="route_save">Remember</button>
-          <button type="button" id="route-cancel" class="small" data-i18n="cancel">Cancel</button></div>
-      </dialog>
     </section>
   </main>
 

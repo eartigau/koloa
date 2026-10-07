@@ -1,6 +1,6 @@
 // koloa's GUI: the survey tab. A sample asked of SIMBAD, what the archives
 //   have of each star, the files put with them, the batch of those ticked
-//   (here, or packed for another machine), and a terminal to that machine.
+//   (here, or packed for another machine, which its README tells how to run).
 
 // -----------------------------------------------------------------------------
 // the sample
@@ -117,15 +117,19 @@ function svPackStatus() {
   $('sv-pack').disabled = !!p && p.status === 'running';
   if (!p) { $('sv-packstatus').textContent = ''; return; }
   if (p.status === 'running') {
-    $('sv-packstatus').innerHTML = `<span class="hourglass">⏳</span> ${p.done} / ${p.total} ${esc(p.star || '')}`;
+    $('sv-packstatus').innerHTML = `<p class="hint"><span class="hourglass">⏳</span> ${p.done} / ${p.total} ${esc(p.star || '')}</p>`;
   } else if (p.status === 'failed') {
-    $('sv-packstatus').innerHTML = `<span class="bad">${esc(p.error)}</span>`;
+    $('sv-packstatus').innerHTML = `<p class="hint"><span class="bad">${esc(p.error)}</span></p>`;
   } else {
     const r = p.result;
     svPacked = r;
-    $('sv-packstatus').innerHTML = `${esc(t('sv_stars'))}: ${r.n}, ${esc(t('sv_col_files'))}: ${r.files}· <span class="mono">${esc(r.tar_shown || r.tar || r.folder_shown || r.folder)}</span>`
-      + (r.size ? ` (${(r.size / 1e6).toFixed(1)} MB)` : '') + ` · ROOT <span class="mono">${esc(r.root)}</span>`
-      + (r.missing.length ? ` · <span class="bad">${esc(t('sv_missing'))} ${esc(r.missing.join(', '))}</span>` : '');
+    // where it is on this machine, in full: the tar is what is copied to the server
+    $('sv-packstatus').innerHTML = `<p class="svpacked"><b>${esc(t('sv_packed'))}</b> ${r.n} ${esc(t('sv_stars'))}, ${r.files} ${esc(t('sv_col_files'))}`
+      + (r.missing.length ? ` · <span class="bad">${esc(t('sv_missing'))} ${esc(r.missing.join(', '))}</span>` : '') + '</p>'
+      + (r.tar ? `<p class="svpacked">${esc(t('sv_packed_tar'))} <span class="mono sel">${esc(r.tar)}</span> (${(r.size / 1e6).toFixed(1)} MB)</p>` : '')
+      + `<p class="svpacked">${esc(t('sv_packed_folder'))} <span class="mono sel">${esc(r.folder)}</span></p>`
+      + `<p class="svpacked">${esc(t('sv_packed_root'))} <span class="mono sel">${esc(r.root)}</span></p>`
+      + `<p class="hint">${esc(t('sv_packed_readme'))}</p>`;
     if (!$('sv-results').value) $('sv-results').value = r.folder_shown || r.folder;
   }
 }
@@ -231,165 +235,6 @@ async function svOpenResults() {
   } catch (err) { $('sv-openstatus').innerHTML = `<span class="bad">${esc(err.message)}</span>`; }
 }
 
-// where the batch will be on the server: the folder of the route, and its name
-function svServerRoot() {
-  const route = termRoutes[$('term-route').value];
-  if (route && route.folder) $('sv-root').value = `${route.folder.replace(/\/+$/, '')}/${$('sv-name').value.trim() || 'koloa_batch'}`;
-}
-
-// -----------------------------------------------------------------------------
-// the terminal: shells of this machine in the page, to go to the server
-// -----------------------------------------------------------------------------
-let termKey = '';
-try {
-  termKey = new URLSearchParams(location.search).get('key') || sessionStorage.getItem('koloa-key') || '';
-  if (termKey) sessionStorage.setItem('koloa-key', termKey);
-} catch (err) { /* no storage */ }
-const terms = [];          // the terminals: { id, term, fit, since, alive, box, label }
-let termNow = null;        // the one shown
-let termRoutes = {};       // the routes kept, by name
-
-async function termApi(what, body) {
-  const resp = await fetch(`/api/term/${what}`, { method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Koloa-Key': termKey }, body: JSON.stringify(body || {}) });
-  const data = await resp.json();
-  if (!resp.ok || data.error) throw new Error(data.error || resp.statusText);
-  return data;
-}
-
-function termRenderTabs() {
-  $('term-tabs').innerHTML = terms.map((one, i) => `<button type="button" class="small${one === termNow ? ' on' : ''}" data-term="${i}">`
-    + `${esc(one.label)}${one.alive ? '' : ' †'}</button>`).join('')
-    + (terms.length ? ` <button type="button" class="small" id="term-close">×</button>` : '');
-  terms.forEach((one) => { one.box.hidden = one !== termNow; });
-  if (termNow) { try { termNow.fit.fit(); termNow.term.focus(); } catch (err) { /* not shown yet */ } }
-}
-
-async function termRead(one) {
-  while (one.alive) {
-    try {
-      const res = await termApi('read', { id: one.id, since: one.since, wait: 20 });
-      if (res.data) one.term.write(Uint8Array.from(atob(res.data), (c) => c.charCodeAt(0)));
-      one.since = res.next;
-      one.alive = res.alive;
-    } catch (err) {
-      // the server asleep, or started again: once more, then given up
-      one.misses = (one.misses || 0) + 1;
-      if (one.misses > 5) one.alive = false;
-      await new Promise((done) => setTimeout(done, 2000));
-    }
-  }
-  termRenderTabs();
-}
-
-async function termOpen(label) {
-  if (!window.Terminal) { $('term-status').textContent = t('term_no_lib'); return null; }
-  const box = document.createElement('div');
-  box.className = 'termbox';
-  $('term-box').appendChild(box);
-  const term = new window.Terminal({ fontFamily: '"IBM Plex Mono", monospace', fontSize: 13, cursorBlink: true, scrollback: 5000,
-    theme: { background: '#05080f', foreground: '#e8eef8', cursor: '#7fd1ff' } });
-  const fit = new window.FitAddon.FitAddon();
-  term.loadAddon(fit);
-  term.open(box);
-  fit.fit();
-  let made;
-  try {
-    made = await termApi('open', { cols: term.cols, rows: term.rows });
-  } catch (err) {
-    box.remove();
-    $('term-status').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
-    return null;
-  }
-  const one = { id: made.id, term, fit, since: 0, alive: true, box, label: label || `${t('term_tab')} ${terms.length + 1}` };
-  term.onData((data) => { if (one.alive) termApi('write', { id: one.id, data }).catch(() => {}); });
-  term.onResize(({ cols, rows }) => { if (one.alive) termApi('resize', { id: one.id, cols, rows }).catch(() => {}); });
-  terms.push(one);
-  termNow = one;
-  termRenderTabs();
-  termRead(one);
-  $('term-status').textContent = '';
-  return one;
-}
-
-// a command put in a terminal, not run: it is read, changed if need be, and Enter runs it
-async function termType(one, text) {
-  if (!one) return;
-  termNow = one;
-  termRenderTabs();
-  await termApi('write', { id: one.id, data: text });
-}
-// the terminal of this machine (for rsync, which starts here), made when there is none
-async function termLocal() {
-  return terms.find((one) => one.local && one.alive) || (async () => {
-    const one = await termOpen(t('term_here'));
-    if (one) one.local = true;
-    // its prompt first: what is typed before it is shown twice
-    await new Promise((done) => setTimeout(done, 1200));
-    return one;
-  })();
-}
-const quoted = (text) => `'${String(text).replace(/'/g, "'\\''")}'`;
-
-async function termLoadRoutes() {
-  try {
-    const state = await termApi('state');
-    if (!state.available) { $('term-status').textContent = t('term_none'); $('term-card').classList.add('off'); return; }
-    if (!state.allowed) { $('term-status').textContent = t('term_key'); $('term-card').classList.add('off'); return; }
-    termRoutes = (await termApi('routes')).routes;
-  } catch (err) { $('term-status').innerHTML = `<span class="bad">${esc(err.message)}</span>`; return; }
-  const kept = $('term-route').value;
-  $('term-route').innerHTML = Object.keys(termRoutes).map((name) => `<option value="${esc(name)}">${esc(name)}`
-    + `${termRoutes[name].host ? ` (${esc(termRoutes[name].host)})` : ''}</option>`).join('') || `<option value="">${esc(t('term_no_route'))}</option>`;
-  if (kept && termRoutes[kept]) $('term-route').value = kept;
-  svServerRoot();
-}
-
-async function termGo() {
-  const name = $('term-route').value;
-  if (!termRoutes[name]) return;
-  const one = (termNow && termNow.alive && !termNow.local) ? termNow : await termOpen(name);
-  if (!one) return;
-  one.label = name; one.route = name;
-  termRenderTabs();
-  await termApi('go', { id: one.id, name });
-}
-
-async function termRemember() {
-  // what was typed in this terminal (what it showed: never a password), to be corrected
-  let lines = [];
-  if (termNow) { try { lines = (await termApi('typed', { id: termNow.id })).lines; } catch (err) { /* none */ } }
-  const known = termRoutes[$('term-route').value] || {};
-  $('route-name').value = (termNow && termNow.route) || $('term-route').value || '';
-  $('route-host').value = known.host || (lines.map((l) => (l.match(/^ssh\s+(?:-\S+\s+)*([^\s-]\S*)/) || [])[1]).filter(Boolean)[0] || '');
-  $('route-folder').value = known.folder || '';
-  $('route-lines').value = lines.join('\n');
-  $('route-dialog').showModal();
-}
-
-async function termSaveRoute() {
-  try {
-    termRoutes = (await termApi('route_save', { name: $('route-name').value, lines: $('route-lines').value,
-      host: $('route-host').value, folder: $('route-folder').value })).routes;
-    $('route-dialog').close();
-    const name = $('route-name').value.trim();
-    await termLoadRoutes();
-    $('term-route').value = name;
-    svServerRoot();
-  } catch (err) { $('route-error').textContent = err.message; }
-}
-
-// the batch packed last, and the route chosen: what the buttons type
-function termBatch() {
-  const route = termRoutes[$('term-route').value];
-  if (!route || !route.host || !route.folder) { $('term-status').textContent = t('term_need_route'); return null; }
-  const name = (svPacked && svPacked.folder.split('/').pop()) || $('sv-name').value.trim();
-  if (!name) { $('term-status').textContent = t('term_need_batch'); return null; }
-  $('term-status').textContent = '';
-  return { route, name, folder: route.folder.replace(/\/+$/, ''), tar: svPacked && (svPacked.tar_shown || svPacked.tar),
-    local: svPacked && (svPacked.folder_shown || svPacked.folder) };
-}
-
 document.addEventListener('click', (e) => {
   const id = e.target.id;
   if (id === 'sv-ask') svAsk();
@@ -402,44 +247,6 @@ document.addEventListener('click', (e) => {
   else if (id === 'sv-run') svRun();
   else if (id === 'sv-pack') svPack();
   else if (id === 'sv-open') svOpenResults();
-  else if (id === 'term-new') termOpen();
-  else if (id === 'term-go') termGo();
-  else if (id === 'term-remember') termRemember();
-  else if (id === 'route-save') termSaveRoute();
-  else if (id === 'route-cancel') $('route-dialog').close();
-  else if (id === 'term-forget') {
-    const name = $('term-route').value;
-    if (name && confirm(`${t('term_forget')} ${name}?`)) termApi('route_delete', { name }).then(termLoadRoutes);
-  } else if (id === 'term-close' && termNow) {
-    const one = termNow;
-    termApi('close', { id: one.id }).catch(() => {});
-    one.alive = false; one.term.dispose(); one.box.remove();
-    terms.splice(terms.indexOf(one), 1);
-    termNow = terms[terms.length - 1] || null;
-    termRenderTabs();
-  } else if (id === 'term-copy') {
-    const b = termBatch();
-    if (b && !b.tar) $('term-status').textContent = t('term_need_batch');
-    else if (b) termLocal().then((one) => termType(one, `rsync -av --progress ${quoted(b.tar)} ${b.route.host}:${quoted(`${b.folder}/`)}`));
-  } else if (id === 'term-launch') {
-    const b = termBatch();
-    if (b && termNow && !termNow.local) {
-      termType(termNow, `cd ${quoted(b.folder)} && tar xzf ${quoted(`${b.name}.tar.gz`)} && cd ${quoted(b.name)} && nohup python -u run_batch.py > run.log 2>&1 &`);
-    } else if (b) $('term-status').textContent = t('term_need_server');
-  } else if (id === 'term-follow') {
-    const b = termBatch();
-    if (b && termNow && !termNow.local) termType(termNow, `tail -n 30 -f ${quoted(`${b.folder}/${b.name}/run.log`)}`);
-    else if (b) $('term-status').textContent = t('term_need_server');
-  } else if (id === 'term-fetch') {
-    const b = termBatch();
-    if (b) {
-      const local = b.local || `${$('sv-out').value.trim() || '.'}/${b.name}`;
-      $('sv-results').value = local;
-      termLocal().then((one) => termType(one, `rsync -av ${b.route.host}:${quoted(`${b.folder}/${b.name}/results/`)} ${quoted(`${local}/results/`)}`));
-    }
-  }
-  const tab = e.target.closest('[data-term]');
-  if (tab) { termNow = terms[+tab.dataset.term]; termRenderTabs(); }
   const sort = e.target.closest('[data-svsort]');
   if (sort) {
     const key = sort.dataset.svsort;
@@ -452,18 +259,9 @@ document.addEventListener('change', (e) => {
     if (e.target.checked) svTicked.add(e.target.dataset.svtick); else svTicked.delete(e.target.dataset.svtick);
     svRender();
   }
-  if (e.target.id === 'term-route') svServerRoot();
   if (e.target.id === 'sv-somedata') svRender();
 });
 document.addEventListener('input', (e) => {
   if (e.target.id === 'sv-filter') svRender();
-  if (e.target.id === 'sv-name') svServerRoot();
 });
-window.addEventListener('resize', () => { if (termNow) { try { termNow.fit.fit(); } catch (err) { /* hidden */ } } });
 langHooks.push(() => { if (survey) svRender(); });
-// the terminal's routes, once the survey tab is shown
-let termLoaded = false;
-function surveyShown() {
-  if (!termLoaded) { termLoaded = true; termLoadRoutes(); }
-  if (termNow) setTimeout(() => { try { termNow.fit.fit(); } catch (err) { /* hidden */ } }, 50);
-}

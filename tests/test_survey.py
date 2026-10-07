@@ -4,6 +4,7 @@ from SIMBAD's answer, what the archives have of a star, the files put
 with the stars, a batch folder packed and run.
 """
 import ast
+import glob
 import json
 import os
 import tarfile
@@ -228,7 +229,9 @@ def _batch(tmp_path, monkeypatch, nstar=3):
                     + rng.normal(0, 1.0, 30), np.full(30, 1.0),
                     inst=np.array(['HARPS15'] * 30)),
              str(tmp_path / 'arch' / 'GJ_2' / 'rv' / 'all_rv.csv'))
-    (tmp_path / 'arch' / 'GJ_2' / 'manifest.json').write_text('{}')
+    (tmp_path / 'arch' / 'GJ_2' / 'manifest.json').write_text(json.dumps(
+        dict(folder=str(tmp_path / 'arch' / 'GJ_2'), archives=dict(
+            dace=dict(status='ok', npoints=30)))))
     return stars
 
 
@@ -266,7 +269,30 @@ def test_a_batch_folder_packed(tmp_path, monkeypatch):
         names = handle.getnames()
     assert 'm_dwarfs_15pc/run_batch.py' in names
     assert 'm_dwarfs_15pc/files/GJ_1/star0.csv' in names
+    # what the batch writes in is there, empty, once unpacked
+    assert 'm_dwarfs_15pc/logs' in names and 'm_dwarfs_15pc/results' in names
     assert made['size'] == os.path.getsize(made['tar'])
+    # its README: how to run it there, for a person or an agent, its
+    #   stars, and no path of this machine
+    readme = open(os.path.join(folder, 'README.txt')).read()
+    assert readme.startswith('koloa: the batch m_dwarfs_15pc\n====')
+    assert "ROOT = '/scratch/me/m_dwarfs_15pc'" in readme
+    assert 'FOR A CLAUDE SESSION' in readme and '--check' in readme
+    assert 'about\n       12 cores' in readme or '12 cores' in readme
+    assert ('rsync -av me@server:/scratch/me/m_dwarfs_15pc/results/ \\\n'
+            '          m_dwarfs_15pc/results/') in readme
+    lines = readme[readme.index('9. THE STARS'):].splitlines()
+    assert lines[4].split()[:4] == ['GJ', '1', 'M3V', '5.00']
+    assert lines[4].split()[4:] == ['1', 'none']
+    assert lines[5].split()[4:] == ['0', 'DACE', '30']
+    assert str(tmp_path) not in readme and '{' not in readme
+    # (the lines of its stars are as long as their archives are many)
+    assert max(len(line) for line in readme.splitlines()
+               if not line.startswith('    GJ ')) <= 78
+    # nor in the manifest that goes with the archives of a star
+    with open(os.path.join(folder, 'archives', 'GJ_2',
+                           'manifest.json')) as handle:
+        assert json.load(handle)['folder'] == os.path.join('archives', 'GJ_2')
     # a star with nothing is said
     made = survey.pack(stars + [dict(name='GJ 9', files=[])], 'again',
                        out=str(tmp_path / 'out'),
@@ -294,16 +320,34 @@ def test_a_batch_run_where_it_was_carried(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, 'transits_of', lambda target, known: [])
     monkeypatch.setattr(gui, '_star_planets', lambda target: ([], []))
     monkeypatch.setattr(gui, 'QUICK', dict(kmax=1, nsweep=150, nburn=80))
+    asked = []
     monkeypatch.setattr(gui, 'tess_light',
-                        lambda target, root='', fetch=False: (None, 'none'))
+                        lambda target, root='', fetch=False: asked.append(
+                            fetch) or (None, 'none'))
     monkeypatch.setattr(gui, 'space_light', lambda target, root='',
-                        fetch=False, mission='tess': (None, 'none', {}))
+                        fetch=False, mission='tess': asked.append(fetch) or (
+                            None, 'none', {}))
+    # before: everything is there, nothing computed
+    told = survey.status(moved, jobs=2)
+    assert told['state'] == 'ready' and told['todo'] == 2
+    assert told['missing'] == [] and not os.path.exists(
+        os.path.join(moved, 'results', 'table.csv'))
     rows = survey.run(moved)
+    told = survey.status(moved)
+    assert told['state'] == 'done' and told['done'] == 2
+    assert told['stars'][0]['told'].startswith('P = 5.3')
+    assert glob.glob(os.path.join(moved, 'logs', '*.pid')) == []
+    assert glob.glob(os.path.join(moved, 'results', '*', 'running.json')) \
+        == []
     assert [row['name'] for row in rows] == ['GJ 1', 'GJ 2']
     assert [row['status'] for row in rows] == ['done', 'done']
     assert rows[0]['period'] == pytest.approx(5.3, rel=0.02)
     assert rows[1]['period'] == pytest.approx(7.7, rel=0.02)
     assert rows[0]['files'] == 1 and rows[1]['files'] == 0
+    # nothing is asked of the network: a light curve that did not come
+    #   with the archives of a star is not fetched, and the table says so
+    assert asked and not any(asked)
+    assert rows[0]['transit'] == 'no light curve'
     for star in ('GJ_1', 'GJ_2'):
         for part in ('result.json', 'quick.json', 'quicklook.pdf'):
             assert os.path.exists(os.path.join(moved, 'results', star, part))
@@ -416,65 +460,66 @@ def test_the_results_of_a_batch_folder_as_a_batch_of_the_page(tmp_path,
                                                            'archives')
 
 
-def test_a_terminal_and_its_routes(tmp_path, monkeypatch):
-    """a shell answers who has the key only; what it showed as it was
-    typed is proposed for a route, not what was typed with the echo off;
-    a route kept is typed again"""
-    import base64
-    import time
-    from koloa import terminal
-    if not terminal.available():
-        pytest.skip('no pseudo-terminal here')
-    monkeypatch.setattr(terminal, 'ROUTES', str(tmp_path / 'routes.json'))
-    assert terminal.route('/api/term/state', {}, None) == dict(
-        available=True, allowed=False)
-    assert terminal.route('/api/term/state', {}, terminal.KEY)['allowed']
-    for key in (None, '', 'not-the-key'):
-        with pytest.raises(PermissionError):
-            terminal.route('/api/term/open', {}, key)
-    sid = terminal.route('/api/term/open', dict(cols=120, rows=24,
-                                                cwd=str(tmp_path)),
-                         terminal.KEY)['id']
-
-    def typed(text, pause=1.0):
-        for char in text + '\r':
-            terminal.route('/api/term/write', dict(id=sid, data=char),
-                           terminal.KEY)
-            time.sleep(0.01)
-        time.sleep(pause)
-
-    def shown(since=0):
-        out = terminal.route('/api/term/read', dict(id=sid, since=since,
-                                                    wait=0.1), terminal.KEY)
-        return base64.b64decode(out['data']).decode('utf-8', 'replace'), out
+def test_where_a_batch_is_and_its_stop(tmp_path, monkeypatch):
+    """the state of a batch folder without computing (what lacks, the
+    stars being computed and how far), a batch started twice, and the
+    stop of its processes and of no other"""
+    import subprocess
+    import sys
+    stars = _batch(tmp_path, monkeypatch, nstar=2)
+    made = survey.pack(stars, 'two', out=str(tmp_path / 'out'),
+                       root=str(tmp_path / 'arch'), gather=False, tar=False)
+    root = made['folder']
+    # a file that did not come with the folder: not ready, and why
+    kept = os.path.join(root, 'files', 'GJ_1', 'star0.csv')
+    os.rename(kept, kept + '.gone')
+    told = survey.status(root)
+    assert told['state'] == 'not ready'
+    assert told['missing'] == ['GJ 1: no ' + os.path.join(
+        'files', 'GJ_1', 'star0.csv')]
+    os.rename(kept + '.gone', kept)
+    # a part that computes a star, as another process of this machine
+    part = subprocess.Popen([sys.executable, '-c', 'import time; '
+                             'time.sleep(600)', 'koloa.survey'],
+                            start_new_session=True)
+    other = subprocess.Popen([sys.executable, '-c', 'import time; '
+                              'time.sleep(600)'], start_new_session=True)
     try:
-        time.sleep(1.5)
-        typed('echo koloa-$((6*7))')
-        typed('python3 -c "import getpass; getpass.getpass()"')
-        typed('not-to-be-kept')
-        typed('echo after')
-        text, out = shown()
-        assert 'koloa-42' in text and out['alive']
-        assert 'not-to-be-kept' not in text
-        lines = terminal.route('/api/term/typed', dict(id=sid),
-                               terminal.KEY)['lines']
-        assert 'echo koloa-$((6*7))' in lines and 'echo after' in lines
-        assert 'not-to-be-kept' not in lines
-        kept = terminal.route('/api/term/route_save', dict(
-            name='there', lines='echo route-$((2+3))\n\n', host='me@there',
-            folder='/data/batches'), terminal.KEY)['routes']
-        assert kept['there']['lines'] == ['echo route-$((2+3))']
-        assert json.load(open(tmp_path / 'routes.json'))['there']['host'] \
-            == 'me@there'
-        terminal.route('/api/term/go', dict(id=sid, name='there'),
-                       terminal.KEY)
-        time.sleep(3.0)
-        assert 'route-5' in shown(out['next'])[0]
-        terminal.route('/api/term/resize', dict(id=sid, cols=90, rows=30),
-                       terminal.KEY)
-        assert terminal.route('/api/term/route_delete', dict(name='there'),
-                              terminal.KEY)['routes'] == {}
+        import socket
+        os.makedirs(os.path.join(root, 'logs'), exist_ok=True)
+        for name, proc in (('part_0_of_2', part), ('stale', other)):
+            with open(os.path.join(root, 'logs', name + '.pid'), 'w') as out:
+                json.dump(dict(pid=proc.pid, host=socket.gethostname()), out)
+        mark = os.path.join(root, 'results', 'GJ_1', 'running.json')
+        os.makedirs(os.path.dirname(mark))
+        with open(mark, 'w') as out:
+            json.dump(dict(pid=part.pid, host=socket.gethostname()), out)
+        with open(os.path.join(root, 'logs', 'part_0.log'), 'w') as out:
+            out.write('261007 10:00:00.00 | batch: GJ 1 (1 of 1)\n'
+                      '261007 10:05:00.00 | quick FIP, first pass: 40 % of '
+                      'the sweeps, 5 min so far, about 7 min left\n')
+        told = survey.status(root)
+        assert told['state'] == 'running' and told['running'] == 1
+        assert told['stars'][0] == dict(
+            name='GJ 1', state='running', told='quick FIP, first pass: '
+            '40 % of the sweeps, 5 min so far, about 7 min left')
+        assert told['stars'][1]['state'] == 'to do'
+        # started a second time: the star being computed is left to it
+        done = []
+        monkeypatch.setattr(survey, 'run_target', lambda root, star, *args:
+                            done.append(star['name']) or dict(
+                                status='done', elapsed=0.0, summary={}))
+        survey.run(root)
+        assert done == ['GJ 2']
+        # stopped: the part and what it leads, not the process that only
+        #   has a number in the folder (another's by now, say)
+        assert survey.stop(root) == 1
+        assert part.wait(timeout=20) != 0 and other.poll() is None
+        assert glob.glob(os.path.join(root, 'logs', '*.pid')) == []
+        assert not os.path.exists(mark)
+        told = survey.status(root)
+        assert told['state'] == 'ready' and told['todo'] == 2
     finally:
-        terminal.route('/api/term/close', dict(id=sid), terminal.KEY)
-    with pytest.raises(ValueError, match='no such terminal'):
-        terminal.route('/api/term/read', dict(id=sid), terminal.KEY)
+        for proc in (part, other):
+            if proc.poll() is None:
+                proc.kill()

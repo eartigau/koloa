@@ -1,0 +1,15 @@
+{
+ "n": 3,
+ "running": [
+  "261007 03:45:38.44 |   done     GJ 876                 P = 61.2201 d, FIP < 1e-300, 211 s",
+  "261007 03:45:38.44 |   done     GJ 581                 P = 5.3691 d, FIP 2.3e-148, 228 s",
+  "261007 03:45:38.44 |   running  HD 69830               quick FIP, first pass: 40 % of the sweeps, 39 s so far, about 59 s left",
+  "261007 03:45:38.44 | state: running; 2 of 3 stars have their result, 1 being computed, 0 to do"
+ ],
+ "done": [
+  "261007 03:48:19.52 |   done     GJ 876                 P = 61.2201 d, FIP < 1e-300, 211 s",
+  "261007 03:48:19.52 |   done     GJ 581                 P = 5.3691 d, FIP 2.3e-148, 228 s",
+  "261007 03:48:19.52 |   done     HD 69830               P = 31.6050 d, FIP 3.8e-31, 201 s",
+  "261007 03:48:19.52 | state: done; 3 of 3 stars have their result, 0 being computed, 0 to do"
+ ]
+}

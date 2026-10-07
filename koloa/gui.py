@@ -2387,8 +2387,11 @@ def _batch_transit(batch: Dict[str, Any], item: Dict[str, Any],
     FIP (of the period or any alias) is below TRANSIT_FIP (10 %): a transit
     found would make a weak signal strong; its light curve (the
     archives of its star, else MAST), searched about the conjunction of
-    its fold (koloa.transit); its line says whether one is plausible"""
+    its fold (koloa.transit); its line says whether one is plausible. A
+    batch that asks nothing of the network (one packed for another
+    machine: fetch False) looks in the archives of the star only"""
     summ = item['summary']
+    fetch = batch.get('fetch', True) is not False
     if summ.get('fip') is None or summ['fip'] >= TRANSIT_FIP:
         return
     target = (item.get('star') or {}).get('target') or ''
@@ -2405,7 +2408,7 @@ def _batch_transit(batch: Dict[str, Any], item: Dict[str, Any],
             period=shown.get('period') or peak['period'],
             tc=shown.get('tc'), tc_err=shown.get('tc_err'),
             p_err=peak['period'] ** 2 / (4 * max(data.baseline, 1.0)),
-            fetch=True, name=f'#{peak["id"]}', kind='rv'))
+            fetch=fetch, name=f'#{peak["id"]}', kind='rv'))
     except Exception as err:  # a transit not searched is no failure
         summ['transit'] = dict(status='error',
                                why=f'{type(err).__name__}: {err}')
@@ -2413,9 +2416,10 @@ def _batch_transit(batch: Dict[str, Any], item: Dict[str, Any],
     finally:
         item['stage'] = None
     if res.get('missing'):
-        summ['transit'] = dict(status='not observed' if res.get('reason')
-                               == 'unobserved' else 'no TESS',
-                               why=res.get('lc'))
+        summ['transit'] = dict(
+            status='not observed' if res.get('reason') == 'unobserved'
+            else 'no TESS' if fetch else 'no light curve',
+            why=res.get('lc'))
         return
     best = res.get('best') or {}
     # the depth and radius of the box fitted to the medians, when there is
@@ -3996,15 +4000,6 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith('/api/survey/'):
                 from koloa import gui_survey
                 return self._json(gui_survey.route(path, body))
-            if path.startswith('/api/term/'):
-                # a shell: only for the page that has the key of this
-                #   server (koloa.terminal)
-                from koloa import terminal
-                try:
-                    return self._json(terminal.route(
-                        path, body, self.headers.get('X-Koloa-Key')))
-                except PermissionError as err:
-                    return self._json(dict(error=str(err)), 403)
             if path == '/api/batch_open':
                 return self._json(batch_open(body.get('id', ''),
                                              body.get('index', 0)))
@@ -4051,10 +4046,7 @@ def serve(port: int = 8765, browser: bool = True):
             continue
     else:
         raise OSError(f'no free port from {port} to {port + 19}')
-    # the key of this server in the address: the terminal of the page
-    #   (a shell) answers only to who has it
-    from koloa import terminal
-    url = f'http://127.0.0.1:{server.server_address[1]}/?key={terminal.KEY}'
+    url = f'http://127.0.0.1:{server.server_address[1]}/'
     # exoplanet.eu's catalogue, when not kept yet: fetched in the
     #   background (its server takes minutes), the pages go on without it
     try:
@@ -4076,7 +4068,6 @@ def serve(port: int = 8765, browser: bool = True):
     except KeyboardInterrupt:
         pass
     finally:
-        terminal.close_all()
         for job in JOBS.values():
             if job.returncode is None:
                 job.proc.terminate()

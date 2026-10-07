@@ -2059,7 +2059,6 @@ function showTab(name) {
   // the batch and the survey over the whole window, their tabs and the
   //   banner with them
   document.body.classList.toggle('wide', name === 'batch' || name === 'survey');
-  if (name === 'survey' && window.surveyShown) surveyShown();
   if (name === 'remembered') loadRemembered();
   else if (view) setTimeout(() => { syncSliders(); syncPeriods(); }, 50);
 }
@@ -2274,7 +2273,7 @@ function transitCell(tr) {
     return `<span class="ok" title="${tip}">\u2691 ${tr.mission && tr.mission !== 'TESS' ? `${esc(tr.mission)} ` : ''}${tr.depth.toFixed(2)} ppt \u00b7 ${tr.radius.toFixed(1)} R\u2295 \u00b7 ${tr.snr.toFixed(1)}\u03c3</span>`;
   }
   if (tr.status === 'none') return `<span class="hint" title="${tip}">${tr.snr !== null && tr.snr !== undefined ? `${tr.snr.toFixed(1)}\u03c3` : '-'}</span>`;
-  return `<span class="hint" title="${tip}">${esc(tr.status === 'no TESS' ? t('ts_no_tess') : tr.status === 'not observed' ? t('ts_not_observed') : tr.status)}</span>`;
+  return `<span class="hint" title="${tip}">${esc(tr.status === 'no TESS' ? t('ts_no_tess') : tr.status === 'not observed' ? t('ts_not_observed') : tr.status === 'no light curve' ? t('ts_no_lc') : tr.status)}</span>`;
 }
 // the instruments of a line (nights of each), their sources in the tip
 function instCell(r) {

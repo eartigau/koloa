@@ -37,6 +37,19 @@ its archives chosen by koloa.datasets; each star done is kept
 (results/<star>/: result.json, quick.json, quicklook.pdf), so that a batch
 stopped goes on where it was, and results/table.csv gathers them.
 
+The folder is run outside koloa, and its README.txt says how, for a person
+or for a Claude session on the machine that runs it: the copy, what it
+needs of Python, the launch, a job array, the results brought back, each
+column of the table. Two more of its script, and here:
+
+    survey.status('m_dwarfs_15pc')    # nothing computed: is all there, and
+                                      #   where is each star (--check)
+    survey.stop('m_dwarfs_15pc')      # the processes of this batch on this
+                                      #   machine, and no other (--stop)
+
+It asks nothing of the network unless told to gather: a light curve that
+is not with the archives of a star is not fetched.
+
 The check asks no more than is needed to tell which stars have
 velocities: the lists of the stars of CARMENES DR1 and of the surveys on
 VizieR (kept on this machine: a position looked up), and DACE, star by
@@ -53,9 +66,13 @@ import json
 import os
 import re
 import shutil
+import signal
+import socket
 import subprocess
 import sys
 import tarfile
+import textwrap
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -98,6 +115,12 @@ TARGETS = 'targets.json'
 #: what of koloa's cache goes with a batch (not the light curves)
 CACHE_PARTS = ('archive', 'published', 'tic', 'apero_astrometrics',
                'carmenes_objects.json')
+#: the mark of a star being computed, in its folder of the results
+RUNNING = 'running.json'
+#: what the batch needs of this Python
+NEEDS = ('numpy', 'scipy', 'matplotlib')
+#: the cores a star takes, about (its chains, and what starts them)
+CORES = 3
 #: the columns of the table of a batch
 COLUMNS = ('name', 'sptype', 'distance', 'status', 'files', 'datasets',
            'nights', 'baseline', 'period', 'fip', 'fip_alone', 'K', 'K_err',
@@ -594,7 +617,8 @@ def run_target(root: str, star: Dict[str, Any], rules: bool = True,
     One star of a batch folder: the quick FIP of its files and of its
     archives (those of the folder; gathered when asked), its datasets
     chosen by koloa.datasets, a transit looked for at its best peak when
-    its light curve is with its archives; kept in results/<star>/:
+    its light curve is with its archives (fetched only with gather); kept
+    in results/<star>/:
     result.json (its line of the table, what was done with each dataset),
     quick.json (the FIP, as the page draws it) and quicklook.pdf
 
@@ -621,6 +645,9 @@ def run_target(root: str, star: Dict[str, Any], rules: bool = True,
     gui.BATCHES[bid] = dict(
         id=bid, status='running', start=start, end=None, cancel=False,
         trend=int(trend), archives=True, regather=False, gather=bool(gather),
+        # the network only when asked for (GATHER): a light curve that is
+        #   not with the archives of the star is not fetched
+        fetch=bool(gather),
         rules=bool(rules), root=os.path.join(root, 'archives'), items=[item])
     # in this process, to its end (the page runs it in a thread)
     gui._run_batch(bid)
@@ -723,6 +750,228 @@ def table(root: str) -> List[Dict[str, Any]]:
     return rows
 
 
+def _fip(value: Any) -> str:
+    """a FIP as it is said: one of 0 is below what a number holds"""
+    return '< 1e-300' if not value else f'{value:.2g}'
+
+
+def _mark(path: str, **more: Any) -> None:
+    """a process of a batch says it is there: its number, its machine,
+    since when"""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w') as handle:
+        json.dump(dict(pid=os.getpid(), host=socket.gethostname(),
+                       since=time.time(), **more), handle)
+
+
+def _unmark(path: str) -> None:
+    """a mark taken away (it may be gone already)"""
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def _marked(path: str) -> Optional[Dict[str, Any]]:
+    """a mark, and whether its process is still there: alive is True,
+    False, or None when the mark is of another machine (a node of a
+    cluster: not known from here)"""
+    try:
+        with open(path) as handle:
+            mark = json.load(handle)
+        pid = int(mark['pid'])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if mark.get('host') != socket.gethostname():
+        return dict(mark, alive=None)
+    try:
+        os.kill(pid, 0)
+        alive = True
+    except PermissionError:  # there, and another's
+        alive = True
+    except OSError:
+        alive = False
+    return dict(mark, alive=alive)
+
+
+def _ours(pid: int) -> bool:
+    """whether a process is one of a batch, by its command line: a number
+    kept from before a restart of the machine may be another's by now"""
+    try:
+        told = subprocess.run(['ps', '-p', str(pid), '-o', 'command='],
+                              capture_output=True, text=True,
+                              timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return 'koloa.survey' in told or 'run_batch.py' in told
+
+
+def _end(pid: int) -> bool:
+    """a process of a batch ended, with those it started when it leads
+    them (a part does, and so does a batch started from a shell)"""
+    try:
+        if hasattr(os, 'killpg') and os.getpgid(pid) == pid:
+            os.killpg(pid, signal.SIGTERM)
+        else:
+            os.kill(pid, signal.SIGTERM)
+        return True
+    except OSError:
+        return False
+
+
+def _progress(root: str) -> Dict[str, str]:
+    """the last line of the logs of a batch about each star being
+    computed: how far its FIP is"""
+    out = {}
+    for path in glob.glob(os.path.join(root, 'logs', '*.log')) + [
+            os.path.join(root, 'run.log')]:
+        try:
+            with open(path, errors='replace') as handle:
+                lines = [line.split(' | ', 1)[-1].strip()
+                         for line in handle if line.strip()]
+        except OSError:
+            continue
+        star, last = None, ''
+        for line in lines:
+            start = re.match(r'batch: (.+) \(\d+ of \d+\)$', line)
+            if start:
+                star, last = start.group(1), 'started'
+            elif star and line.startswith(f'batch: {star} '):
+                star = None  # done, or failed
+            elif star and not line.startswith('batch: '):
+                last = line
+        if star:
+            out[star] = last
+    return out
+
+
+def status(root: str, jobs: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Where the batch of a folder is, said line by line and returned;
+    nothing is computed. This Python and what it has of what the batch
+    needs, the cores of the machine, then each star: done (its best
+    peak), failed (why), being computed (how far), or to do; and whether
+    the batch runs.
+
+    :param root: str, the batch folder
+    :param jobs: int or None, the stars at once (for the cores they take)
+
+    :return: dict, state ('not ready': something lacks, see missing;
+             'ready': nothing runs, stars are left; 'running'; 'done':
+             every star has its result), n, done, failed, running, todo,
+             missing (list of str) and stars (name, state, told)
+    """
+    import importlib
+    root = os.path.abspath(os.path.expanduser(root))
+    held = targets_of(root)
+    missing = []
+    found = []
+    for name in NEEDS:
+        try:
+            found.append(f'{name} {importlib.import_module(name).__version__}')
+        except ImportError:
+            missing.append(f'this Python has no {name}')
+    if sys.version_info < (3, 9):
+        missing.append('Python 3.9 or later is needed')
+    log(f'batch {held.get("name")} (koloa {held.get("koloa")}, made '
+        f'{held.get("made")}) in {root}', 'info')
+    log(f'Python {sys.version.split()[0]} ({sys.executable}), '
+        + ', '.join(found), 'value')
+    cores = os.cpu_count() or 1
+    mine = (len(os.sched_getaffinity(0))
+            if hasattr(os, 'sched_getaffinity') else cores)
+    log(f'{cores} cores on {socket.gethostname()}'
+        + (f', {mine} for this process' if mine != cores else '')
+        + (f'; {jobs} stars at once take about {CORES * int(jobs)}'
+           if jobs else ''), 'value')
+    if jobs and CORES * int(jobs) > mine:
+        log(f'more than there are: JOBS = {max(1, mine // CORES)} would '
+            f'fit', 'warn')
+    lines = _progress(root)
+    stars = []
+    for star in held['targets']:
+        name = str(star['name'])
+        gone = [path for path in star.get('files') or []
+                if not os.path.exists(os.path.join(root, path))]
+        missing += [f'{name}: no {path}' for path in gone]
+        has = os.path.isdir(os.path.join(root, 'archives', _folder(name)))
+        out = os.path.dirname(result_path(root, name))
+        mark = _marked(os.path.join(out, RUNNING))
+        if os.path.exists(result_path(root, name)):
+            with open(result_path(root, name)) as handle:
+                res = json.load(handle)
+            summ = res.get('summary') or {}
+            state = 'done' if res.get('status') == 'done' else 'failed'
+            told = (f'P = {summ["period"]:.4f} d, FIP {_fip(summ["fip"])}, '
+                    if summ.get('period') else '') + (
+                f'{res.get("elapsed") or 0:.0f} s' if state == 'done'
+                else str(res.get('error') or res.get('status')))
+        elif mark is not None and mark['alive'] is not False:
+            state = 'running'
+            told = (lines.get(name) or 'started') + (
+                f' (on {mark.get("host")})' if mark['alive'] is None else '')
+        else:
+            state = 'to do'
+            told = ('stopped as it was being computed: it starts over'
+                    if mark is not None else '')
+            if not star.get('files') and not has:
+                told = 'no file and no archive of it here: it will fail'
+        stars.append(dict(name=name, state=state, told=told))
+        log(f'  {state:8s} {name:22s} {told}'.rstrip(),
+            'warn' if state == 'failed' or gone else 'value')
+    count = {key: sum(star['state'] == key for star in stars)
+             for key in ('done', 'failed', 'running', 'to do')}
+    marks = [_marked(path) for path in glob.glob(
+        os.path.join(root, 'logs', '*.pid'))]
+    runs = any(mark is not None and mark['alive'] is not False
+               for mark in marks) or count['running'] > 0
+    for line in missing:
+        log(line, 'error')
+    state = ('not ready' if missing else 'running' if runs else
+             'done' if not count['to do'] else 'ready')
+    log(f'state: {state}; {count["done"] + count["failed"]} of '
+        f'{len(stars)} stars have their result'
+        + (f' ({count["failed"]} failed)' if count['failed'] else '')
+        + f', {count["running"]} being computed, {count["to do"]} to do',
+        'error' if missing else 'info')
+    return dict(state=state, n=len(stars), done=count['done'],
+                failed=count['failed'], running=count['running'],
+                todo=count['to do'], missing=missing, stars=stars)
+
+
+def stop(root: str) -> int:
+    """
+    Stop the batch of a folder that runs on this machine: each of its
+    processes is ended, with the chains of the FIP it started. The stars
+    done are kept; those that were being computed start over the next
+    time. (The tasks of a job array are stopped by the scheduler: scancel.)
+
+    :param root: str, the batch folder
+
+    :return: int, the processes ended
+    """
+    root = os.path.abspath(os.path.expanduser(root))
+    ended, elsewhere = 0, set()
+    for path in sorted(glob.glob(os.path.join(root, 'logs', '*.pid'))):
+        mark = _marked(path)
+        if mark is not None and mark['alive'] is None:
+            elsewhere.add(str(mark.get('host')))
+            continue
+        if mark is not None and mark['alive'] and int(
+                mark['pid']) != os.getpid() and _ours(int(mark['pid'])):
+            ended += _end(int(mark['pid']))
+        _unmark(path)
+    for path in glob.glob(os.path.join(root, 'results', '*', RUNNING)):
+        mark = _marked(path)
+        if mark is None or mark['alive'] is not None:
+            _unmark(path)
+    log(f'batch: {ended} processes stopped; the stars done are kept'
+        + (f'. Others run on {", ".join(sorted(elsewhere))}: stop them '
+           f'there (scancel for a job array)' if elsewhere else ''),
+        'warn' if elsewhere else 'value')
+    return ended
+
+
 def run(root: str, jobs: int = 1, rules: bool = True, gather: bool = False,
         only: Optional[Sequence[str]] = None, again: bool = False,
         part: Optional[Tuple[int, int]] = None, trend: int = 1
@@ -754,6 +1003,26 @@ def run(root: str, jobs: int = 1, rules: bool = True, gather: bool = False,
         stars = [star for star in stars if name_key(star['name']) in keep]
     os.makedirs(os.path.join(root, 'logs'), exist_ok=True)
     jobs = max(1, int(jobs))
+    # this process said to be there (status() and stop() read it)
+    mine = os.path.join(root, 'logs', ('run' if part is None else
+                                       f'part_{part[0]}_of_{part[1]}')
+                        + '.pid')
+    _mark(mine)
+    try:
+        _run(root, stars, jobs, rules, gather, only, again, part, trend)
+    finally:
+        _unmark(mine)
+    rows = table(root)
+    log(f'batch: {len(rows)} of {len(targets_of(root)["targets"])} stars in '
+        f'{os.path.join(root, "results", "table.csv")}', 'value')
+    return rows
+
+
+def _run(root: str, stars: List[Dict[str, Any]], jobs: int, rules: bool,
+         gather: bool, only: Optional[Sequence[str]], again: bool,
+         part: Optional[Tuple[int, int]], trend: int) -> None:
+    """the stars of run(): its parts started and waited for, or the stars
+    of this part one after the other"""
     if part is None and jobs > 1 and len(stars) > 1:
         jobs = min(jobs, len(stars))
         # koloa as this process has it, for the others
@@ -769,19 +1038,36 @@ def run(root: str, jobs: int = 1, rules: bool = True, gather: bool = False,
         procs = []
         for it in range(jobs):
             handle = open(os.path.join(root, 'logs', f'part_{it}.log'), 'a')
+            # each part leads what it starts (the chains of its FIPs):
+            #   stopped together (stop())
             procs.append((subprocess.Popen(
                 base + ['--part', f'{it}/{jobs}'], env=env, stdout=handle,
-                stderr=subprocess.STDOUT), handle))
+                stderr=subprocess.STDOUT, start_new_session=True), handle))
         log(f'batch: {len(stars)} stars, {jobs} at once (their logs in '
             f'{os.path.join(root, "logs")})', 'info')
+        # a kill of this process stops its parts, as Ctrl-C does
+        kept = None
+        if threading.current_thread() is threading.main_thread():
+            def ended(*_):
+                raise KeyboardInterrupt
+            kept = signal.signal(signal.SIGTERM, ended)
         seen = -1
-        while any(proc.poll() is None for proc, _ in procs):
-            done = sum(os.path.exists(result_path(root, star['name']))
-                       for star in stars)
-            if done != seen:
-                seen = done
-                log(f'batch: {done} of {len(stars)} stars done', 'value')
-            time.sleep(5)
+        try:
+            while any(proc.poll() is None for proc, _ in procs):
+                done = sum(os.path.exists(result_path(root, star['name']))
+                           for star in stars)
+                if done != seen:
+                    seen = done
+                    log(f'batch: {done} of {len(stars)} stars done', 'value')
+                time.sleep(5)
+        except KeyboardInterrupt:
+            for proc, _ in procs:
+                _end(proc.pid)
+            log('batch: stopped, the stars done are kept', 'warn')
+            raise
+        finally:
+            if kept is not None:
+                signal.signal(signal.SIGTERM, kept)
         for proc, handle in procs:
             handle.close()
             if proc.returncode:
@@ -792,23 +1078,32 @@ def run(root: str, jobs: int = 1, rules: bool = True, gather: bool = False,
         for it, star in enumerate(mine):
             if os.path.exists(result_path(root, star['name'])) and not again:
                 continue
+            mark = os.path.join(os.path.dirname(result_path(
+                root, star['name'])), RUNNING)
+            other = _marked(mark)
+            if other is not None and other['alive'] and int(
+                    other['pid']) != os.getpid():
+                # the batch started twice: not computed twice
+                log(f'batch: {star["name"]} is being computed by another '
+                    f'process of this batch ({other["pid"]}): left to it',
+                    'warn')
+                continue
             log(f'batch: {star["name"]} ({it + 1} of {len(mine)})', 'info')
+            _mark(mark)
             try:
                 res = run_target(root, star, rules, gather, trend)
                 summ = res.get('summary') or {}
                 log(f'batch: {star["name"]} {res["status"]} in '
                     f'{res["elapsed"]:.0f} s' + (
                         f', P = {summ["period"]:.4f} d, FIP '
-                        f'{summ["fip"]:.2g}' if summ.get('period') else '')
+                        f'{_fip(summ["fip"])}' if summ.get('period') else '')
                     + (f' ({res["error"]})' if res.get('error') else ''),
                     'value')
             except Exception as err:  # the next star all the same
                 log(f'batch: {star["name"]} failed '
                     f'({type(err).__name__}: {err})', 'warn')
-    rows = table(root)
-    log(f'batch: {len(rows)} of {len(targets_of(root)["targets"])} stars in '
-        f'{os.path.join(root, "results", "table.csv")}', 'value')
-    return rows
+            finally:
+                _unmark(mark)
 
 
 SCRIPT = '''#!/usr/bin/env python
@@ -818,11 +1113,15 @@ koloa: the batch {name}, made {made}
 
 {nstar} stars, each with its files (files/) and its archives (archives/):
 the quick FIP of each, its datasets chosen by koloa.datasets, kept in
-results/ as it goes (a batch stopped goes on where it was).
+results/ as it goes (a batch stopped goes on where it was). README.txt,
+beside this script, says the whole of it.
 
+    python run_batch.py --check         # nothing computed: is all there,
+                                        #   and where is the batch?
     python run_batch.py                 # every star not done yet
     python run_batch.py --part 3/20     # the stars 3, 23, 43... (a job array)
-    python run_batch.py --root /elsewhere/{name}
+    python run_batch.py --stop          # stop the batch that runs here
+    python run_batch.py --root /elsewhere/{name} ...
 
 Everything is found from ROOT: nothing else of this script names a path.
 """
@@ -833,8 +1132,9 @@ import sys
 # The settings
 # =============================================================================
 # where this folder is ON THE MACHINE THAT RUNS THE BATCH. Change it when
-#   the folder is copied elsewhere (a server, a cluster): files/, archives/,
-#   cache/, koloa_src/ and results/ are found from it.
+#   the folder is copied elsewhere (a server, a cluster), or give it as
+#   --root: files/, archives/, cache/, koloa_src/ and results/ are found
+#   from it.
 ROOT = {root!r}
 
 # the stars at once (each takes about three cores)
@@ -874,9 +1174,24 @@ def main():
         raise SystemExit(
             'ROOT is ' + root + ': there is no targets.json there.\\n'
             'Set ROOT, at the top of this script, to where the folder is '
-            'on this machine'
+            'on this machine, or give it: --root PATH'
             + (' (this script is in ' + here + ').' if os.path.exists(
                 os.path.join(here, 'targets.json')) else '.'))
+    # what the batch needs of this Python, said before koloa asks for it
+    lacking = []
+    for module in {needs!r}:
+        try:
+            __import__(module)
+        except ImportError:
+            lacking.append(module)
+    if lacking or sys.version_info < (3, 9):
+        raise SystemExit(
+            'This Python (' + sys.executable + ', '
+            + sys.version.split()[0] + ') '
+            + ('has no ' + ', '.join(lacking) if lacking
+               else 'is older than 3.9')
+            + ': the batch needs Python 3.9 or later with '
+            + ', '.join({needs!r}) + ' (README.txt, step 3).')
     # what koloa fetched once, and koloa itself, as they were packed
     os.environ['KOLOA_CACHE'] = os.path.join(root, 'cache')
     src = os.path.join(root, 'koloa_src')
@@ -885,8 +1200,18 @@ def main():
         os.environ['PYTHONPATH'] = src + os.pathsep + os.environ.get(
             'PYTHONPATH', '')
     from koloa import survey
-    survey.run(root, jobs=JOBS, rules=RULES, gather=GATHER, only=ONLY,
-               again=AGAIN, part=part, trend=TREND)
+    if '--stop' in args:
+        survey.stop(root)
+    elif '--check' in args:
+        # 0 when the batch can run (or runs, or is done), 1 when not
+        told = survey.status(root, jobs=JOBS)
+        raise SystemExit(1 if told['state'] == 'not ready' else 0)
+    else:
+        try:
+            survey.run(root, jobs=JOBS, rules=RULES, gather=GATHER,
+                       only=ONLY, again=AGAIN, part=part, trend=TREND)
+        except KeyboardInterrupt:  # stopped (--stop, Ctrl-C): said, and all
+            raise SystemExit(130)
 
 
 if __name__ == '__main__':
@@ -896,7 +1221,8 @@ if __name__ == '__main__':
 SUBMIT = '''#!/bin/bash
 # koloa: the batch {name} as a job array of SLURM (the clusters of the
 # Alliance, formerly Compute Canada): one star per task, {nstar} tasks, at
-# most {jobs} at once. Set your account and what loads Python, then:
+# most {jobs} at once. Set your account and what loads Python, then, from
+# this folder (the tasks run where they were submitted from):
 #     sbatch submit.sh
 #SBATCH --job-name=koloa_{name}
 #SBATCH --account=def-CHANGE_ME
@@ -907,38 +1233,421 @@ SUBMIT = '''#!/bin/bash
 #SBATCH --output=logs/slurm_%A_%a.log
 
 module load python scipy-stack
-cd {root}
-python run_batch.py --part ${{SLURM_ARRAY_TASK_ID}}/{nstar}
+cd "$SLURM_SUBMIT_DIR"
+python run_batch.py --root "$PWD" --part ${{SLURM_ARRAY_TASK_ID}}/{nstar}
 '''
 
-README = '''koloa: the batch {name}, made {made}
+README = '''koloa: the batch {name}
+{rule}
 
-{nstar} stars. In this folder:
+{intro}
 
-  run_batch.py    the script: its first setting, ROOT, is where this folder
-                  is on the machine that runs it ({root} as packed)
-  submit.sh       the same as a SLURM job array (a star per task)
-  targets.json    the stars, and the files of each
-  files/          the files of velocities of each star
-  archives/       the archives of each star, gathered {when}
-  cache/          what koloa fetched once (the NASA Exoplanet Archive, the
-                  lists of the surveys, APERO's names)
-  koloa_src/      koloa as it was when the batch was packed
-  results/        made by the batch: a folder per star (result.json,
-                  quick.json, quicklook.pdf) and table.csv
-  logs/           made by the batch
+This folder runs on its own. koloa itself is in it (koloa_src/), with the
+files, the archives and the catalogues the batch reads. Nothing is
+installed and nothing is asked of the network. It needs Python 3.9 or
+later with numpy, scipy and matplotlib, and that is all.
 
-Elsewhere (a server, a cluster):
+This file is for whoever runs the batch: a person, or a Claude session (or
+another agent) on the machine that runs it. An agent reads the next two
+sections first; the numbered steps are the detail of each.
 
-  tar xzf {name}.tar.gz
-  cd {name}
-  # set ROOT at the top of run_batch.py to this folder, then
-  python run_batch.py
 
-Python 3.9 or later with numpy, scipy and matplotlib; nothing is asked of
-the network (GATHER = False). A batch stopped goes on where it was: each
-star done is kept. Bring results/ back to look at them.
+IN SHORT
+--------
+
+    tar xzf {name}.tar.gz
+    cd {name}
+    python run_batch.py --root "$PWD" --check     # seconds; computes nothing
+    nohup python -u run_batch.py --root "$PWD" > run.log 2>&1 &
+    python run_batch.py --root "$PWD" --check     # again, to see where it is
+
+python is the Python 3.9 or later that has numpy, scipy and matplotlib:
+python3 on many machines. Then results/ is brought back (step 5) and
+opened in koloa's page (step 6).
+
+
+FOR A CLAUDE SESSION (OR ANOTHER AGENT) ASKED TO RUN THIS BATCH
+---------------------------------------------------------------
+
+The task: compute every star of this folder with run_batch.py, on this
+machine, then report its table. Everything needed is in this folder. In
+this order:
+
+  a. Work from this folder, the one that holds this README.txt and
+     targets.json, and give its path every time: --root "$PWD". Do not
+     edit ROOT in the script instead unless you are asked to.
+
+  b. Find a Python 3.9 or later with numpy, scipy and matplotlib:
+
+         python3 -c "import sys, numpy, scipy, matplotlib; print(sys.version)"
+
+     If it fails, look at what the machine already offers (module avail
+     python, conda env list, an environment the person named) and use
+     that. Do not install anything and do not create an environment
+     without asking the person: stop, and say what is missing. In the
+     lines below, python stands for the Python found here (python3, or
+     its full path).
+
+  c. Check. This computes nothing and takes seconds:
+
+         python run_batch.py --root "$PWD" --check
+
+     Its last line is the state of the batch, after the time:
+     "... | state: ready; 0 of {nstar} stars have their result, ...".
+     "state: ready" (exit code 0): go on. "state: not ready" (exit code
+     1): the lines above it say what is missing; report them and stop.
+     "state: running" or "state: done": the batch was already started
+     here; do not start it again, go to f or g.
+
+  d. Choose how to run it, from what the machine is.
+     - No scheduler (a server reached by ssh): step 3. First look at
+       what is free (nproc, uptime). The batch computes JOBS stars at
+       once ({jobs} as packed) and a star takes about three cores: about
+       {cores} cores. If that is more than is free, lower JOBS at the top
+       of run_batch.py, and say that you did.
+     - A cluster (sbatch exists): step 4, never on a login node.
+       submit.sh needs an account (--account); if you were not given
+       one, ask.
+
+  e. Start it once, detached, so that it outlives your shell:
+
+         nohup python -u run_batch.py --root "$PWD" > run.log 2>&1 &
+
+     It runs for minutes to many hours (step 3 has real timings). Do
+     not wait for it in the foreground, and do not use tail -f, which
+     never returns.
+
+  f. Follow it by asking again, every few minutes at first, then less
+     often:
+
+         python run_batch.py --root "$PWD" --check
+
+     It lists each star: done (with its best peak), failed (with why),
+     running (with how far its FIP is and the time left), or to do. The
+     batch is over when the last line reads "state: done". If it
+     reads "state: ready" again while stars are still to do, the batch
+     stopped (the machine restarted, say): start it again as in e.
+     The batch does not need you: if your session may end before it
+     does, tell the person so, and give them this --check line.
+
+  g. Then read results/table.csv (step 6 says what each column is) and
+     report: how many stars are done and how many failed, each failure
+     with its error as the table gives it; the best peak of each star
+     (period, fip, K), or for a batch of many stars those with a fip
+     below 0.01, without calling any a planet (step 6: the table is a
+     list of questions); how long it took; and the line that brings
+     the results back (step 5) with the real path of this folder in it.
+
+What not to do, however convenient it looks:
+
+  - Fetch or install nothing: no pip, no conda install, no git clone, and
+    GATHER stays False. The batch needs no network.
+  - files/, archives/, cache/, koloa_src/ and targets.json are to be
+    read, not changed: do not edit, move or delete them.
+  - results/ is the work done. Never delete it to start clean: a star is
+    computed again with ONLY and AGAIN (step 7).
+  - Do not start the batch a second time while it runs.
+  - If a star fails, or takes far longer than the others, leave it and
+    let the others end. Report it. Do not change the code in koloa_src/
+    to get past it.
+  - To stop the batch: python run_batch.py --root "$PWD" --stop. Do not
+    kill Pythons on a guess: others on this machine are not yours.
+  - The velocities in files/ and archives/ may not be public. Do not
+    copy this folder elsewhere, upload it, or quote its data; give the
+    numbers of the table to the person who asked, and to no one else.
+
+
+1. COPY IT TO THE MACHINE THAT RUNS IT
+--------------------------------------
+
+From the machine that made it, where the tar is beside this folder:
+
+    rsync -av --progress {name}.tar.gz me@server:/where/the/batches/go/
+
+(scp does the same; rsync goes on where it was if the link drops.) There:
+
+    cd /where/the/batches/go
+    tar xzf {name}.tar.gz
+    cd {name}
+
+The tar holds everything: nothing else is copied.
+
+
+2. TELL IT WHERE IT IS: ROOT
+----------------------------
+
+Everything is found from one path, ROOT, the first setting of
+run_batch.py: where this folder is on the machine that runs it. As packed:
+
+    ROOT = {root!r}
+
+If the folder is somewhere else, either change that line, or give the path
+when starting the script, which leaves it as packed:
+
+    python run_batch.py --root "$PWD" ...
+
+A wrong ROOT stops at once and says so. Nothing is computed elsewhere.
+
+
+3. CHECK, THEN RUN
+------------------
+
+Load what gives Python 3.9 or later with numpy, scipy and matplotlib: a
+conda environment, or on a cluster of the Alliance
+"module load python scipy-stack". Then:
+
+    python run_batch.py --root "$PWD" --check
+
+It computes nothing. It says which Python it is and which numpy, scipy and
+matplotlib it has, how many cores the machine has, and of each star
+whether it is done, failed, running or to do. Its last line is the state
+of the batch: not ready (something is missing, named in the lines above;
+exit code 1), ready, running or done (exit code 0).
+
+Then the batch, left running after you log out:
+
+    nohup python -u run_batch.py --root "$PWD" > run.log 2>&1 &
+
+or the same without nohup inside screen or tmux. To see where it is:
+
+    python run_batch.py --root "$PWD" --check
+    tail run.log                    # the stars done, as they end
+    tail logs/part_0.log            # one of the stars being computed
+    ls results/                     # a folder for each star done
+
+Cores: {jobs} stars are computed at once (JOBS, in run_batch.py), each a
+Python of its own that takes about three cores, so about {cores} in all.
+Lower JOBS on a shared machine.
+
+How long: a star takes longer with more nights and with more datasets.
+Measured on a 24-core server in October 2026, each star with its archives:
+
+    GJ 1214    154 nights in 3 datasets       6 minutes
+    GJ 581     515 nights in 6 datasets      31 minutes
+    GJ 699    1075 nights in 6 datasets      89 minutes
+
+A star with many datasets and a signal of hundreds of m/s can take far
+longer (GJ 876, 9 datasets: half of its first pass after 7 hours). The
+others do not wait for it: each star is on its own.
+
+To stop it:
+
+    python run_batch.py --root "$PWD" --stop
+
+It ends the processes of this batch on this machine and no other. The
+stars done are kept. To go on, start the batch again with the same line:
+the stars done are not computed again, those that were being computed
+start over, the others follow.
+
+
+4. ON A CLUSTER, WITH SLURM
+---------------------------
+
+submit.sh is the same batch as a job array: a star a task, {jobs} at once.
+Set in it:
+
+    #SBATCH --account=def-CHANGE_ME     your allocation
+    #SBATCH --time=03:00:00             more for stars with many datasets
+    module load python scipy-stack      what gives Python where you are
+
+then, from this folder (the tasks run where they are submitted from, and
+find the folder by that):
+
+    sbatch submit.sh
+    squeue -u $USER                     the tasks waiting and running
+    python run_batch.py --root "$PWD" --check
+    tail logs/slurm_*_0.log             the log of task 0
+
+A task ended by its time limit loses the star it was computing and no
+other: submit again with a longer --time, and only the stars not done are
+computed. When every task has ended,
+
+    python run_batch.py --root "$PWD"
+
+computes nothing more and writes the table of them all. To stop the
+tasks: scancel (--stop ends only what runs on the machine it is typed on).
+
+The nodes of most clusters have no network: GATHER stays False, as packed.
+The archives are those of archives/, gathered before packing.
+
+
+5. BRING THE RESULTS BACK
+-------------------------
+
+Only results/ is needed, into the folder of the batch on the machine that
+made it. From that machine:
+
+    rsync -av me@server:{root}/results/ \\
+          {name}/results/
+
+It can be done at any time: the stars done so far come back, the others
+the next time.
+
+
+6. LOOK AT THEM
+---------------
+
+In koloa's page (koloanui), Survey tab, "The results of a batch folder":
+give the folder {name} and "Open them". The batch opens as a table in
+the Batch FIP tab; Open, on a line, puts the star in the Analysis tab with
+its FIP as it was computed, to fold, tick and report like any other.
+
+Without the page:
+
+    results/table.csv              a line for each star done
+    results/<star>/quicklook.pdf   its series, its FIP, its folds
+    results/<star>/result.json     its line of the table, and what was
+                                   done with each of its datasets and why
+    results/<star>/quick.json      the FIP itself, as the page draws it
+
+The columns of table.csv:
+
+    name, sptype, distance   the star, its spectral type, its distance [pc]
+    status                   done, or failed (error says why)
+    files                    how many files of velocities it came with
+    datasets                 used/all: 6/17 is 6 datasets used of the 17
+                             the star has. The others are releases of the
+                             same spectra that another dataset has more
+                             precisely, or constrain nothing; result.json
+                             names each and says why
+    nights                   the nightly means used
+    baseline                 the days they span
+    period                   the best peak of the quick FIP [days]
+    fip, fip_alone           its false inclusion probability: of the
+                             period or any of its aliases, and of the
+                             period alone (0 reads: below 1e-300)
+    K, K_err                 the semi-amplitude of its sinusoid [m/s]
+    rms                      the scatter of the nights about it [m/s]
+    accel, accel_err         the acceleration of the star, fitted with it
+                             [m/s/yr]
+    accel_sigma              how many sigma that acceleration is from zero
+    transit, transit_snr     the transit looked for at that period in the
+                             light curve of the star: plausible, or none,
+                             with its signal to noise. "no light curve":
+                             the batch was packed without the light curves
+    elapsed                  how long the star took [s]
+    error                    why a star failed
+
+The table is a list of questions, not of planets. A best peak about as
+long as the baseline is a slow drift between datasets, not an orbit. A
+peak near 1 day, or near the rotation period of the star, wants a second
+look. Each line is to be opened and looked at.
+
+
+7. THE SETTINGS, AT THE TOP OF run_batch.py
+-------------------------------------------
+
+    ROOT     where this folder is (step 2)
+    JOBS     the stars at once ({jobs} as packed), about three cores each
+    RULES    True: of the datasets of a star, the best release of the same
+             spectra, and not those that constrain nothing. False: all
+    GATHER   False: the archives as packed. True asks the archives for
+             what a star lacks: it needs the network
+    ONLY     [] for every star, or a few of them: ['GJ 581', 'GJ 876']
+    AGAIN    True computes again the stars already done
+    TREND    1: an acceleration fitted with the signals. 2: its change too
+
+and on the command line: --root PATH, --check, --stop, and --part I/N (the
+stars I, I+N, I+2N...: a task of a job array).
+
+To compute one star again: ONLY = ['GJ 581'] and AGAIN = True, then the
+batch as before; or delete results/GJ_581/ and start the batch again.
+
+
+8. WHAT IS IN THIS FOLDER
+-------------------------
+
+    README.txt      this file
+    run_batch.py    the script; its first setting is ROOT
+    submit.sh       the same as a SLURM job array
+    targets.json    the stars, and the files of each
+    files/          the files of velocities of each star
+    archives/       the archives of each star,
+                    {when}
+    cache/          what koloa fetched once: the NASA Exoplanet Archive,
+                    the lists of the surveys, APERO's names
+    koloa_src/      koloa as it was when the batch was packed
+    results/        written by the batch: a folder for each star, and
+                    table.csv, table.json
+    logs/           written by the batch: the log of each part, and of
+                    each task of a job array
+
+
+9. THE STARS
+------------
+
+{stars}
+
+
+10. WHEN SOMETHING GOES WRONG
+-----------------------------
+
+"ROOT is ...: there is no targets.json there"
+    The script was told a folder that is not this one: step 2.
+
+"This Python (...) has no numpy" (or scipy, matplotlib), or
+ModuleNotFoundError
+    This Python is not the one that has them: step 3.
+
+A star is "failed"
+    Its line of results/table.csv, and results/<star>/result.json, say
+    why; the log of its part (logs/part_*.log, or logs/slurm_*.log) has
+    the whole. The other stars are not affected. A star with no file and
+    no archive has no velocity to look at, and fails saying so.
+
+Nothing seems to happen
+    A star says nothing between the tenths of its FIP, which can be an
+    hour apart for a large one. --check shows the last line of each star
+    being computed, with the time left.
+
+The machine was restarted, or the batch was killed
+    Start it again with the same line. --check first tells which stars
+    were being computed: they start over.
+
+URLError, "could not be asked", a timeout
+    GATHER is True on a machine with no network: set it back to False.
+
+The batch starts itself again and again
+    The lines of main() were copied out of it. koloa computes in processes
+    of its own, which read run_batch.py again as they start: everything
+    that starts the batch must stay under main(), as packed.
+
+
+NOT PUBLIC BY DEFAULT
+---------------------
+
+files/ holds your own files of velocities, and archives/ what the archives
+gave you, which with a DACE key can be more than the public data. This
+folder and its tar are no more public than they are.
+
+koloa: https://github.com/eartigau/koloa
 '''
+
+
+def _packed(folder: str, star: Dict[str, Any]) -> Tuple[str, bool]:
+    """a star of a batch folder, as a line of its README: its files, and
+    what its archives hold as packed (told whether they were gathered)"""
+    here = os.path.join(folder, 'archives', _folder(star['name']))
+    gathered = False
+    told = 'none'
+    try:
+        with open(os.path.join(here, 'manifest.json')) as handle:
+            held = json.load(handle).get('archives') or {}
+        parts = [f'{label} {held[key]["npoints"]}' for key, label in (
+            ('dace', 'DACE'), ('carmenes', 'CARMENES DR1'),
+            ('published', 'VizieR')) if (held.get(key) or {}).get('npoints')]
+        gathered = True
+        told = ', '.join(parts) or 'gathered: no velocity'
+        if (held.get('tess') or {}).get('status') == 'ok':
+            told += ', TESS'
+    except (OSError, ValueError):
+        if os.path.isdir(here):
+            told = 'what the cross-match kept of DACE only (not gathered)'
+    dist = star.get('distance')
+    name, sptype = str(star['name'])[:24], str(star.get('sptype') or '')[:9]
+    return (f'    {name:24s} {sptype:9s} '
+            f'{f"{dist:7.2f}" if dist else "       "} '
+            f'{len(star.get("files") or []):5d}  {told}'), gathered
 
 
 def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
@@ -1028,6 +1737,15 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
         if os.path.isdir(here):
             shutil.copytree(here, os.path.join(folder, 'archives', tag),
                             dirs_exist_ok=True)
+            # its manifest says where it was gathered: a path of this
+            #   machine, which the batch does not read and need not carry
+            kept = os.path.join(folder, 'archives', tag, 'manifest.json')
+            if os.path.exists(kept):
+                with open(kept) as handle:
+                    manifest = json.load(handle)
+                manifest['folder'] = os.path.join('archives', tag)
+                with open(kept, 'w') as handle:
+                    json.dump(manifest, handle, indent=1)
         files = []
         for path in star.get('files') or []:
             dest = os.path.join(folder, 'files', tag, os.path.basename(path))
@@ -1056,11 +1774,31 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
                     dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     made = time.strftime('%Y-%m-%d %H:%M')
+    lines = [_packed(folder, star) for star in targets]
+    ngath = sum(gathered for _, gathered in lines)
+    when = ('gathered when the batch was packed' if gather else
+            'as they were on the machine that packed it')
     words = dict(name=name, made=made, nstar=len(targets),
                  root=server_root or folder, jobs=int(jobs),
                  rules=bool(rules), gather=False, trend=int(trend),
-                 last=max(len(targets) - 1, 0),
-                 when=made if gather else 'before')
+                 last=max(len(targets) - 1, 0), when=when,
+                 version=__version__, needs=NEEDS,
+                 cores=CORES * int(jobs), rule='=' * (17 + len(name)),
+                 intro=textwrap.fill(
+                     f'Made {made} with koloa {__version__}. {len(targets)} '
+                     f'stars: the quick FIP of each, with its files of '
+                     f'velocities and its archives, and a table of their '
+                     f'best peaks. With them: {nfile} files of velocities, '
+                     + (f'and the archives of {ngath} of the stars ({when}: '
+                        f'DACE, CARMENES DR1, the surveys and papers on '
+                        f'VizieR' + (', the light curves of TESS' if tess
+                                     else '') + ').' if ngath else
+                        'and no archives (none was gathered where the '
+                        'batch was packed).'), 76),
+                 stars='\n'.join(
+                     [f'    {"star":24s} {"type":9s} {"d [pc]":>7s} '
+                      f'{"files":>5s}  its archives']
+                     + [line for line, _ in lines]))
     with open(os.path.join(folder, TARGETS), 'w') as handle:
         json.dump(dict(name=name, made=made, koloa=__version__,
                        options=dict(rules=bool(rules), trend=int(trend)),
@@ -1076,6 +1814,13 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
             handle.add(folder, arcname=name, filter=lambda info: (
                 None if os.path.basename(info.name) in ('results', 'logs')
                 and info.isdir() else info))
+            # what the batch writes in, empty: there once unpacked (a
+            #   scheduler does not make the folder of its logs)
+            for empty in ('results', 'logs'):
+                info = tarfile.TarInfo(f'{name}/{empty}')
+                info.type, info.mode = tarfile.DIRTYPE, 0o755
+                info.mtime = time.time()
+                handle.addfile(info)
     if progress is not None:
         progress(len(stars), len(stars), '')
     log(f'pack: {len(targets)} stars, {nfile} files in {folder}'
@@ -1116,9 +1861,12 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     if args.part:
         one, of = args.part.split('/')
         part = (int(one), int(of))
-    run(args.root, jobs=args.jobs, rules=not args.no_rules,
-        gather=args.gather, only=args.only, again=args.again, part=part,
-        trend=args.trend)
+    try:
+        run(args.root, jobs=args.jobs, rules=not args.no_rules,
+            gather=args.gather, only=args.only, again=args.again, part=part,
+            trend=args.trend)
+    except KeyboardInterrupt:  # stopped: said by run(), and all
+        raise SystemExit(130)
 
 
 if __name__ == '__main__':

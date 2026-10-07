@@ -26,6 +26,7 @@ Created on 2026-10-04
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -37,6 +38,8 @@ ROOT = os.path.dirname(HERE)
 OUT = os.path.join(HERE, 'figures', 'gui')
 #: the stars whose public HARPS velocities become files
 FILE_STARS = ('GJ 876', 'GJ 581', 'HD 69830', 'GJ 667 C', 'HD 40307')
+#: where the batch of the survey tab is packed: its path is on the page
+PACKED = '/tmp/koloa_batches'
 #: the width of the browser [px]
 WIDTH = 1360
 #: how long a quick FIP may take [s] (GJ 436 with all its archives, about
@@ -85,28 +88,19 @@ def prepare(work: str) -> None:
 def start_server(work: str, port: int, remembered: str, koloa: str = ROOT):
     """koloa's GUI in the work folder: no DACE key, its own remembered
     targets"""
-    # a home of its own (no DACE key in it, a plain prompt in the terminal
-    #   of the page, its own routes), what koloa fetched once as it is here
+    # a home of its own (no DACE key in it), what koloa fetched once as
+    #   it is here
     home = os.path.join(work, 'home')
     os.makedirs(home, exist_ok=True)
-    with open(os.path.join(home, '.zshrc'), 'w') as handle:
-        handle.write("PS1='%1~ %# '\n")
     env = dict(os.environ, DACE_API_KEY='', PYTHONPATH=koloa, HOME=home,
-               ZDOTDIR=home, SHELL='/bin/zsh',
                KOLOA_CACHE=os.path.join(os.path.expanduser('~'), '.cache',
                                         'koloa'))
-    # the key of its terminal, known here (the page is opened with it),
-    #   and its routes in the work folder (not the user's)
-    import secrets
-    key = secrets.token_urlsafe(12)
-    code = ('from koloa import gui, terminal; '
-            f'gui.REMEMBERED = {remembered!r}; terminal.KEY = {key!r}; '
-            f'terminal.ROUTES = {os.path.join(work, "routes_demo.json")!r}; '
+    code = ('from koloa import gui; '
+            f'gui.REMEMBERED = {remembered!r}; '
             f'gui.serve(port={port}, browser=False)')
     proc = subprocess.Popen([sys.executable, '-c', code], cwd=work, env=env,
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL)
-    proc.koloa_key = key
     time.sleep(8)
     return proc
 
@@ -454,8 +448,8 @@ SURVEY_DMAX = 7
 def survey_tab(page, shots: Shots, numbers: dict) -> None:
     """a survey: the M dwarfs within a few parsecs asked of SIMBAD, their
     archives checked (public data), the files of the batch put with them,
-    a route to a server (not a real one), the batch packed, and the copy
-    of its tar typed in the terminal (not run)"""
+    and the batch packed: where its tar is, said in full (in PACKED: a
+    path that is no one's)"""
     page.click('[data-tab="survey"]')
     page.fill('#sv-dmax', str(SURVEY_DMAX))
     page.click('#sv-ask')
@@ -484,32 +478,22 @@ def survey_tab(page, shots: Shots, numbers: dict) -> None:
         'rotation: survey.stars.filter((s) => (s.rotation || []).some('
         '(one) => !one.source.startsWith("CARMENES"))).length, '
         'unmatched: (survey.unmatched || []).length })')
-    # a terminal, and how to get to a server (a made-up one)
-    page.click('#term-new')
-    wait(page, 'terms.length === 1', 60)
-    time.sleep(2)
-    page.click('#term-remember')
-    time.sleep(1)
-    page.fill('#route-name', 'server')
-    page.fill('#route-host', 'me@server')
-    page.fill('#route-folder', '/scratch/me/koloa_batches')
-    page.fill('#route-lines', 'ssh me@server\ncd /scratch/me/koloa_batches'
-                              '\nmodule load python scipy-stack')
-    time.sleep(0.5)
-    shots.element('#route-dialog', 'survey_route')
-    page.click('#route-save')
-    time.sleep(1.5)
     # the batch of the stars ticked, packed (their archives as checked)
     page.fill('#sv-name', 'm_dwarfs_demo')
-    page.dispatch_event('#sv-name', 'input')
+    page.fill('#sv-out', PACKED)
+    page.fill('#sv-root', '/scratch/me/koloa_batches/m_dwarfs_demo')
     page.uncheck('#sv-gather')
     page.click('#sv-pack')
     wait(page, "survey.pack && survey.pack.status !== 'running'", 600)
     time.sleep(1)
     shots.element('#sv-batchcard', 'survey_batch')
-    page.click('#term-copy')
-    time.sleep(3)
-    shots.element('#term-card', 'survey_terminal')
+    # what was packed for the picture is not kept
+    made = os.path.join(PACKED, 'm_dwarfs_demo')
+    shutil.rmtree(made, ignore_errors=True)
+    if os.path.exists(made + '.tar.gz'):
+        os.remove(made + '.tar.gz')
+    if os.path.isdir(PACKED) and not os.listdir(PACKED):
+        os.rmdir(PACKED)
 
 
 def runs(page, shots: Shots) -> None:
@@ -600,7 +584,7 @@ def main() -> None:
                              'remembered, what needs no computation, '
                              'batchshow the batch kept in numbers.json, '
                              'datasets the table of the rules of a star, '
-                             'survey the survey tab and its terminal')
+                             'survey the survey tab and its batch packed')
     parser.add_argument('--server', default='',
                         help='a koloa GUI already running (its address: '
                              'http://127.0.0.1:8790), in the same folder '
@@ -625,8 +609,6 @@ def main() -> None:
     proc = None if args.server else start_server(
         work, args.port, mem, os.path.abspath(args.koloa))
     address = args.server or f'http://127.0.0.1:{args.port}'
-    # the key of the server started here, for the terminal of the page
-    key = getattr(proc, 'koloa_key', '') if proc is not None else ''
     numbers: dict = dict(files=[os.path.basename(f) for f in files])
     # the batch of this server (run in the first language, shown again in
     #   the next)
@@ -645,8 +627,7 @@ def main() -> None:
                         "try { localStorage.clear(); localStorage.setItem("
                         f"'koloa-lang', '{lang}'); }} catch (e) {{}}")
                     page = ctx.new_page()
-                    page.goto(address.rstrip('/') + '/'
-                              + (f'?key={key}' if key else ''))
+                    page.goto(address.rstrip('/') + '/')
                     shots.page = page
                     keep = numbers if lang == 'en' else {}
                     if part == 'name':

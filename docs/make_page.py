@@ -494,6 +494,19 @@ def gui(html):
                    'slow drift, not a planet: the table of a batch is a '
                    'list of questions, each line still to be looked at in '
                    'the Analysis tab.</p>' if slow else '')))
+    # what run_batch.py --check answers, kept from a batch run from its
+    #   tar (docs/figures/gui/survey_check.json: its lines about the stars
+    #   and its state, while it ran and once it was over)
+    path = os.path.join(HERE, 'figures', 'gui', 'survey_check.json')
+    if os.path.exists(path):
+        kept = json.load(open(path))
+        html = fill(html, 'gui_survey_check', (
+            '<p>What <span class="mono">--check</span> answers for a batch '
+            f'of {kept["n"]} files of public HARPS velocities, run from its '
+            'tar by a Python that has numpy, scipy and matplotlib and '
+            'nothing else, while it runs and once it is over:</p>'
+            '<pre class="codeblock">' + escape('\n'.join(kept['running']))
+            + '\n\n' + escape('\n'.join(kept['done'])) + '</pre>'))
     rows = []
     for item in num.get('batch') or []:
         star, summ = item.get('star') or {}, item.get('summary') or {}
