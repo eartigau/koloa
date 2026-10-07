@@ -103,7 +103,16 @@ a.replink { font-size: 0.78rem; white-space: nowrap; }
 #sv-packstatus p { margin: 3px 0; }
 #sv-packstatus p.svpacked { font-size: 0.92rem; }
 #sv-packstatus .sel { user-select: all; overflow-wrap: anywhere; }
-#sv-folders { width: 26em; max-width: 100%; }
+/* the folders of your files: under their label, on a line of their own; their box takes the width of the
+   page and is never squeezed (the pattern beside it keeps its size, what was matched is said under them) */
+.svlabel { margin: 10px 0 2px; }
+#sv-card .svfiles { flex-wrap: nowrap; }
+#sv-card .svfiles .picker { flex: 1 1 auto; display: flex; min-width: 22em; }
+#sv-card .svfiles #sv-folders { flex: 1 1 auto; width: auto; min-width: 18em; }
+#sv-card .svfiles #sv-pattern { flex: 0 0 12em; width: 12em; }
+#sv-card .svfiles #sv-match { flex: 0 0 auto; white-space: nowrap; }
+#sv-matchstatus { margin: 2px 0 8px; }
+#sv-matchstatus:empty { display: none; }
 .svwrap { max-height: 62vh; overflow: auto; }
 .svwrap tr.nodata td { opacity: 0.45; }
 .svwrap tr.nodata td:first-child { opacity: 1; }

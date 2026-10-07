@@ -259,12 +259,13 @@
         <span class="hint" id="sv-checkstatus"></span>
       </div>
       <div id="sv-overview"></div>
-      <div class="row">
-        <span class="hint" data-i18n="sv_folders">Your files (LBL...), in the folders:</span>
+      <p class="hint svlabel" data-i18n="sv_folders">Your files (LBL...), in the folders:</p>
+      <div class="row svfiles">
         <span class="picker"><input id="sv-folders" type="text" autocomplete="off" class="wide" placeholder="/data/nirps/lbl, /data/spirou/lbl"><button type="button" data-pick="folder" data-into="sv-folders">...</button></span>
         <input id="sv-pattern" type="text" value="*.rdb" autocomplete="off" class="pattern">
-        <button type="button" id="sv-match" data-i18n="sv_match">Match the files</button><span class="hint" id="sv-matchstatus"></span>
+        <button type="button" id="sv-match" data-i18n="sv_match">Match the files</button>
       </div>
+      <p class="hint" id="sv-matchstatus"></p>
       <div class="row">
         <span class="hint" data-i18n="sv_tick">Tick:</span>
         <button type="button" class="small" id="sv-tickdata" data-i18n="sv_tick_data">those with data</button>
