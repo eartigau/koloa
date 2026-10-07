@@ -82,7 +82,13 @@ td.src { font-size: 0.8rem; color: var(--muted); }
 #sv-overview table.mini td, #sv-overview table.mini th { padding-right: 22px; }
 .svspec { display: inline-block; margin-right: 14px; white-space: nowrap; }
 .svspec .hint { font-size: 0.78rem; }
+/* the table of a survey: the archives of a star on a column that wraps, not the whole width; its files
+   beside, with room for their names */
 td.svarch { white-space: normal; }
+.svwrap table.batch td.svarch, .svwrap table.batch th.svcol-summary { width: 35%; max-width: 40em; }
+.svwrap table.batch td.svfilecell, .svwrap table.batch th.svcol-files { width: 23%; min-width: 16em; max-width: none;
+  white-space: normal; overflow-wrap: anywhere; font-size: 0.8rem; }
+.svwrap table.batch td:nth-child(2) { white-space: nowrap; }
 .svform label { display: inline-flex; align-items: center; gap: 6px; margin-right: 10px; }
 input.short { width: 5.2em; }
 #sv-root, #sv-results { width: 100%; min-width: 22em; }

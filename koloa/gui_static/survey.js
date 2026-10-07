@@ -76,7 +76,7 @@ function svRender() {
   svOverview();
   const cols = [['tick', ''], ['name', t('sv_col_name')], ['main', 'SIMBAD'], ['spnum', t('sv_col_type')], ['distance', 'd [pc]'],
     ['V', 'V'], ['rotation', t('sv_col_rot')], ['summary', t('sv_col_arch')], ['known', t('sv_col_known')], ['files', t('sv_col_files')]];
-  const head = cols.map(([key, label]) => `<th data-svsort="${key}" class="sortable${svSort.key === key ? ' sorted' : ''}">${esc(label)}`
+  const head = cols.map(([key, label]) => `<th data-svsort="${key}" class="sortable svcol-${key}${svSort.key === key ? ' sorted' : ''}">${esc(label)}`
     + `${svSort.key === key ? (svSort.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('');
   const rows = svShown();
   const num = (v, d) => (v === null || v === undefined ? '' : (+v).toFixed(d));
@@ -89,13 +89,16 @@ function svRender() {
         : (star.summary || []).length ? star.summary.map((one) => `<span class="svspec"><b>${esc(one.name)}</b>${one.n ? ` ${one.n}` : ''}`
           + ` <span class="hint">${esc(one.where.join(', '))}</span></span>`).join('')
           : `<span class="hint" title="${esc(a.dace_error || '')}">${esc(t(a.dace_error ? 'sv_dace_error' : 'sv_nothing'))}</span>`;
-      const files = (star.files || []).length ? `<span title="${esc(star.files.join('\n'))}"><b>${star.files.length}</b> <span class="hint">${esc(star.files[0])}${star.files.length > 1 ? ', ...' : ''}</span></span>` : '';
+      // its files: how many, and their names (the first three; all of them under the cursor)
+      const nf = (star.files || []).length;
+      const files = nf ? `<span title="${esc(star.files.join('\n'))}"><b>${nf}</b> ${esc(star.files.slice(0, 3).join(', '))}`
+        + `${nf > 3 ? ` <span class="hint">+${nf - 3}</span>` : ''}</span>` : '';
       return `<tr class="${a && !svHas(star) ? 'nodata' : ''}"><td><input type="checkbox" data-svtick="${esc(star.name)}"${svTicked.has(star.name) ? ' checked' : ''}></td>`
         + `<td><b>${esc(star.name)}</b>${star.near ? ` <span class="hint" title="${esc(t('sv_near'))} ${esc(star.near)}">⧉</span>` : ''}</td>`
         + `<td class="src">${esc(star.main)}</td><td>${esc(star.sptype)}</td><td class="num">${num(star.distance, 2)}</td>`
         + `<td class="num">${num(star.V ?? star.G, 1)}${star.V === null && star.G !== null ? '<span class="hint">G</span>' : ''}</td>`
         + `<td class="num">${svRotation(star)}</td>`
-        + `<td class="svarch">${arch}</td><td class="num">${a ? (svKnown(star) || '') : ''}</td><td>${files}</td></tr>`;
+        + `<td class="svarch">${arch}</td><td class="num">${a ? (svKnown(star) || '') : ''}</td><td class="svfilecell">${files}</td></tr>`;
     }).join('') + '</table></div>';
   const withData = survey.stars.filter(svHas).length;
   $('sv-count').textContent = `${survey.stars.length} ${t('sv_stars')}${survey.check ? ` · ${withData} ${t('sv_with_data')}` : ''} · ${svTicked.size} ${t('sv_ticked')}`
