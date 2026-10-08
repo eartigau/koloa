@@ -316,3 +316,82 @@ def test_a_csv_names_its_instruments(tmp_path):
     path.write_text('rjd,vrad,svrad\n' + ''.join(
         f'{60000 + k},10.0,1.0\n' for k in range(10)))
     assert RVData.from_csv(str(path)).instruments == ['inst']
+
+
+def test_the_figures_of_a_report_by_instrument():
+    """the series of a report with each instrument about the drift of the
+    star, not about zero; its points and those of the model and of the
+    fold translucent, a colour per instrument, circled when flagged"""
+    from koloa import plotting as kplot
+    from koloa.fit import RVModel
+    rng = np.random.default_rng(4)
+    parts = []
+    for it, (name, t0, t1, num) in enumerate((('OLD', 51000, 54000, 80),
+                                              ('NEW', 57000, 60000, 80))):
+        time = np.sort(rng.uniform(t0, t1, num))
+        rv = (2.0 * (time - 55000) / 365.25 + 5.0 * np.sin(
+            2 * np.pi * time / 17.3) + rng.normal(0, 1.0, num) + 40 * it)
+        rv[::20] += 30.0  # a few bad points
+        parts.append((time, rv, np.ones(num), np.array([name] * num)))
+    time, rv, err, inst = (np.concatenate([part[key] for part in parts])
+                           for key in range(4))
+    data = RVData(time, rv, err, inst=inst, name='toy')
+    fit = RVModel(data, [dict(period=17.3)], trend=1).fit(quiet=True)
+    prob = fit.outlier_prob
+    assert 0 < np.sum(prob > 0.5) < 20
+
+    def points(ax, name):
+        return next(line for line in ax.lines
+                    if str(line.get_label()).startswith(name + ' ('))
+    fig = kplot.series_instruments(data, prob, fit=fit)
+    ax = fig.axes[0]
+    levels = {}
+    for name in ('OLD', 'NEW'):
+        line = points(ax, name)
+        xval, yval = line.get_data()
+        # along the trend of the fit: its median is of what the trend leaves
+        drift = kplot.trend_curve(fit.model, fit.theta, xval)
+        assert abs(np.median(yval - drift)) < 1.0
+        assert line.get_alpha() == kplot.POINT_ALPHA
+        levels[name] = np.median(yval)
+    # the drift of 2 m/s/yr over the 16 years between them, not a step
+    #   back to zero
+    assert 25 < levels['NEW'] - levels['OLD'] < 40
+    assert abs(np.median(data.rv[data.inst == 'NEW'])) < 1e-6
+    # circled: the points more likely outliers than not, and only those
+    rings = next(line for line in ax.lines
+                 if line.get_label() == 'P(outlier) > 0.5')
+    assert len(rings.get_xdata()) == int(np.sum(prob > 0.5))
+    assert rings.get_markerfacecolor() == 'none'
+    assert any('drift' in str(line.get_label()) for line in ax.lines)
+    kplot.plt.close(fig)
+    # without a fit: each instrument about its own median (that of its
+    #   points not flagged), and no drift drawn
+    fig = kplot.series_instruments(data, prob)
+    new = data.inst == 'NEW'
+    assert np.allclose(points(fig.axes[0], 'NEW').get_ydata(), data.rv[new]
+                       - np.median(data.rv[new & (prob <= 0.5)]))
+    assert not any('drift' in str(line.get_label())
+                   for line in fig.axes[0].lines)
+    kplot.plt.close(fig)
+    # the model: translucent points in its three panels, the flagged circled
+    fig = kplot.model_series(fit)
+    for ax in fig.axes:
+        marks = [line for line in ax.lines if line.get_alpha()
+                 == kplot.POINT_ALPHA]
+        assert len(marks) == 2
+        assert any(line.get_markerfacecolor() == 'none' and len(
+            line.get_xdata()) == int(np.sum(prob > 0.5)) for line in ax.lines)
+    kplot.plt.close(fig)
+    # the fold: by instrument when asked (no scale of probability, the
+    #   instruments under the axis), by probability otherwise
+    fig = kplot.phase(fit, colour='inst')
+    assert len(fig.axes) == 1 and len(fig.legends) == 1
+    labels = [text.get_text() for text in fig.legends[0].get_texts()]
+    assert labels == ['OLD (80)', 'NEW (80)', 'P(valid) < 0.5']
+    assert sum(line.get_alpha() == kplot.POINT_ALPHA
+               for line in fig.axes[0].lines) == 2
+    kplot.plt.close(fig)
+    fig = kplot.phase(fit)
+    assert len(fig.axes) == 2 and not fig.legends
+    kplot.plt.close(fig)

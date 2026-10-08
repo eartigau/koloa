@@ -1382,10 +1382,10 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
         figs.append(named[role])
 
     marks = [pl['P'] for pl in known.get('planets', []) if pl.get('P')]
-    keep(kplot.timeseries(
-        data, fit.outlier_prob,
-        title=f'{star}: every instrument, each exposure coloured by its '
-              f'outlier probability'), 'rv')
+    keep(kplot.series_instruments(
+        data, fit.outlier_prob, fit=fit,
+        title=f'{star}: every instrument about the drift of the star '
+              f'(circled: P(outlier) > 0.5)'), 'rv')
     if orbits or accel:
         keep(kplot.model_series(
             fit, accel, title=f'{star}: the velocities and the best model '
@@ -1422,7 +1422,7 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
             f'fip_{label}')
     for ip, orb in enumerate(orbits):
         keep(kplot.phase(
-            fit, planet=ip, level='point',
+            fit, planet=ip, level='point', colour='inst',
             title=f'{star}, {orb["P"][0]:.3f} d: K = {orb["K"][0]:.2f} m/s'
                   + (f' ({orb["origin"]}; phase 0, the transit of TESS)'
                      if str(orb.get('origin', '')).startswith('TOI') else '')),

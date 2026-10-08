@@ -251,7 +251,8 @@ def test_a_batch_folder_packed(tmp_path, monkeypatch):
     assert os.path.basename(folder) == 'm_dwarfs_15pc'
     assert made['n'] == 3 and made['files'] == 2 and made['missing'] == []
     assert told[-1] == 3
-    for part in ('run_batch.py', 'submit.sh', 'README.txt', 'targets.json',
+    for part in ('run_batch.py', 'submit.sh', 'README.txt', 'CLAUDE.md',
+                 'targets.json',
                  'files/GJ_1/star0.csv', 'files/GJ_3/star2.csv',
                  'archives/GJ_2/rv/all_rv.csv', 'cache/archive/kept.json',
                  'cache/carmenes_objects.json', 'koloa_src/koloa/survey.py',
@@ -285,6 +286,19 @@ def test_a_batch_folder_packed(tmp_path, monkeypatch):
     assert readme.startswith('koloa: the batch m_dwarfs_15pc\n====')
     assert "ROOT = '/scratch/me/m_dwarfs_15pc'" in readme
     assert 'FOR A CLAUDE SESSION' in readme and '--check' in readme
+    # for the Claude of that machine, in the file it reads on its own: the
+    #   steps of the README written for it, among them the update of the
+    #   koloa of the machine, which may be out of date
+    claude = open(os.path.join(folder, 'CLAUDE.md')).read()
+    assert claude.startswith('# koloa: the batch m_dwarfs_15pc\n')
+    assert '  a. Work from this folder' in claude and '  h. Then read' in claude
+    assert 'c. Update the koloa of this machine' in claude
+    assert ('pip install --upgrade --force-reinstall --no-deps \\\n'
+            '             git+https://github.com/eartigau/koloa.git') in claude
+    assert 'N = (2/3 x free cores) / 3' in claude
+    assert '1. COPY IT' not in claude and str(tmp_path) not in claude
+    assert 'm_dwarfs_15pc/CLAUDE.md' in tarfile.open(made['tar']).getnames()
+    assert 'koloa_commit' in survey.targets_of(folder)
     assert 'about\n       12 cores' in readme or '12 cores' in readme
     assert ('rsync -av me@server:/scratch/me/m_dwarfs_15pc/results/ \\\n'
             '          m_dwarfs_15pc/results/') in readme

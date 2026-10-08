@@ -443,6 +443,7 @@ koloanui</pre>
       </figure>
       <pre class="codeblock">m_dwarfs_demo/
   README.txt      # how to run it there, for a person or for a Claude session on that machine
+  CLAUDE.md       # its section for the Claude session, read by Claude Code on its own
   run_batch.py    # the script; its first setting is ROOT, where this folder is there
   submit.sh       # the same as a SLURM job array, a star per task
   targets.json    # the stars, and the files of each
@@ -494,9 +495,11 @@ python run_batch.py --root "$PWD" --summary   # results/summary.pdf again, nothi
       the table is, what to do when something goes wrong, and the list of its stars with what was packed of
       each. A section of it is written for an agent: the steps in order, what each must answer before the next,
       and what not to do (install, fetch, delete the results, start the batch twice, kill processes on a
-      guess, copy the data elsewhere). It tells the agent to find how many cores the machine has and how many
-      are free, and to take two thirds of the free ones: that many stars at once, at about three cores a star
-      (<span class="mono">--jobs N</span>).</p>
+      guess, copy the data elsewhere). It tells the agent to update the koloa of that machine first, which may
+      be out of date (the batch itself runs with the koloa packed in it), to find how many cores the machine
+      has and how many are free, and to take two thirds of the free ones: that many stars at once, at about
+      three cores a star (<span class="mono">--jobs N</span>). <span class="mono">CLAUDE.md</span>, beside the
+      README, is that section, where a Claude session started in the folder reads it on its own.</p>
       <p>Two options of the script are made for that. <span class="mono">--check</span> computes nothing: it
       says which Python it is and what it has, the cores of the machine, those that are free and the stars at
       once that two thirds of them allow, and of each star whether it is done

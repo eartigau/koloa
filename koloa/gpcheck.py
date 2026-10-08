@@ -471,16 +471,21 @@ def figure_sequence(fit, title: str):
                 ax.plot(grid, mean, color=col, lw=1.3,
                         label=f'GP ({inst})' if first else None)
                 if model.planets:
+                    # faint, under the exposures: it must not hide them
                     ax.plot(grid, mean + _planets_at(fit, grid),
-                            color=kplot.C['text'], lw=0.6, alpha=0.8,
-                            label='GP + signals' if first
+                            color=kplot.C['text'], lw=0.6, alpha=0.4,
+                            zorder=2, label='GP + signals' if first
                             and inst == data.instruments[0] else None)
                 lows.append(np.min(mean - sig))
                 highs.append(np.max(mean + sig))
             good = isel & good_all
-            ax.errorbar(data.time[good], clean[good], err[good], fmt='o',
-                        ms=2.8, color=col, ecolor=kplot.C['errbar'], lw=0.6,
-                        label=inst if iseason == 0 else None)
+            # each exposure seen through its neighbours
+            ax.errorbar(data.time[good], clean[good], err[good], fmt='none',
+                        ecolor=col, elinewidth=0.7, alpha=kplot.ERR_ALPHA,
+                        zorder=4)
+            ax.plot(data.time[good], clean[good], ls='none', marker='o',
+                    ms=3.6, mfc=col, mec='none', alpha=kplot.POINT_ALPHA,
+                    zorder=5, label=inst if iseason == 0 else None)
             if np.any(good):
                 lows.append(np.min(clean[good] - err[good]))
                 highs.append(np.max(clean[good] + err[good]))
@@ -510,7 +515,8 @@ def figure_sequence(fit, title: str):
         ax.axis('off')
     for ax in axes[-1]:
         ax.set_xlabel('BJD - 2400000', fontsize=8)
-    axes.flat[0].legend(fontsize=6.5, ncol=4, loc='upper left')
+    kplot.solid_legend(axes.flat[0].legend(fontsize=6.5, ncol=4,
+                                           loc='upper left'))
     fig.suptitle(title, fontsize=10)
     fig.tight_layout(rect=(0, 0, 1, 0.975))
     return fig
@@ -595,9 +601,12 @@ def figure_fold(fit, ip: int, title: str,
                                   np.sqrt(diag[sel]),
                                   np.asarray(data.seq)[sel])
         phase = ((tt - tconj) / period) % 1
-        ax.errorbar(phase, vv, ee, fmt='o', ms=3, color=colours[inst],
-                    ecolor=kplot.C['errbar'], lw=0.6, alpha=0.85,
-                    label=f'{inst} ({len(tt)} visits)')
+        # each visit seen through its neighbours
+        ax.errorbar(phase, vv, ee, fmt='none', ecolor=colours[inst],
+                    elinewidth=0.6, alpha=kplot.ERR_ALPHA)
+        ax.plot(phase, vv, ls='none', marker='o', ms=3.4, mfc=colours[inst],
+                mec='none', alpha=kplot.POINT_ALPHA,
+                label=f'{inst} ({len(tt)} visits)')
     curve = kepler.rv_keplerian(tconj + phi * period, period, tperi, ecc,
                                 omega, amp)
     ax.plot(phi, curve, color=kplot.C['text'], lw=1.5,
@@ -610,7 +619,9 @@ def figure_fold(fit, ip: int, title: str,
     ax.set_xlabel(f'phase (P = {period:.4f} d, 0 = conjunction)')
     ax.set_ylabel('RV [m/s]')
     ax.set_title(title, fontsize=9, loc='left')
-    ax.legend(fontsize=7, loc='lower left')
+    # where the fold of an orbit leaves room: phase 0 is its conjunction,
+    #   the velocity falling
+    kplot.solid_legend(ax.legend(fontsize=7, loc='upper left'))
     fig.tight_layout()
     return fig
 

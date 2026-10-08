@@ -206,6 +206,77 @@ INST_COLOURS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4',
 INST_MARKERS = ['o', 's', 'D', '^', 'v', 'P', '*', 'h']
 
 
+#: the opacity of the points of a crowded figure, and of their error bars:
+#: each point is seen through its neighbours
+POINT_ALPHA = 0.55
+ERR_ALPHA = 0.28
+#: a model with more cycles than this over a figure is a band, not a curve:
+#: its range is shaded, light, so that the points are seen on it
+BAND_CYCLES = 120.0
+
+
+def scatter_instruments(ax, xval, yval, err, inst, instruments,
+                        prob=None, size: float = 3.4, labels: Any = True,
+                        flagged: Optional[str] = 'P(outlier) > 0.5',
+                        zorder: int = 3) -> None:
+    """
+    Points coloured by instrument (a hue and a marker each), translucent so
+    that each is seen through its neighbours, and circled when more likely
+    an outlier than not
+
+    :param ax: matplotlib axis
+    :param xval: np.ndarray, where each point is (a time, a phase)
+    :param yval: np.ndarray, its value
+    :param err: np.ndarray or None, its error bar (none drawn for None)
+    :param inst: np.ndarray, its instrument
+    :param instruments: list of str, the instruments, in the order of
+                        their colours
+    :param prob: np.ndarray or None, its probability of being an outlier:
+                 above 0.5 it is circled (below 0.5 of being valid)
+    :param size: float, the size of the markers
+    :param labels: True (each instrument and its number of points in the
+                   legend), False (none), or a dict (instrument: its label)
+    :param flagged: str or None, the label of the circles in the legend
+    :param zorder: int, where the points are drawn
+    """
+    xval, yval = np.asarray(xval, dtype=float), np.asarray(yval, dtype=float)
+    inst = np.asarray(inst).astype(str)
+    prob = np.zeros(len(xval)) if prob is None else np.asarray(prob)
+    for it, name in enumerate(instruments):
+        sel = inst == str(name)
+        if not np.any(sel):
+            continue
+        colour = INST_COLOURS[it % len(INST_COLOURS)]
+        if err is not None:
+            ax.errorbar(xval[sel], yval[sel], np.asarray(err)[sel],
+                        fmt='none', ecolor=colour, elinewidth=0.6,
+                        alpha=ERR_ALPHA, zorder=zorder - 1)
+        label = (f'{name} ({int(np.sum(sel))})' if labels is True else
+                 labels.get(str(name)) if isinstance(labels, dict) else None)
+        ax.plot(xval[sel], yval[sel], ls='none',
+                marker=INST_MARKERS[it % len(INST_MARKERS)], ms=size,
+                mfc=colour, mec='none', alpha=POINT_ALPHA, label=label,
+                zorder=zorder)
+    bad = prob > 0.5
+    if np.any(bad):
+        ax.plot(xval[bad], yval[bad], ls='none', marker='o', ms=2.4 * size,
+                mfc='none', mec=C['text'], mew=0.9, label=flagged,
+                zorder=zorder + 1)
+
+
+def solid_legend(legend: Any) -> Any:
+    """the handles of a legend opaque, whatever the opacity of the points
+    they stand for"""
+    from matplotlib.lines import Line2D
+    handles = getattr(legend, 'legend_handles', None) or getattr(
+        legend, 'legendHandles', [])
+    for handle in handles:
+        # the points; a band keeps its lightness
+        if isinstance(handle, Line2D):
+            handle.set_alpha(1.0)
+    return legend
+
+
 def trend_curve(model: Any, theta: np.ndarray, time: np.ndarray
                 ) -> np.ndarray:
     """the polynomial trend of a fit (and a perspective acceleration fitted
@@ -259,25 +330,29 @@ def model_series(res: Any, accel: Optional[Dict[str, Any]] = None,
     fig, axes = plt.subplots(3, 1, figsize=(7.2, 6.6), sharex=True,
                              gridspec_kw=dict(height_ratios=[1.4, 1.0, 0.8]))
     ax1, ax2, ax3 = axes
-    for it, inst in enumerate(data.instruments):
-        sel = data.inst == inst
-        colour = INST_COLOURS[it % len(INST_COLOURS)]
-        marker = INST_MARKERS[it % len(INST_MARKERS)]
-        for ax, yval in ((ax1, shown), (ax2, shown - planets_at),
-                         (ax3, resid)):
-            for bad in (False, True):
-                part = sel & ((prob > 0.5) == bad)
-                if not np.any(part):
-                    continue
-                ax.errorbar(data.time[part], yval[part], data.err[part],
-                            fmt=marker, ms=3.2, lw=0.6, elinewidth=0.6,
-                            color=colour,
-                            mfc='none' if bad else colour,
-                            label=(f'{inst} ({int(np.sum(sel))})'
-                                   if ax is ax1 and not bad else None),
+    # every point seen through its neighbours; circled, more likely an
+    #   outlier than not
+    for ax, yval in ((ax1, shown), (ax2, shown - planets_at), (ax3, resid)):
+        scatter_instruments(ax, data.time, yval, data.err, data.inst,
+                            data.instruments, prob, labels=ax is ax1,
+                            flagged='P(outlier) > 0.5' if ax is ax1 else None,
                             zorder=2)
-    ax1.plot(fine, total_fine, color=C['model'], lw=0.6, alpha=0.8,
-             zorder=3, label='Keplerians + trend')
+    # under the points. Over years a short orbit is no curve but a band
+    #   that would hide them: its range then, shaded light
+    if data.baseline / min(pers + [data.baseline]) > BAND_CYCLES:
+        nbin = 500
+        edges = np.linspace(fine[0], fine[-1], nbin + 1)
+        where = np.clip(np.searchsorted(edges, fine, side='right') - 1, 0,
+                        nbin - 1)
+        low, high = np.full(nbin, np.inf), np.full(nbin, -np.inf)
+        np.minimum.at(low, where, total_fine)
+        np.maximum.at(high, where, total_fine)
+        ax1.fill_between(0.5 * (edges[1:] + edges[:-1]), low, high,
+                         color=C['model'], alpha=0.13, lw=0, zorder=1,
+                         label='Keplerians + trend (their range)')
+    else:
+        ax1.plot(fine, total_fine, color=C['model'], lw=0.6, alpha=0.6,
+                 zorder=1, label='Keplerians + trend')
     ax1.plot(fine, trend_fine, color=C['model'], lw=1.0, ls='--', zorder=4,
              label='trend')
     words = []
@@ -295,11 +370,69 @@ def model_series(res: Any, accel: Optional[Dict[str, Any]] = None,
     ax2.set_ylabel('planets out')
     ax3.set_ylabel('residuals')
     ax3.set_xlabel('BJD - 2400000')
-    ax1.legend(fontsize=6.5, ncol=4, loc='upper left', frameon=False)
+    solid_legend(ax1.legend(fontsize=6.5, ncol=4, loc='upper left',
+                            frameon=False))
     ax2.legend(fontsize=7, loc='upper left', frameon=False)
     if title:
         ax1.set_title(title, fontsize=9)
     fig.tight_layout(h_pad=0.4)
+    return fig
+
+
+def series_instruments(data: RVData, prob: Optional[np.ndarray] = None,
+                       fit: Any = None, title: Optional[str] = None,
+                       ylabel: str = 'RV [m s$^{-1}$]'):
+    """
+    The velocities in time, a colour per instrument, each instrument set
+    about the drift of the star and not about zero
+
+    A series holds each instrument about its own median. When the star
+    drifts, instruments that observed at different epochs then sit at the
+    same level, and the drift shows as steps between them. Here the median
+    of each instrument is taken of its velocities minus the trend of the
+    fit (its acceleration, and its change when fitted), so that every
+    instrument lies along that trend, drawn dashed.
+
+    :param data: RVData, the series
+    :param prob: np.ndarray or None, the outlier probability per point: a
+                 point above 0.5 is circled, and left out of the medians
+    :param fit: FitResult or None, the fit whose trend is the drift (None,
+                or a fit with no trend: each instrument about its median)
+    :param title: str or None, the title
+    :param ylabel: str, the label of the y axis
+
+    :return: the figure
+    """
+    fig, ax = plt.subplots(figsize=(7.2, 3.0))
+    prob = np.zeros(data.n) if prob is None else np.asarray(prob)
+    drift = np.zeros(data.n)
+    has_drift = fit is not None and (fit.model.trend >= 1
+                                     or 'secacc' in fit.model.index)
+    if has_drift:
+        drift = trend_curve(fit.model, fit.theta, data.time)
+    value = data.rv.astype(float).copy()
+    for inst in data.instruments:
+        sel = data.inst == inst
+        good = sel & (prob <= 0.5)
+        ref = good if np.any(good) else sel
+        # its median along the drift, not about zero
+        value[sel] -= np.median(data.rv[ref] - drift[ref])
+    scatter_instruments(ax, data.time, value, data.err, data.inst,
+                        data.instruments, prob)
+    if has_drift:
+        fine = np.linspace(data.time.min(), data.time.max(), 400)
+        ax.plot(fine, trend_curve(fit.model, fit.theta, fine),
+                color=C['model'], lw=1.0, ls='--', zorder=4,
+                label='the drift (the trend of the fit)')
+    ax.set_xlabel('time [BJD - 2400000]')
+    ax.set_ylabel(ylabel)
+    if title:
+        ax.set_title(title, loc='left')
+    solid_legend(ax.legend(fontsize=6.5, ncol=4, loc='upper left',
+                           frameon=False))
+    low, high = ax.get_ylim()
+    ax.set_ylim(low, high + 0.14 * (high - low))  # room for the legend
+    fig.tight_layout()
     return fig
 
 
@@ -385,7 +518,7 @@ def phase(fit: Any, planet: int = 0, level: str = 'point', nbins: int = 10,
           ax=None, title: Optional[str] = None, nsample: int = 300,
           select: Optional[np.ndarray] = None,
           ylim: Optional[Tuple[float, float]] = None, legend: bool = True,
-          colorbar: bool = True):
+          colorbar: bool = True, colour: str = 'prob'):
     """
     A phase fold of one orbit, with binned means and the fitted envelope
 
@@ -410,12 +543,19 @@ def phase(fit: Any, planet: int = 0, level: str = 'point', nbins: int = 10,
     :param legend: bool, draw the legend
     :param colorbar: bool, draw the scale of the outlier probability that
                      colours the points
+    :param colour: str, prob (each point coloured by its outlier
+                   probability, hollow above 0.5) or inst (a colour per
+                   instrument, translucent, circled when its probability of
+                   being valid is below 0.5; no colour scale, the
+                   instruments under the axis)
 
     :return: the figure
     """
     model, data = fit.model, fit.model.data
+    own = ax is None
     if ax is None:
-        fig, ax = plt.subplots(figsize=(4.6, 3.2))
+        fig, ax = plt.subplots(figsize=(4.6, 3.6 if colour == 'inst'
+                                        else 3.2))
     else:
         fig = ax.figure
     period, tperi, ecc, omega, amp = model.orbit(fit.theta, planet)
@@ -439,9 +579,14 @@ def phase(fit: Any, planet: int = 0, level: str = 'point', nbins: int = 10,
                             minlength=data.nseq) > 0
         tt, vv, ee, pp = (seqm[key][shown] for key in
                           ('time', 'value', 'err', 'prob'))
+        # the instrument of a sequence: that of its first point
+        first = np.full(data.nseq, -1)
+        first[data.seq[::-1]] = np.arange(data.n)[::-1]
+        ii = np.asarray(data.inst)[first[shown]]
     else:
         tt, vv, ee, pp = data.time[keep], value[keep], \
             np.sqrt(data.err ** 2 + jit ** 2)[keep], prob[keep]
+        ii = np.asarray(data.inst)[keep]
     ph = ((tt - tconj) / period) % 1.0
     if ylim is None:
         spread = max(np.nanpercentile(np.abs(vv), 98), 1.2 * amp)
@@ -454,9 +599,18 @@ def phase(fit: Any, planet: int = 0, level: str = 'point', nbins: int = 10,
     #   flagged unit disappears from the figure and none hides the legend
     ceiling = ylo + (0.80 if legend else 0.96) * (yhi - ylo)
     shown = (vv >= ylo) & (vv <= ceiling)
-    cmap = _scatter_reliability(ax, ph[shown], vv[shown], ee[shown],
-                                pp[shown],
-                                size=22 if level == 'sequence' else 14)
+    cmap = None
+    if colour == 'inst':
+        # a colour per instrument, each point seen through its neighbours;
+        #   circled, less likely valid than not
+        scatter_instruments(ax, ph[shown], vv[shown], ee[shown], ii[shown],
+                            data.instruments, pp[shown], labels=False,
+                            flagged=None,
+                            size=4.2 if level == 'sequence' else 3.4)
+    else:
+        cmap = _scatter_reliability(ax, ph[shown], vv[shown], ee[shown],
+                                    pp[shown],
+                                    size=22 if level == 'sequence' else 14)
     # the model and its envelope
     grid = np.linspace(0, 1, 300)
     tgrid = tconj + grid * period
@@ -499,7 +653,27 @@ def phase(fit: Any, planet: int = 0, level: str = 'point', nbins: int = 10,
     if legend:
         ax.legend(loc='upper center', ncol=4, handlelength=1.2, fontsize=7,
                   columnspacing=1.0)
-    if colorbar:
+    if colour == 'inst':
+        if own:
+            # the instruments (and the circle of a point flagged) under
+            #   the axis, where they hide nothing
+            from matplotlib.lines import Line2D
+            handles = [Line2D([], [], ls='none', ms=4.5, mec='none',
+                              marker=INST_MARKERS[it % len(INST_MARKERS)],
+                              mfc=INST_COLOURS[it % len(INST_COLOURS)],
+                              label=f'{inst} ({int(np.sum(ii == inst))})')
+                       for it, inst in enumerate(data.instruments)
+                       if np.any(ii == inst)]
+            handles.append(Line2D([], [], ls='none', marker='o', ms=7,
+                                  mfc='none', mec=C['text'], mew=0.9,
+                                  label='P(valid) < 0.5'))
+            fig.tight_layout()
+            rows = -(-len(handles) // 4)
+            fig.subplots_adjust(bottom=0.17 + 0.055 * rows)
+            fig.legend(handles=handles, loc='lower center', ncol=4,
+                       fontsize=6.5, frameon=False, handletextpad=0.3,
+                       columnspacing=1.0)
+    elif colorbar:
         _colorbar(fig, ax, cmap)
     return fig
 

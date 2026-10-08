@@ -442,9 +442,14 @@ def _data(rep: Dict[str, Any], folder: str) -> str:
                    'velocities are used as published (their authors may '
                    'have corrected offsets or activity).}\n')
     out.append(_figure(rep['figures'].get('rv'), folder,
-                       'The velocities of every instrument, each exposure '
-                       'coloured by its probability of being an outlier.',
-                       '0.4'))
+                       'The velocities of every instrument, a colour each. '
+                       'Each instrument is set about the drift of the star '
+                       '(the trend of the fit, dashed): its median is taken '
+                       'of its velocities minus that trend, not of its '
+                       'velocities alone, so that a drift shows as one line '
+                       'and not as steps between instruments. Circled: an '
+                       'exposure more likely an outlier than not '
+                       '($P > 0.5$).', '0.4'))
     return '\n'.join(out) + '\n'
 
 
@@ -617,7 +622,9 @@ def _signals(rep: Dict[str, Any], folder: str) -> str:
                         'the trend fitted together (top); the planets taken '
                         'out, with the trend, the acceleration of the star '
                         'and its change (middle); the residuals (bottom). '
-                        'Hollow: more likely an outlier than not.')
+                        'The points are translucent, each seen through its '
+                        'neighbours; circled: more likely an outlier than '
+                        'not.')
     if not orbits:
         return (out[0] + f'\nNo interval has a FIP below '
                 f'{rep["threshold"]:g}: nothing was fitted.\n\n'
@@ -688,8 +695,10 @@ def _signals(rep: Dict[str, Any], folder: str) -> str:
     for ip, orb in enumerate(orbits):
         out.append(_figure(rep['figures'].get(f'phase_{ip}'), folder,
                            f'The orbit at {orb["P"][0]:.4f}\\,d, the other '
-                           f'signals removed: K = {pm(orb["K"])}\\,m/s.',
-                           '0.35'))
+                           f'signals removed: K = {pm(orb["K"])}\\,m/s. A '
+                           f'colour per instrument, the points translucent; '
+                           f'circled: an exposure whose probability of '
+                           f'being valid is below 0.5.', '0.4'))
     return '\n'.join(out) + '\n'
 
 

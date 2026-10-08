@@ -1582,7 +1582,9 @@ later with numpy, scipy and matplotlib, and that is all.
 
 This file is for whoever runs the batch: a person, or a Claude session (or
 another agent) on the machine that runs it. An agent reads the next two
-sections first; the numbered steps are the detail of each.
+sections first; the numbered steps are the detail of each. CLAUDE.md,
+beside this file, is the section written for the agent, where a Claude
+session started in this folder reads it on its own.
 
 
 IN SHORT
@@ -1626,7 +1628,39 @@ this order:
      lines below, python stands for the Python found here (python3, or
      its full path).
 
-  c. Check. This computes nothing and takes seconds:
+  c. Update the koloa of this machine, if it has one: it may be out of
+     date. This is the one thing to fetch, and it needs the network.
+
+         python -m pip show koloa        # is it installed for this Python?
+
+     If it is:
+
+         python -m pip install --upgrade --force-reinstall --no-deps \\
+             git+https://github.com/eartigau/koloa.git
+
+     If the person keeps a clone of it here instead (a folder with .git
+     and koloa/ in it, on PYTHONPATH or installed with pip -e), update
+     that one: git -C <the clone> pull --ff-only. If koloa is not on
+     this machine at all, install nothing: this batch carries its own.
+     If the update fails (no network, no right to write), say so and
+     go on: the batch does not wait for it.
+
+     Know what it changes. This batch does not run with the koloa of
+     the machine: it runs with koloa_src/, koloa as it was when the
+     batch was packed,
+
+         koloa {version}{commit}, {made}
+
+     so that every star is computed by the code run_batch.py was
+     written for. The update is for everything else run here with
+     koloa (koloa, koloanui, a report by hand), and it tells you
+     whether this folder is behind: if the koloa you now have is newer
+     than the one packed (its last commit, git log -1 in a clone, or
+     the date of its install), say so in your report. The person may
+     then want to pack the batch again; do not swap koloa_src/
+     yourself.
+
+  d. Check. This computes nothing and takes seconds:
 
          python run_batch.py --root "$PWD" --check
 
@@ -1635,9 +1669,9 @@ this order:
      "state: ready" (exit code 0): go on. "state: not ready" (exit code
      1): the lines above it say what is missing; report them and stop.
      "state: running" or "state: done": the batch was already started
-     here; do not start it again, go to f or g.
+     here; do not start it again, go to g or h.
 
-  d. Choose how to run it, from what the machine is.
+  e. Choose how to run it, from what the machine is.
      - No scheduler (a server reached by ssh): step 3, on two thirds of
        the cores that are free, no more and not many fewer. Find how
        many cores there are and how many are busy yourself:
@@ -1665,8 +1699,8 @@ this order:
        submit.sh needs an account (--account); if you were not given
        one, ask.
 
-  e. Start it once, detached, so that it outlives your shell, with the
-     N of step d:
+  f. Start it once, detached, so that it outlives your shell, with the
+     N of step e:
 
          nohup python -u run_batch.py --root "$PWD" --jobs N > run.log 2>&1 &
 
@@ -1674,7 +1708,7 @@ this order:
      not wait for it in the foreground, and do not use tail -f, which
      never returns.
 
-  f. Follow it by asking again, every few minutes at first, then less
+  g. Follow it by asking again, every few minutes at first, then less
      often:
 
          python run_batch.py --root "$PWD" --check
@@ -1683,11 +1717,11 @@ this order:
      running (with how far its FIP is and the time left), or to do. The
      batch is over when the last line reads "state: done". If it
      reads "state: ready" again while stars are still to do, the batch
-     stopped (the machine restarted, say): start it again as in e.
+     stopped (the machine restarted, say): start it again as in f.
      The batch does not need you: if your session may end before it
      does, tell the person so, and give them this --check line.
 
-  g. Then read results/table.csv (step 6 says what each column is) and
+  h. Then read results/table.csv (step 6 says what each column is) and
      report: how many stars are done and how many failed, each failure
      with its error as the table gives it; how the stars read (the
      verdict column: candidate, known, drift, nothing) and the
@@ -1695,14 +1729,17 @@ this order:
      any a planet (step 6: the table is a list of questions); which
      detailed reports were made and which failed (the report column);
      how many cores the machine has, how many were free, and the --jobs
-     you gave; how long it took; where results/summary.pdf is; and the
+     you gave; whether the koloa of the machine was updated, and whether
+     it is newer than the one packed; how long it took; where
+     results/summary.pdf is; and the
      line that brings the results back (step 5) with the real path of
      this folder in it.
 
 What not to do, however convenient it looks:
 
-  - Fetch or install nothing: no pip, no conda install, no git clone, and
-    GATHER stays False. The batch needs no network.
+  - Fetch or install nothing but the update of koloa of step c: no other
+    pip, no conda install, no git clone, and GATHER stays False. The
+    batch needs no network.
   - files/, archives/, cache/, koloa_src/ and targets.json are to be
     read, not changed: do not edit, move or delete them.
   - results/ is the work done. Never delete it to start clean: a star is
@@ -1983,6 +2020,8 @@ batch as before; or delete results/GJ_581/ and start the batch again.
 -------------------------
 
     README.txt      this file
+    CLAUDE.md       its section for a Claude session, read by Claude Code
+                    when it is started in this folder
     run_batch.py    the script; its first setting is ROOT
     submit.sh       the same as a SLURM job array
     targets.json    the stars, and the files of each
@@ -2052,6 +2091,60 @@ folder and its tar are no more public than they are.
 
 koloa: https://github.com/eartigau/koloa
 '''
+
+
+def _commit() -> Optional[str]:
+    """the commit of this koloa, when it can be told: a clone of its
+    repository, or an install from it (pip keeps where it came from)"""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if os.path.isdir(os.path.join(here, '.git')):
+        try:
+            out = subprocess.run(['git', '-C', here, 'rev-parse', '--short',
+                                  'HEAD'], capture_output=True, text=True,
+                                 timeout=10)
+            if out.returncode == 0 and out.stdout.strip():
+                return out.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    try:
+        from importlib import metadata
+        text = metadata.distribution('koloa').read_text('direct_url.json')
+        return str(json.loads(text)['vcs_info']['commit_id'])[:7]
+    except Exception:  # not said: the version alone
+        return None
+
+
+#: the section of the README of a batch written for an agent, as it starts
+#: and as it ends (CLAUDE.md is that section)
+AGENT_FROM = 'FOR A CLAUDE SESSION (OR ANOTHER AGENT) ASKED TO RUN THIS BATCH'
+AGENT_TO = '1. COPY IT TO THE MACHINE THAT RUNS IT'
+
+
+def claude_md(readme: str, name: str, nstar: int, made: str) -> str:
+    """
+    CLAUDE.md of a batch folder: the section of its README written for a
+    Claude session, in the file Claude Code reads on its own when it is
+    started in the folder
+
+    :param readme: str, the README of the batch, filled
+    :param name: str, the name of the batch
+    :param nstar: int, its stars
+    :param made: str, when it was made
+
+    :return: str, the text of CLAUDE.md
+    """
+    start = readme.index(AGENT_FROM)
+    start = readme.index('\n', readme.index('\n', start) + 1) + 1
+    section = readme[start:readme.index(AGENT_TO)].strip('\n')
+    return (f'# koloa: the batch {name}\n\n'
+            f'This folder is a batch of koloa, made {made}: {nstar} stars '
+            f'to compute with `run_batch.py`. `README.txt`, beside this '
+            f'file, is the whole guide. This file is its section for you, '
+            f'a Claude session (or another agent) asked to run the batch on '
+            f'this machine: read it first, then follow it in order. The '
+            f'steps it names by number (step 3, step 5...) are the numbered '
+            f'sections of `README.txt`.\n\n'
+            f'## What you are asked to do\n\n{section}\n')
 
 
 def _packed(folder: str, star: Dict[str, Any]) -> Tuple[str, bool]:
@@ -2226,6 +2319,7 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
                     dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     made = time.strftime('%Y-%m-%d %H:%M')
+    commit = _commit()
     lines = [_packed(folder, star) for star in targets]
     ngath = sum(gathered for _, gathered in lines)
     when = ('gathered when the batch was packed' if gather else
@@ -2236,9 +2330,12 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
                  report=bool(report), report_fip=float(report_fip),
                  last=max(len(targets) - 1, 0), when=when,
                  version=__version__, needs=NEEDS,
+                 commit=f', commit {commit}' if commit else '',
                  cores=CORES * int(jobs), rule='=' * (17 + len(name)),
                  intro=textwrap.fill(
-                     f'Made {made} with koloa {__version__}. {len(targets)} '
+                     f'Made {made} with koloa {__version__}'
+                     + (f' (commit {commit})' if commit else '')
+                     + f'. {len(targets)} '
                      f'stars: the quick FIP of each, with its files of '
                      f'velocities and its archives, and a table of their '
                      f'best peaks. With them: {nfile} files of velocities, '
@@ -2254,6 +2351,7 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
                      + [line for line, _ in lines]))
     with open(os.path.join(folder, TARGETS), 'w') as handle:
         json.dump(dict(name=name, made=made, koloa=__version__,
+                       koloa_commit=commit,
                        options=dict(rules=bool(rules), trend=int(trend),
                                     report=bool(report),
                                     report_fip=float(report_fip)),
@@ -2262,6 +2360,11 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
                        ('README.txt', README)):
         with open(os.path.join(folder, file), 'w') as handle:
             handle.write(text.format(**words))
+    # the section of the README for a Claude session, where Claude Code
+    #   reads it on its own
+    with open(os.path.join(folder, 'CLAUDE.md'), 'w') as handle:
+        handle.write(claude_md(README.format(**words), name, len(targets),
+                               made))
     made_tar = None
     if tar:
         made_tar = folder + '.tar.gz'
