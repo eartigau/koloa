@@ -379,8 +379,14 @@ def test_a_batch_run_where_it_was_carried(tmp_path, monkeypatch):
     assert os.path.getsize(os.path.join(moved, 'results',
                                         'summary.pdf')) > 20000
     for star in ('GJ_1', 'GJ_2'):
-        for part in ('result.json', 'quick.json', 'quicklook.pdf'):
+        # its PDF under the name of the star: those of every star can be
+        #   put in one folder
+        for part in ('result.json', 'quick.json', f'{star}_quicklook.pdf'):
             assert os.path.exists(os.path.join(moved, 'results', star, part))
+    assert survey.quicklook_path(moved, 'GJ 2') == os.path.join(
+        moved, 'results', 'GJ_2', 'GJ_2_quicklook.pdf')
+    assert len({os.path.basename(path) for path in glob.glob(os.path.join(
+        moved, 'results', '*', '*_quicklook.pdf'))}) == 2
     with open(os.path.join(moved, 'results', 'GJ_2', 'result.json')) as handle:
         res = json.load(handle)
     assert res['summary']['instruments'] == dict(HARPS15=30)

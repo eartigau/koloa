@@ -34,8 +34,8 @@ run_batch.py, whose first setting is ROOT, where the folder is on the
 machine that runs it. run() takes the stars one after the other, a few at
 once (each a Python of its own), the quick FIP of each with its files and
 its archives chosen by koloa.datasets; each star done is kept
-(results/<star>/: result.json, quick.json, quicklook.pdf), so that a batch
-stopped goes on where it was, and results/table.csv gathers them.
+(results/<star>/: result.json, quick.json, <star>_quicklook.pdf), so that
+a batch stopped goes on where it was, and results/table.csv gathers them.
 
 The folder is run outside koloa, and its README.txt says how, for a person
 or for a Claude session on the machine that runs it: the copy, what it
@@ -635,6 +635,14 @@ def result_path(root: str, name: str) -> str:
     return os.path.join(root, 'results', _folder(name), 'result.json')
 
 
+def quicklook_path(root: str, name: str) -> str:
+    """where the PDF of a star of a batch is kept: under the name of the
+    star (GJ_581_quicklook.pdf), so that those of every star can be put
+    in one folder"""
+    return os.path.join(root, 'results', _folder(name),
+                        f'{_folder(name)}_quicklook.pdf')
+
+
 def report_star(out: str, data: Any, name: str,
                 rotation: Optional[Dict[str, Any]] = None, trend: int = 1,
                 network: bool = False) -> Dict[str, Any]:
@@ -785,8 +793,9 @@ def run_target(root: str, star: Dict[str, Any], rules: bool = True,
     its light curve is with its archives (fetched only with gather); kept
     in results/<star>/: result.json (its line of the table, what was done
     with each dataset, how its peaks read: koloa.batchpdf.reading),
-    quick.json (the FIP, as the page draws it) and quicklook.pdf, whose
-    first page is the summary of the star (koloa.batchpdf.figure).
+    quick.json (the FIP, as the page draws it) and <star>_quicklook.pdf
+    (quicklook_path), whose first page is the summary of the star
+    (koloa.batchpdf.figure).
 
     With report, a star that has a candidate (a peak with a FIP below
     report_fip that is neither a known planet nor a drift) has its
@@ -862,7 +871,7 @@ def run_target(root: str, star: Dict[str, Any], rules: bool = True,
                 exclude=', '.join(item.get('dace_copies') or []),
                 trend=trend >= 1, curvature=trend >= 2), qid=qid,
                 front=front)
-            with open(os.path.join(out, 'quicklook.pdf'), 'wb') as handle:
+            with open(quicklook_path(root, name), 'wb') as handle:
                 handle.write(pdf)
         except Exception as err:  # the numbers are kept all the same
             result['pdf_error'] = f'{type(err).__name__}: {err}'
@@ -1911,8 +1920,12 @@ Without the page:
                                    stars, the candidates first, then the
                                    page of each
     results/table.csv              a line for each star done
-    results/<star>/quicklook.pdf   its page of summary first, then its
+    results/<star>/<star>_quicklook.pdf
+                                   its page of summary first, then its
                                    series, its FIP, its folds, its numbers
+                                   (named after its star: those of every
+                                   star can be copied into one folder,
+                                   cp results/*/*_quicklook.pdf there/)
     results/<star>/report/         its detailed report, when it has a
                                    candidate and REPORT is True
     results/<star>/result.json     its line of the table, how its peaks
