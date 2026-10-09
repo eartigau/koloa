@@ -485,6 +485,27 @@ python run_batch.py --root "$PWD" --summary   # results/summary.pdf again, nothi
       done and with nothing computed, by <span class="mono">--summary</span> there or by <b>Summary PDF</b> in
       the page, for a batch folder brought back. A verdict is a reading of a quick look, which has no GP: it
       sorts the stars, it does not decide on a planet.</p>
+      <h3 id="gui-batch-prospects">What more data would do for a candidate</h3>
+      <p>A candidate has a second page, its prospects, to plan with. The first part asks what more velocities
+      would do: 50, 100, 150 or 200 more nights of each instrument of the files of the star (SPIRou,
+      NIRPS...), spread over 6 months, a year or two on the nights the star can be observed from the site of
+      the instrument (above airmass 2 for an hour of night; for SPIRou, in the bright half of each lunation,
+      where the telescope has it). The candidate is taken as real, with the period, the amplitude and the phase
+      of its fold, and a new night has the mean error bar of the instrument. The Fisher information of a
+      sinusoid with an offset per instrument and a trend says by how much the error of K shrinks: the forecast
+      is the error measured today times that ratio, so it keeps whatever today's scatter holds that the error
+      bars do not. The page gives K over its error today and in each case, with the FIP that goes with it, to
+      an order of magnitude.</p>
+      <p>The second part is astrometry: by how much the star moves, at least, from the minimum mass of the
+      candidate, the mass of the star (from its type) and its parallax, against what one crossing of a field of
+      view of Gaia measures at its G magnitude, with the crossings the star has in Gaia DR4 (those of Gaia
+      DR3, asked of the Gaia archive when the stars are cross-matched or packed, scaled to the 66 months of
+      DR4). Its significance there is said as the &chi;<sup>2</sup> that the planet lowers over those crossings,
+      against what a detection asks for. The noise of a crossing, that &chi;<sup>2</sup> and the threshold of
+      a detection are those of Lammers and Winn (2025). Most candidates of a velocity survey of M dwarfs are
+      far below it; a giant planet on an orbit of a year or more is not. Both parts are orders of
+      magnitude.</p>
+      <!--AUTO:gui_prospects--><!--/AUTO-->
       <!--AUTO:gui_survey_run--><!--/AUTO-->
       <h3 id="gui-batch-there">Running it there</h3>
       <p>The tar is copied and run outside koloa, by you or by a Claude session on the machine that runs it. Its

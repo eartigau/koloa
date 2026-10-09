@@ -393,6 +393,14 @@ def test_a_batch_run_where_it_was_carried(tmp_path, monkeypatch):
     assert res['datasets']['used'] == 1
     assert res['reading']['kind'] == 'candidate'
     assert res['reading']['peaks'][0]['counts']
+    # a candidate has its prospects: its astrometric signal (its mass from
+    #   its type, its parallax from its distance), in its result, in the
+    #   table, and on a page of its own in the summary
+    assert res['prospects']['astrometry']['alpha'] > 0
+    assert res['prospects']['astrometry']['distance'] == pytest.approx(6.0)
+    assert rows[1]['gaia_alpha'] == res['prospects']['astrometry']['alpha']
+    assert rows[1]['gaia_snr'] < 1 and rows[1]['snr'] > 5
+    assert rows[1]['gaia_chi2'] == res['prospects']['astrometry']['dchi2']
     assert res['reading']['line'].startswith('candidate: #1 at 7.')
     table = open(os.path.join(moved, 'results', 'table.csv')).read()
     assert table.splitlines()[0].startswith('name,sptype,distance,status')

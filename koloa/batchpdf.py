@@ -16,8 +16,11 @@ year, or none of these: a candidate. figure() draws the page of a star
 from the same two files, with nothing computed again: its verdict, its
 peaks, its FIP, its folds, its velocities, its datasets and what the rules
 left out, its acceleration, the transit looked for, its rotation, and its
-detailed report when one was made. summary() puts the table of the stars
-and the page of each in one PDF, the candidates first.
+detailed report when one was made. A candidate has a second page, its
+prospects (koloa.prospects): what more nights of the instrument of its
+files would do for it, and its astrometric signal in Gaia DR4. summary()
+puts the table of the stars and the pages of each in one PDF, the
+candidates first.
 
 A verdict is a reading of a quick look, without a GP: it sorts the stars,
 it does not decide on a planet.
@@ -412,6 +415,11 @@ def figure(res: Dict[str, Any], quick: Optional[Dict[str, Any]],
             lines.append('  ' + _short(rep['error'], 120))
     elif rep.get('why'):
         lines.append(f'detailed report: none ({rep["why"]})')
+    if res.get('prospects'):
+        # in short; its page follows
+        from koloa import prospects
+        lines.append('prospects (next page): ' + prospects.short(
+            res['prospects']))
     if res.get('note'):
         lines.append('note: ' + str(res['note']))
     for it, line in enumerate(lines[:13]):
@@ -420,6 +428,79 @@ def figure(res: Dict[str, Any], quick: Optional[Dict[str, Any]],
     fig.text(0.06, 0.018, 'A reading of a quick look, with no GP: it sorts '
              'the stars, it does not decide on a planet. Each line is to be '
              'looked at.', fontsize=6.8, color='0.45')
+    return fig
+
+
+def prospects_figure(res: Dict[str, Any], star: Optional[Dict[str, Any]]
+                     = None, batch: str = ''):
+    """
+    The page of the prospects of a candidate (koloa.prospects): how K over
+    its error grows with 50 to 200 more nights of each instrument of the
+    files of the star, spread over 6 months, a year or two, and its
+    astrometric signal against what Gaia DR4 measures
+
+    :param res: dict, the result of the star, with its prospects
+    :param star: dict or None, the star (of targets.json)
+    :param batch: str, the name of the batch, for the corner of the page
+
+    :return: matplotlib Figure, or None (no prospects)
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from koloa import plotting as kplot
+    from koloa import prospects
+    told = res.get('prospects')
+    if not told:
+        return None
+    kplot.set_style('paper')
+    star = star or {}
+    name = str(res.get('name') or star.get('name') or '')
+    peak = told['peak']
+    fig = plt.figure(figsize=(7.8, 10.6))
+    fig.text(0.06, 0.972, name, fontsize=18, fontweight='bold', va='top')
+    fig.text(0.06, 0.942, f'what more data would do for #{peak["id"]}, '
+             f'{peak["period"]:.4f} d'
+             + (f', K = {peak["K"]:.2f} ± {peak["K_err"]:.2f} m/s'
+                if peak.get('K') is not None else '')
+             + ', if it is real', fontsize=9, color='0.25', va='top')
+    fig.text(0.94, 0.972, _short(batch, 40), fontsize=8.5, color='0.4',
+             ha='right', va='top')
+    shown = (told.get('velocities') or [])[:2]
+    styles = (('-', 'o'), ('--', 's'), (':', 'D'))
+    for it, one in enumerate(shown):
+        ax = fig.add_axes([0.10 + 0.47 * it, 0.62, 0.37, 0.26])
+        colour = kplot.INST_COLOURS[it % 8]
+        for (_, words), (line, mark) in zip(prospects.SPANS, styles):
+            rows = [row for row in one['table'] if row['span'] == words
+                    and row['snr'] is not None]
+            if not rows:
+                continue
+            ax.plot([0] + [row['n'] for row in rows],
+                    [one['snr']] + [row['snr'] for row in rows], ls=line,
+                    marker=mark, ms=4, color=colour, lw=1.2,
+                    label=f'over {words} ({rows[0]["nights"]} nights there)')
+        ax.axhline(one['snr'], color='0.5', lw=0.8, ls=':')
+        ax.set_xlabel(f'more nights of {one["instrument"]}', fontsize=8)
+        if it == 0:
+            ax.set_ylabel('K / its error', fontsize=8)
+        ax.set_title(f'{one["instrument"]} ({one["site"]}'
+                     + (', bright time' if one['bright'] else '') + f'): '
+                     f'{one["sigma"]:.2f} m/s a night, {one["n"]} so far',
+                     fontsize=7.5)
+        ax.tick_params(labelsize=7)
+        ax.legend(fontsize=6.5, loc='lower right', frameon=False)
+    mono = dict(family='monospace', fontsize=7.2, va='top')
+    top = 0.555 if shown else 0.90
+    # as they are written: their columns are aligned
+    for it, line in enumerate(prospects.lines(told)[:36]):
+        fig.text(0.06, top - 0.0128 * it, line[:128], **mono)
+    fig.text(0.06, 0.030, 'More velocities: the candidate taken as real; the '
+             'error of K of today shrunk as the Fisher information of a '
+             'sinusoid grows with the new nights', fontsize=6.8, color='0.45')
+    fig.text(0.06, 0.018, '(the mean error bar of the instrument, the star '
+             'above airmass 2 at night). Gaia: Lammers & Winn 2025. Orders '
+             'of magnitude, to plan with.', fontsize=6.8, color='0.45')
     return fig
 
 
@@ -535,6 +616,12 @@ def summary(root: str, limit: Optional[float] = None,
                          limit=row['told']['limit'])
             book.savefig(fig, dpi=160)
             plt.close(fig)
+            # a candidate: what more data would do for it
+            fig = prospects_figure(row['res'], row['star'],
+                                   batch=str(held.get('name') or ''))
+            if fig is not None:
+                book.savefig(fig, dpi=160)
+                plt.close(fig)
     os.replace(path + '.part', path)
     log(f'summary: {len(rows)} stars ('
         + ', '.join(f'{counts[kind]} {WORDS[kind]}' for kind in KINDS

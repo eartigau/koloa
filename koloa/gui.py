@@ -3501,8 +3501,9 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
     line of the report); the figures alone (matplotlib) where there is no
     pdflatex
 
-    :param front: matplotlib Figure or None, a page put before them all
-                  (the summary of a star of a batch: koloa.batchpdf.figure)
+    :param front: matplotlib Figure, a list of them, or None: pages put
+                  before them all (the summary of a star of a batch, and
+                  the prospects of its candidate: koloa.batchpdf)
 
     :return: bytes, the PDF
     """
@@ -3524,20 +3525,24 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
     try:
         for name, fig in figs:
             fig.savefig(os.path.join(tmp, f'{name}.pdf'))
-        if front is not None:
-            front.savefig(os.path.join(tmp, 'front.pdf'), dpi=160)
+        fronts = ([] if front is None else list(front) if isinstance(
+            front, (list, tuple)) else [front])
+        for it, page in enumerate(fronts):
+            page.savefig(os.path.join(tmp, f'front{it}.pdf'), dpi=160)
         tex = os.path.join(tmp, 'quicklook.tex')
         with open(tex, 'w') as handle:
             text = _quicklook_tex(data, source, quick, opts, xr, yr, pr,
                                   [name for name, _ in figs],
                                   command_line, each)
-            if front is not None:
-                # its own page, before the quick look
+            # each on its own page, before the quick look
+            pages = ''.join(
+                '\\noindent\\includegraphics[width=\\textwidth,'
+                f'height=0.94\\textheight,keepaspectratio]{{front{it}.pdf}}'
+                '\n\\clearpage\n' for it in range(len(fronts)))
+            if pages:
                 text = text.replace(
                     '\\section*{koloa: a quick look at',
-                    '\\noindent\\includegraphics[width=\\textwidth,'
-                    'height=0.94\\textheight,keepaspectratio]{front.pdf}'
-                    '\n\\clearpage\n\\section*{koloa: a quick look at', 1)
+                    pages + '\\section*{koloa: a quick look at', 1)
             handle.write(text)
         pdf = compile_pdf(tex)
         if pdf and os.path.exists(pdf):
@@ -3546,14 +3551,15 @@ def quicklook_pdf(opts: Dict[str, Any], xr=None, yr=None, pr=None,
         # no pdflatex: the figures, one per page
         buf = io.BytesIO()
         with PdfPages(buf) as book:
-            if front is not None:
-                book.savefig(front, dpi=160)
+            for page in fronts:
+                book.savefig(page, dpi=160)
             for _, fig in figs:
                 book.savefig(fig)
         return buf.getvalue()
     finally:
-        if front is not None:
-            plt.close(front)
+        for page in ([] if front is None else list(front) if isinstance(
+                front, (list, tuple)) else [front]):
+            plt.close(page)
         for _, fig in figs:
             plt.close(fig)
         shutil.rmtree(tmp, ignore_errors=True)

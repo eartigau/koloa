@@ -507,6 +507,40 @@ def gui(html):
             'nothing else, while it runs and once it is over:</p>'
             '<pre class="codeblock">' + escape('\n'.join(kept['running']))
             + '\n\n' + escape('\n'.join(kept['done'])) + '</pre>'))
+    # the prospects of a candidate, shown on known planets taken as
+    #   candidates (docs/figures/gui/prospects.json: koloa.prospects on the
+    #   public HARPS velocities of two stars, as a batch ran them, with what
+    #   Gaia DR3 has of them)
+    path = os.path.join(HERE, 'figures', 'gui', 'prospects.json')
+    if os.path.exists(path):
+        kept = json.load(open(path))
+        lines = []
+        for star in kept['stars']:
+            ast = star['astrometry']
+            lines.append(
+                f'<tr><td class="mono">{escape(star["planet"])}</td>'
+                f'<td class="mono">{star["snr"]:.1f}</td>'
+                + ''.join(f'<td class="mono">{star["more"][str(num)]:.1f}'
+                          f'</td>' for num in (50, 100, 150, 200))
+                + f'<td class="mono">{ast["alpha"]:.3g}</td>'
+                f'<td class="mono">{ast["snr"]:.2g}</td>'
+                f'<td class="mono">{ast["transits"]:.0f}</td>'
+                f'<td class="mono">{float(format(ast["dchi2"], ".2g")):g}</td>'
+                f'<td>{escape(ast["verdict"])}</td></tr>')
+        limit = kept['stars'][0]['astrometry']['dchi2_limit']
+        html = fill(html, 'gui_prospects', (
+            '<p>On public data, with a known planet taken as the candidate '
+            '(HARPS velocities, more nights of HARPS over a year from La '
+            f'Silla; computed on {kept["start"]}):</p>'
+            '<div class="table-wrap"><table class="koloa"><thead><tr>'
+            '<th>planet</th><th>K over its error today</th>'
+            '<th>+50 nights</th><th>+100</th><th>+150</th><th>+200</th>'
+            '<th>the star moves by at least [&micro;as]</th>'
+            '<th>over the noise of a crossing of Gaia</th>'
+            '<th>crossings in DR4</th>'
+            '<th>&chi;<sup>2</sup> lower with the planet (a detection: '
+            f'{limit:g})</th><th>Gaia DR4</th></tr></thead>'
+            '<tbody>' + ''.join(lines) + '</tbody></table></div>'))
     rows = []
     for item in num.get('batch') or []:
         star, summ = item.get('star') or {}, item.get('summary') or {}

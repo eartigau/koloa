@@ -52,7 +52,12 @@ is not with the archives of a star is not fetched.
 
 Each star done has a page of summary (koloa.batchpdf: how its quick look
 reads, a candidate, a known planet, a drift, nothing), the first of its
-PDF, and the batch one PDF of them all (results/summary.pdf). With
+PDF, and the batch one PDF of them all (results/summary.pdf). A candidate
+has its prospects too (koloa.prospects): what 50 to 200 more nights of
+the instrument of its files would do over 6 months, a year or two, and
+its astrometric signal against Gaia DR4 (gaia_dr3() asks what Gaia DR3
+has of the stars, when they are cross-matched and when they are packed).
+With
 report=True (REPORT in the script), a star that has a candidate has its
 detailed report too (report_star: koloa --detailed on the series its
 quick look used, whatever it came from; an SHO GP at its published
@@ -138,7 +143,10 @@ SHARE = 2.0 / 3.0
 COLUMNS = ('name', 'sptype', 'distance', 'status', 'files', 'datasets',
            'nights', 'baseline', 'period', 'fip', 'fip_alone', 'K', 'K_err',
            'rms', 'accel', 'accel_err', 'accel_sigma', 'transit',
-           'transit_snr', 'verdict', 'report', 'elapsed', 'error')
+           'transit_snr', 'verdict', 'report', 'snr', 'snr_more',
+           'gaia_alpha', 'gaia_snr', 'gaia_chi2', 'elapsed', 'error')
+#: the archive of Gaia (ESA), for what Gaia DR3 has of each star
+GAIA_TAP = 'https://gea.esac.esa.int/tap-server/tap/sync'
 #: the FIP below which a peak counts: a star with one that is neither a
 #: known planet nor a drift has a candidate, and a detailed report when
 #: the batch makes them
@@ -491,6 +499,57 @@ def overview(stars: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         several=several, single=single)
 
 
+def gaia_dr3(stars: Sequence[Dict[str, Any]], timeout: float = 120.0
+             ) -> int:
+    """
+    What Gaia DR3 has of each star of a sample that has a Gaia DR3 number
+    (asked of the archive of Gaia, all at once): set as star['gaia'], G,
+    parallax [mas], ruwe, transits (its crossings of a field of view
+    matched in the 34 months of DR3) and periods (its visibility periods).
+    The astrometric signal of a candidate is weighed against these
+    (koloa.prospects.astrometry).
+
+    :param stars: list of dict, the stars (of sample())
+    :param timeout: float [s]
+
+    :return: int, the stars found
+    """
+    from koloa.gather import _tap
+    numbers = {}
+    for star in stars:
+        number = str((star.get('ids') or {}).get('Gaia DR3') or '')
+        number = number.replace('Gaia DR3', '').strip()
+        if number.isdigit() and not star.get('gaia'):
+            numbers[number] = star
+    found = 0
+    listed = list(numbers)
+    for it in range(0, len(listed), 500):
+        try:
+            rows = _tap(GAIA_TAP, (
+                'SELECT source_id, phot_g_mean_mag, parallax, ruwe, '
+                'astrometric_matched_transits, visibility_periods_used '
+                'FROM gaiadr3.gaia_source WHERE source_id IN ('
+                + ', '.join(listed[it:it + 500]) + ')'), timeout)
+        except (OSError, ValueError) as err:
+            log(f'Gaia DR3: not asked ({err}); the astrometric signal of a '
+                f'candidate is weighed with typical numbers', 'warn')
+            break
+        for row in rows:
+            star = numbers.get(str(row.get('source_id')))
+            if star is None:
+                continue
+            star['gaia'] = dict(
+                G=_number(row.get('phot_g_mean_mag')),
+                parallax=_number(row.get('parallax')),
+                ruwe=_number(row.get('ruwe')),
+                transits=_number(row.get('astrometric_matched_transits')),
+                periods=_number(row.get('visibility_periods_used')))
+            found += 1
+    if numbers:
+        log(f'Gaia DR3: {found} of {len(numbers)} stars found', 'value')
+    return found
+
+
 def check(stars: Sequence[Dict[str, Any]], root: str = 'archives',
           dace: bool = True, api_key: Any = None, refresh: bool = False,
           workers: int = WORKERS,
@@ -517,6 +576,11 @@ def check(stars: Sequence[Dict[str, Any]], root: str = 'archives',
             kpub.survey_stars(survey)
     except (OSError, ValueError) as err:
         log(f'survey: a list could not be fetched ({err})', 'warn')
+    # what Gaia DR3 has of them, for the astrometry of a candidate
+    try:
+        gaia_dr3(stars)
+    except Exception as err:  # a forecast, not a need
+        log(f'Gaia DR3: {type(err).__name__}: {err}', 'warn')
     done = [0]
 
     def one(star):
@@ -859,11 +923,22 @@ def run_target(root: str, star: Dict[str, Any], rules: bool = True,
         _keep(root, result)
         _report_of(root, star, result, item['data'], gather, trend)
         result['elapsed'] = time.time() - start
+    # a candidate: what more nights of the instrument of its files would
+    #   do for it, and its astrometry in Gaia DR4
+    if result['reading']['kind'] == 'candidate':
+        try:
+            from koloa import prospects
+            result['prospects'] = prospects.candidate(result, quick, star)
+        except Exception as err:  # a forecast, not a need
+            result['prospects_error'] = f'{type(err).__name__}: {err}'
     if quick is not None:
         try:
-            front = batchpdf.figure(result, quick, star,
-                                    batch=str(targets_of(root).get('name')
-                                              or ''), limit=report_fip)
+            batch = str(targets_of(root).get('name') or '')
+            front = [batchpdf.figure(result, quick, star, batch=batch,
+                                     limit=report_fip)]
+            more = batchpdf.prospects_figure(result, star, batch=batch)
+            if more is not None:
+                front.append(more)
             pdf = gui.quicklook_pdf(dict(
                 files=[dict(path=path) for path in files], target=name,
                 root=os.path.join(root, 'archives'), dace=True,
@@ -961,6 +1036,7 @@ def table(root: str) -> List[Dict[str, Any]]:
             transit=trans.get('status'), transit_snr=trans.get('snr'),
             verdict=(res.get('reading') or {}).get('kind'),
             report=(res.get('report') or {}).get('status'),
+            **_prospects_row(summ, res.get('prospects')),
             elapsed=res.get('elapsed'), error=res.get('error')))
     os.makedirs(os.path.join(root, 'results'), exist_ok=True)
     with open(os.path.join(root, 'results', 'table.csv'), 'w',
@@ -1257,6 +1333,29 @@ def stop(root: str) -> int:
            f'there (scancel for a job array)' if elsewhere else ''),
         'warn' if elsewhere else 'value')
     return ended
+
+
+def _prospects_row(summ: Dict[str, Any], told: Optional[Dict[str, Any]]
+                   ) -> Dict[str, Any]:
+    """the prospects of a candidate in the table of a batch: K over its
+    error today and with 100 more nights over a year (the first instrument
+    of its files), and its astrometric signal against Gaia DR4"""
+    out = dict(snr=(summ['K'] / summ['K_err'] if summ.get('K')
+                    and summ.get('K_err') else None),
+               snr_more=None, gaia_alpha=None, gaia_snr=None,
+               gaia_chi2=None)
+    if not told:
+        return out
+    for one in (told.get('velocities') or [])[:1]:
+        out['snr'] = one['snr']
+        out['snr_more'] = next((row['snr'] for row in one['table']
+                                if row['n'] == 100 and row['days'] > 300
+                                and row['days'] < 400), None)
+    if told.get('astrometry'):
+        out['gaia_alpha'] = told['astrometry']['alpha']
+        out['gaia_snr'] = told['astrometry']['snr']
+        out['gaia_chi2'] = told['astrometry'].get('dchi2')
+    return out
 
 
 def run(root: str, jobs: int = 1, rules: bool = True, gather: bool = False,
@@ -1955,6 +2054,26 @@ has no GP: it sorts the stars, it does not decide on a planet.
 makes results/summary.pdf again from what is done, at any time, and
 computes nothing.
 
+A candidate has a second page, its prospects, to plan with:
+
+  - what 50, 100, 150 or 200 more nights of each instrument of its files
+    (SPIRou, NIRPS...) would do, spread over 6 months, a year or two on
+    the nights the star can be observed from the site of the instrument
+    (above airmass 2 for an hour of night; for SPIRou, in the bright half
+    of each lunation). The candidate is taken as real, as its fold has
+    it; a new night has the mean error bar of the instrument. The page
+    gives K over its error today and with those nights, and the FIP
+    that goes with it, to an order of magnitude;
+  - its astrometric signal: by how much the star moves, at least (from
+    its minimum mass, the mass of the star from its type, its parallax),
+    against what one crossing of Gaia measures at its G magnitude, with
+    the crossings it has in Gaia DR4, and its significance there: the
+    chi2 the planet lowers over those crossings, where a detection asks
+    for 50 (Lammers & Winn 2025). An order of magnitude of whether DR4
+    can see it.
+
+Both are in result.json too (prospects).
+
 The detailed report of a star (REPORT = True) is koloa's own (koloa
 --detailed), on the series the quick look used, whatever it came from:
 files, archives, or both. That series is beside it
@@ -1995,6 +2114,17 @@ The columns of table.csv:
                              drift, nothing (above)
     report                   its detailed report: done, failed, none (no
                              candidate, or not asked for), running
+    snr                      K over its error
+    snr_more                 the same with 100 more nights of the first
+                             instrument of its files over a year (a
+                             candidate, taken as real)
+    gaia_alpha, gaia_snr     a candidate: the motion of the star, at
+                             least [micro-arcseconds], and that over the
+                             noise of one crossing of Gaia (1.5 is the
+                             threshold of DR4)
+    gaia_chi2                the chi2 the candidate lowers in Gaia DR4,
+                             to an order of magnitude (a detection asks
+                             for 50)
     elapsed                  how long the star took [s]
     error                    why a star failed
 
@@ -2240,6 +2370,12 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
         raise ValueError('a name for the batch')
     folder = os.path.join(os.path.abspath(os.path.expanduser(out)), name)
     os.makedirs(folder, exist_ok=True)
+    # what Gaia DR3 has of the stars (asked here, where there is the
+    #   network), for the astrometry of a candidate
+    try:
+        gaia_dr3(stars)
+    except Exception as err:  # a forecast, not a need
+        log(f'pack: Gaia DR3 not asked ({type(err).__name__}: {err})', 'warn')
     targets, missing, nfile = [], [], 0
     # the archives first, a few stars at once: those that have none here
     todo = [star for star in stars if gather and (
@@ -2306,7 +2442,10 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
             archives=star.get('archives'),
             # its published rotation periods: its page says whether a peak
             #   is at one, and its detailed report takes the first
-            rotation=star.get('rotation') or []))
+            rotation=star.get('rotation') or [],
+            # for the astrometry of a candidate: its parallax, its G, and
+            #   what Gaia DR3 has of it
+            plx=star.get('plx'), G=star.get('G'), gaia=star.get('gaia')))
     # who each star is (its names, its type), kept with what koloa fetched
     #   once: asked here, where there is the network, for the stars that
     #   were never asked (the batch asks nothing where it runs)

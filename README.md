@@ -36,6 +36,7 @@ exactly. That is what makes the outlier-aware FIP affordable.
 | `koloa.datasets` | which datasets of a star are used: a spectrum that several have (HARPS on DACE and by SERVAL, HIRES in three surveys) is taken from the most precise release, told by the noise of each on the spectra they share; a dataset that constrains neither the mean nor the slope of a line through the nightly means is left out; everything stays on disk and can be asked back |
 | `koloa.survey` | a survey: the stars of SIMBAD within a distance and a range of spectral types, which of them have velocities in the archives (DACE, CARMENES DR1, the surveys on VizieR), the files of velocities one has of them (LBL, through APERO's names), and their batch: run here, or packed as one folder and its tar (the files, the archives, koloa itself, a script whose first setting is where the folder is) for a server or a cluster |
 | `koloa.batchpdf` | the summary of a batch: how the quick look of each star reads (a candidate, a known planet, the rotation, a drift), a page for each star, and one PDF of them all, from what the batch kept |
+| `koloa.prospects` | what more data would do for a candidate: the error of K with 50 to 200 more nights of an instrument over 6 months to 2 years (the nights it can be observed from its site, a Fisher forecast scaled to today's error), and its astrometric signal against the precision of Gaia DR4 |
 | `koloa.archive` | the names of a star (CDS Sesame) and its planets in the NASA Exoplanet Archive, with every published solution; a fitted K against them, the most recent first |
 | `koloa.radvel_bridge` | `OutlierRVLikelihood`, a drop-in replacement for radvel's `RVLikelihood` |
 | `koloa.doppler` | relativistic Doppler conversions (velocity, wavelength ratio, log-wavelength shift) |
@@ -253,6 +254,17 @@ tab, `REPORT` in the script, `survey.run(..., report=True)`), a star that
 has a candidate has its detailed report too, on the series its quick look
 used, whatever it came from; the GP of its FIP is an SHO at the rotation
 period when one is published, a local GP by period band otherwise.
+
+A candidate also has its prospects (`koloa.prospects`), a page of its
+own: what 50, 100, 150 or 200 more nights of the instrument of its files
+(SPIRou, NIRPS...) would do for K over its error, spread over 6 months, a
+year or two on the nights the star can be observed (the candidate taken
+as real, the mean error bar of the instrument, the bright half of the
+lunations for SPIRou), and its astrometric signal, at least, against what
+Gaia DR4 measures: the noise of one crossing at its G magnitude, the
+crossings it has, and its significance there, as the chi2 the planet
+lowers against the 50 a detection asks for (Lammers & Winn 2025). Orders
+of magnitude, to plan with.
 
 Its plot is a quick look before the report: the velocities shown, with
 sliders on both axes, and under them a quick FIP of exactly what is shown
