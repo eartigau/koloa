@@ -427,26 +427,36 @@ def _fetch(one: Dict[str, Any], timeout: float = 120.0) -> Dict[str, Any]:
     return row
 
 
-def _steps(things: Iterable, total: int, words: str) -> Iterable:
+def _steps(things: Iterable, total: int, words: str,
+           key: Optional[str] = None) -> Iterable:
     """the files as they come, with a line every tenth of them: how far,
-    how long so far and how long is left"""
+    how long so far and how long is left. For koloa's GUI, the row of the
+    archive in its table instead (every second), and no line"""
     start, step = _time.time(), max(1, -(-int(total) // STEPS))
+    gui = bool(key) and os.environ.get('KOLOA_PROGRESS', '') == 'gui'
+    last = 0.0
     for done, one in enumerate(things, 1):
-        if done % step == 0 or done == total:
-            took = _time.time() - start
+        now = _time.time()
+        if gui:
+            if now - last >= 1.0 or done == total:
+                last = now
+                klog.row(key, 'asking', '', done, total)
+        elif done % step == 0 or done == total:
+            took = now - start
             log(f'{words}: {done} of {total} files, {took:.0f} s so far'
                 + (f', about {took * (total - done) / done:.0f} s left'
                    if done < total else ''), 'info')
         yield one
 
 
-def _progress(things: Iterable, total: int, words: str) -> Iterable:
+def _progress(things: Iterable, total: int, words: str,
+              key: Optional[str] = None) -> Iterable:
     """
     How far the files are, as they come (when koloa talks): a bar in a
     terminal (tqdm), which draws over itself there; a line every tenth of
-    the files where the output is read line by line (the page of the GUI,
-    the log of a batch: a bar would be a line at each of its steps), or
-    where there is no tqdm
+    the files where the output is read line by line (the log of a batch:
+    a bar would be a line at each of its steps), or where there is no
+    tqdm; and for koloa's GUI, the row of the archive (key) in its table
     """
     if not klog.VERBOSE:
         return things
@@ -457,7 +467,7 @@ def _progress(things: Iterable, total: int, words: str) -> Iterable:
             pass
         else:
             return tqdm(things, total=total, desc=words, unit='file')
-    return _steps(things, total, words)
+    return _steps(things, total, words, key)
 
 
 def exposures(star: Dict[str, Any], folder: str, refresh: bool = False
@@ -488,7 +498,7 @@ def exposures(star: Dict[str, Any], folder: str, refresh: bool = False
     if ask:
         with ThreadPoolExecutor(max_workers=WORKERS) as pool:
             fetched = list(_progress(pool.map(_fetch, ask), len(ask),
-                                     'HARPS-N, TNG archive'))
+                                     'HARPS-N, TNG archive', 'tng'))
     new = {row['file']: row for row in fetched}
     rows = []
     for one in listed:

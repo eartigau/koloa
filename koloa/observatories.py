@@ -270,7 +270,8 @@ def _told(parts: Sequence[Tuple[RVData, Dict[str, Any]]], none: str) -> str:
 
 def _headers(listed: Sequence[Dict[str, Any]], path: str,
              read: Callable[[Dict[str, Any]], Dict[str, Any]], words: str,
-             refresh: bool = False) -> List[Dict[str, Any]]:
+             refresh: bool = False, key: Optional[str] = None
+             ) -> List[Dict[str, Any]]:
     """
     What the headers of the files of a star say, kept in a table (a CSV)
     so that a file is fetched once: only those that are public and not in
@@ -280,6 +281,7 @@ def _headers(listed: Sequence[Dict[str, Any]], path: str,
                    read needs
     :param read: what reads a file, to a dict of its values (error when
                  it could not be)
+    :param key: str or None, the archive in the table of koloa's GUI
 
     :return: list of dict, a row per public file read
     """
@@ -292,8 +294,8 @@ def _headers(listed: Sequence[Dict[str, Any]], path: str,
            if one['public'] and one['file'] not in known]
     if ask:
         with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-            for one, row in zip(ask, tng._progress(pool.map(read, ask),
-                                                   len(ask), words)):
+            for one, row in zip(ask, tng._progress(
+                    pool.map(read, ask), len(ask), words, key)):
                 known[one['file']] = dict(row, file=one['file'])
     rows = [known[one['file']] for one in listed if one['file'] in known]
     if rows:
@@ -574,7 +576,7 @@ def eso(star: Dict[str, Any], folder: str, refresh: bool = False,
                            public=str(row.get('release') or '9') <= now))
     private = sum(not one['public'] for one in listed)
     heads = _headers(listed, os.path.join(folder, 'eso_exposures.csv'),
-                     _eso_read, 'ESO archive', refresh)
+                     _eso_read, 'ESO archive', refresh, 'eso')
     heads = [row for row in heads if str(row.get('qc', '1')) != '0']
     for ins in ('ESPRESSO', 'NIRPS', 'HARPS'):
         mine = [row for row in heads if row['ins'] == ins
@@ -689,7 +691,7 @@ def cfht(star: Dict[str, Any], folder: str, refresh: bool = False,
     private = sum(not one['public'] for one in listed)
     heads = [row for row in _headers(
         listed, os.path.join(folder, 'cfht_exposures.csv'), _cadc_read,
-        'SPIRou, CFHT archive', refresh)
+        'SPIRou, CFHT archive', refresh, 'cfht')
         if str(row.get('qc', 'T')).strip().upper() not in ('F', 'FALSE')
         and str(row.get('dpr', 'OBJ')).upper().startswith(('OBJ', 'POLAR'))]
     parts = []

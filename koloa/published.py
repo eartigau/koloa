@@ -75,7 +75,7 @@ import numpy as np
 from koloa import literature
 from koloa.archive import CACHE as ARCHIVE_CACHE
 from koloa.data import RVData, merge
-from koloa.log import log
+from koloa.log import log, row
 
 # =============================================================================
 # Define variables
@@ -150,6 +150,19 @@ ARCHIVES: Dict[str, str] = {'tng': 'TNG archive', 'eso': 'ESO archive',
                             'sophie': 'OHP archive (SOPHIE)',
                             'elodie': 'OHP archive (ELODIE)',
                             'cfht': 'CFHT archive'}
+#: what each source is called where the archives of a star are listed
+#: (the table of the GUI), the spectrograph first
+LABELS: Dict[str, str] = {
+    'teklu25': 'Keck HIRES (Teklu+ 2025)',
+    'cls21': 'HIRES, APF, Lick (CLS, Rosenthal+ 2021)',
+    'talor19': 'Keck HIRES (Tal-Or+ 2019)',
+    'fischer14': 'Lick Hamilton (Fischer+ 2014)',
+    'rvbank20': 'HARPS by SERVAL (RVBank, Trifonov+ 2020)',
+    'papers': 'the papers of the star (VizieR)',
+    'tng': 'HARPS-N (TNG archive)',
+    'eso': 'HARPS, ESPRESSO, NIRPS (ESO archive)',
+    'neid': 'NEID (NExScI archive)', 'sophie': 'SOPHIE (OHP archive)',
+    'elodie': 'ELODIE (OHP archive)', 'cfht': 'SPIRou (CFHT archive)'}
 #: the sources asked only when they are named, not with the others: the
 #: archive of the CFHT answers a header in 2.5 s (half an hour for the
 #: 1800 exposures of a star), for the velocities of a CCF that the files
@@ -566,14 +579,17 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
             note['note'] = 'no position of the star'
             notes.append(note)
             continue
+        row(survey['key'], 'asking')
         try:
             data, note['note'] = survey_velocities(survey, ident['ra'],
                                                    ident['dec'], timeout)
         except (OSError, ValueError, ElementTree.ParseError) as err:
             data, note['note'] = None, f'VizieR could not be asked ({err})'
         keep(data, note)
+        row(survey['key'], *_state(note))
     # the papers of the star: their VizieR catalogues, their tables of it
     if papers and ident.get('main'):
+        row('papers', 'asking')
         try:
             codes = star_bibcodes(ident['main'], timeout)
         except (OSError, ValueError) as err:
@@ -626,6 +642,7 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
             keep(data, dict(kind='paper', key=key, reference=title,
                             bibcode=code, catalogue=cat, n=0,
                             instruments={}, file=None, note=words))
+        row('papers', *papers_state(notes, len(codes)))
     # the archives of the observatories: the velocities of their pipelines
     notes += _archives(ident, folder, [key for key in ARCHIVES
                                        if key in asked], refresh, have)
@@ -651,8 +668,9 @@ def _archives(ident: Dict[str, Any], folder: str, keys: Sequence[str],
     mine = {family(name) for name in have} - {''}
     for key in keys:
         where = ARCHIVES[key]
-        empty = dict(kind='archive', key=key, reference=where, where=where,
-                     catalogue='', n=0, instruments={}, file=None, note='')
+        empty = dict(kind='archive', key=key, source=key, reference=where,
+                     where=where, catalogue='', n=0, instruments={},
+                     file=None, note='')
         if DEFERS.get(key) in mine:
             notes.append(dict(empty, note=f'not asked: a file of '
                                           f'{DEFERS[key]} is given'))
@@ -660,6 +678,8 @@ def _archives(ident: Dict[str, Any], folder: str, keys: Sequence[str],
         if ident.get('ra') is None:
             notes.append(dict(empty, note='no position of the star'))
             continue
+        row(key, 'asking')
+        start = len(notes)
         # how the star moves: an archive is searched by where it was
         from koloa.secular import star_astrometry
         astro = ident.get('astrometry') or star_astrometry(ident) or {}
@@ -679,6 +699,7 @@ def _archives(ident: Dict[str, Any], folder: str, keys: Sequence[str],
         except RuntimeError as err:
             notes.append(dict(empty, note=str(err)))
             log(f'published, {where}: {err}', 'warn')
+            row(key, 'failed', str(err))
             continue
         if not parts:
             notes.append(dict(empty, note=words))
@@ -703,7 +724,55 @@ def _archives(ident: Dict[str, Any], folder: str, keys: Sequence[str],
             _write(data, os.path.join(folder, note['file']))
             notes.append(note)
             log(f'published, {note["reference"]}: {note["n"]} kept', 'value')
+        row(key, *archive_state(notes[start:]))
     return notes
+
+
+def _counts(notes: Sequence[Dict[str, Any]]) -> str:
+    """the velocities of some sources, instrument by instrument"""
+    found: Dict[str, int] = {}
+    for note in notes:
+        for inst, num in (note.get('instruments') or {}).items():
+            found[inst] = found.get(inst, 0) + int(num)
+    return ', '.join(f'{inst} {num}' for inst, num in found.items())
+
+
+def _state(note: Dict[str, Any]) -> Tuple[str, str]:
+    """where a source is, from what it left: ok and its velocities,
+    failed and why, or none and why"""
+    if note.get('file'):
+        return 'ok', f'{int(note["n"])} velocities: {_counts([note])}'
+    words = str(note.get('note') or '')
+    if words.startswith('not asked'):
+        return 'off', words
+    return ('failed' if 'could not be' in words else 'none'), words
+
+
+def archive_state(notes: Sequence[Dict[str, Any]]) -> Tuple[str, str]:
+    """where the archive of an observatory is, from the notes of its
+    datasets: its velocities in all, dataset by dataset, and what its
+    first note says beyond them (the files not public yet)"""
+    kept = [note for note in notes if note.get('file')]
+    if not kept:
+        return _state(notes[0]) if notes else ('none', '')
+    private = re.search(r'(\d+) files not public yet',
+                        str(kept[0].get('note') or ''))
+    return 'ok', (f'{sum(int(note["n"]) for note in kept)} velocities: '
+                  f'{_counts(kept)}'
+                  + (f'; {private.group(0)}' if private else ''))
+
+
+def papers_state(notes: Sequence[Dict[str, Any]],
+                 listed: Optional[int] = None) -> Tuple[str, str]:
+    """the papers of a star, in one line: how many have a table of its
+    velocities, and how many velocities in all"""
+    mine = [note for note in notes if note.get('kind') == 'paper']
+    kept = [note for note in mine if note.get('file')]
+    of = f' of the {listed} of the star in SIMBAD' if listed else ''
+    if not kept:
+        return 'none', f'no paper{of} with a table of its velocities'
+    return 'ok', (f'{sum(int(note["n"]) for note in kept)} velocities in '
+                  f'{len(kept)} paper{"s" * (len(kept) != 1)}{of}')
 
 
 def _catalogues(update: Optional[Dict[str, Any]] = None

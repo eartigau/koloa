@@ -12,9 +12,11 @@ Created on 2026-09-27
 
 @author: artigau
 """
+import os
 import sys
 import warnings
 from datetime import datetime
+from typing import Optional
 
 # =============================================================================
 # Define variables
@@ -84,6 +86,29 @@ def outcome(message: str):
     :param message: str, what it came to
     """
     log(f'result: {message}', 'value')
+
+
+def row(key: str, state: str, text: str = '', done: Optional[int] = None,
+        total: Optional[int] = None):
+    """
+    Where an archive of a star being gathered is, for the table of
+    koloa's GUI: one line, 'row: key | state | done | total | text', said
+    only when the GUI runs koloa (KOLOA_PROGRESS=gui), which keeps it
+    out of its log
+
+    :param key: str, the archive (dace, carmenes, a source of
+                koloa.published, tess, space)
+    :param state: str, asking, ok (it has something), none, failed
+    :param text: str, what it has, or why not
+    :param done: int or None, the files read so far
+    :param total: int or None, of how many
+    """
+    if os.environ.get('KOLOA_PROGRESS', '') != 'gui':
+        return
+    text = ' '.join(str(text).split())
+    print(f'{_timestamp()} | row: {key} | {state} | '
+          f'{"" if done is None else int(done)} | '
+          f'{"" if total is None else int(total)} | {text}', flush=True)
 
 
 def loud_warning(message: str):

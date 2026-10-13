@@ -228,6 +228,8 @@ class Job:
         self.outputs = os.path.abspath(outputs)
         self.lines: List[str] = []
         self.steps: List[Dict[str, Any]] = []
+        # where each archive of a gather is (koloa.log.row)
+        self.rows: Dict[str, Dict[str, Any]] = {}
         self.start, self.end = time.time(), None
         self.returncode: Optional[int] = None
         # the koloa of this page, whatever the folder it runs from
@@ -253,6 +255,8 @@ class Job:
                         label=part[0], done=int(part[1]), total=int(part[2]),
                         seconds=float(part[3]), at=time.time())
                 continue
+            if self._row(message):
+                continue
             self.lines.append(text)
             if message.startswith('step: '):
                 now = time.time()
@@ -269,6 +273,19 @@ class Job:
         self.end = time.time()
         if self.steps and self.steps[-1]['end'] is None:
             self.steps[-1]['end'] = self.end
+
+    def _row(self, message: str) -> bool:
+        """an archive of a gather (koloa.log.row): a row of the table
+        of the page, not a line of the log; whether the message was one"""
+        if not message.startswith('row: '):
+            return False
+        part = message[5:].split(' | ', 4)
+        if len(part) == 5:
+            self.rows[part[0]] = dict(
+                state=part[1], text=part[4].strip(),
+                done=int(part[2]) if part[2].strip() else None,
+                total=int(part[3]) if part[3].strip() else None)
+        return True
 
     @property
     def status(self) -> str:
@@ -582,13 +599,120 @@ def pick(kind: str = 'file', start: str = '') -> Dict[str, Any]:
     return dict(path=path)
 
 
-def gathering(target: str, root: str = '') -> bool:
-    """whether the archives of a star are being gathered by a run"""
+def _gathering(target: str, root: str = ''):
+    """the run that is gathering the archives of a star, or None"""
     from koloa.gather import folder_name
     folder = os.path.abspath(os.path.join(root or 'archives',
                                           folder_name(target)))
-    return any(job.action == 'gather' and job.returncode is None
-               and job.outputs == folder for job in JOBS.values())
+    return next((job for job in JOBS.values() if job.action == 'gather'
+                 and job.returncode is None and job.outputs == folder), None)
+
+
+def gathering(target: str, root: str = '') -> bool:
+    """whether the archives of a star are being gathered by a run"""
+    return _gathering(target, root) is not None
+
+
+def asked_archives(args: Sequence[str]) -> List[str]:
+    """the archives a gather asks, from its command line: dace,
+    carmenes, the sources of koloa.published, tess and space"""
+    from koloa.published import OPTIONAL, SOURCES
+    out = [key for key, flag in (('dace', '--no-dace'),
+                                 ('carmenes', '--no-carmenes'))
+           if flag not in args]
+    if '--no-vizier' not in args:
+        chosen = [key for key in SOURCES if key not in OPTIONAL]
+        if '--vizier-sources' in args:
+            chosen = []
+            for word in args[list(args).index('--vizier-sources') + 1:]:
+                if str(word).startswith('--'):
+                    break
+                chosen.append(str(word))
+        out += chosen
+    return out + (['tess', 'space'] if '--no-tess' not in args else [])
+
+
+def archive_rows(target: str, root: str = '') -> List[Dict[str, Any]]:
+    """
+    The archives of a star, one a row, for the table under Gather: what
+    each gave when the star was gathered (its manifest, its published
+    velocities), or where each is while a run gathers them; the papers of
+    the star in one row
+
+    :return: list of dict: key, name, state (ok: it has something; none;
+             failed: it could not be reached; off: not asked; asking and
+             waiting, during a run), text, done and total (files, while
+             asking); empty when the star was never gathered and is not
+             being
+    """
+    from koloa import published as kpub
+    from koloa.gather import folder_name, space_state, state_of
+    if not target:
+        return []
+    folder = os.path.abspath(os.path.join(root or 'archives',
+                                          folder_name(target)))
+    job = _gathering(target, root)
+    manifest, notes, last = {}, [], None
+    for name, into in (('manifest.json', 'manifest'),
+                       (os.path.join('rv', 'published', 'published.json'),
+                        'notes'),
+                       (os.path.join('rv', 'published', 'sources.json'),
+                        'last')):
+        path = os.path.join(folder, name)
+        if os.path.exists(path):
+            try:
+                with open(path) as handle:
+                    held = json.load(handle)
+            except ValueError:
+                continue
+            if into == 'manifest':
+                manifest = held
+            elif into == 'notes':
+                notes = held
+            else:
+                last = held
+    if not manifest and job is None:
+        return []
+    held = manifest.get('archives') or {}
+    disk: Dict[str, Tuple[str, str]] = {}
+    for key in ('dace', 'carmenes', 'tess'):
+        if key in held:
+            disk[key] = state_of(held[key])
+    if any(key in held for key in ('kepler', 'k2', 'corot', 'space')):
+        disk['space'] = space_state(held)
+    asked = list(kpub.SOURCES) if last is None else list(last)
+    for key in kpub.SOURCES if notes or last is not None else ():
+        if key not in asked:
+            continue
+        if key == 'papers':
+            disk[key] = kpub.papers_state(notes)
+        elif key in kpub.ARCHIVES:
+            mine = [note for note in notes if note.get('source') == key
+                    or (note.get('kind') == 'archive' and 'source' not in
+                        note and note.get('where') == kpub.ARCHIVES[key])]
+            if mine:
+                disk[key] = kpub.archive_state(mine)
+        else:
+            mine = [note for note in notes if note.get('key') == key]
+            if mine:
+                disk[key] = kpub._state(mine[0])
+    live = dict(job.rows) if job is not None else {}
+    want = asked_archives(job.args) if job is not None else []
+    rows = []
+    for key, name in ([('dace', 'DACE'), ('carmenes', 'CARMENES DR1')]
+                      + [(key, kpub.LABELS[key]) for key in kpub.SOURCES]
+                      + [('tess', 'TESS'), ('space', 'Kepler, K2, CoRoT')]):
+        row = dict(key=key, name=name, state='off', text='', done=None,
+                   total=None)
+        if job is not None:
+            if key in live:
+                row.update(live[key])
+            elif key in want:
+                row['state'] = 'waiting'
+        elif key in disk:
+            row['state'], row['text'] = disk[key]
+        rows.append(row)
+    return rows
 
 
 def rules_mode(value: Any) -> str:
@@ -4008,6 +4132,8 @@ class Handler(BaseHTTPRequestHandler):
                                  query.get('root', ''))
                 state['busy'] = gathering(query.get('target', ''),
                                           query.get('root', ''))
+                state['rows'] = archive_rows(query.get('target', ''),
+                                             query.get('root', ''))
                 return self._json(state)
             if url.path == '/api/rv':
                 files = (json.loads(query['files']) if query.get('files')

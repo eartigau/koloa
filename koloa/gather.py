@@ -65,12 +65,12 @@ import re
 import time as _time
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 from koloa.data import RVData, merge
-from koloa.log import log, outcome, step
+from koloa.log import log, outcome, step, row
 from koloa.paths import cache
 
 # =============================================================================
@@ -482,6 +482,7 @@ def gather(target: str, root: str = '.', dace: bool = True,
             return None
     if dace:
         step('DACE')
+        row('dace', 'asking')
         ddir = os.path.join(rvdir, 'dace')
         data = attempt('dace', lambda: dace_rv(ident, target, ddir,
                                                api_key=api_key,
@@ -500,8 +501,10 @@ def gather(target: str, root: str = '.', dace: bool = True,
                 status='none', message='DACE has no public velocities under '
                 'the names of the star')
         outcome(_told(manifest['archives']['dace']))
+        row('dace', *state_of(manifest['archives']['dace']))
     if carmenes:
         step('CARMENES DR1')
+        row('carmenes', 'asking')
         cdir = os.path.join(rvdir, 'carmenes')
         star = (attempt('carmenes', lambda: carmenes_star(ident['ra'],
                                                           ident['dec']))
@@ -521,6 +524,7 @@ def gather(target: str, root: str = '.', dace: bool = True,
                 status='none', message='not in CARMENES DR1, or no '
                 'velocity corrected for the nightly zero points')
         outcome(_told(manifest['archives']['carmenes']))
+        row('carmenes', *state_of(manifest['archives']['carmenes']))
     if vizier:
         step('VizieR')
         from koloa.published import fetch as published_fetch
@@ -541,6 +545,7 @@ def gather(target: str, root: str = '.', dace: bool = True,
                         f'an observatory' if kept else '')))
     if tess:
         step('TESS')
+        row('tess', 'asking')
         lcs = attempt('tess', lambda: tess_photometry(ident, target, photdir,
                                                       refresh=refresh))
         if lcs is not None:
@@ -556,8 +561,10 @@ def gather(target: str, root: str = '.', dace: bool = True,
                 message='no light curve at MAST'))
         if 'tess' in manifest['archives']:
             outcome(_told(manifest['archives']['tess']))
+            row('tess', *state_of(manifest['archives']['tess']))
         # the other space missions, where the star lay in their fields
         step('Kepler, K2, CoRoT')
+        row('space', 'asking')
         space = attempt('space', lambda: space_photometry(
             ident, target, photdir, refresh=refresh))
         told = []
@@ -580,6 +587,7 @@ def gather(target: str, root: str = '.', dace: bool = True,
                     + f' ({sum(len(lc["time"]) for lc in sectors)} points)')
         if space is not None:
             outcome('; '.join(told) or 'the star is in none of their fields')
+        row('space', *space_state(manifest['archives']))
     if series:
         both = merge(series, name=target)
         write_rv(both, os.path.join(rvdir, 'all_rv.csv'))
@@ -602,6 +610,47 @@ def gather(target: str, root: str = '.', dace: bool = True,
         else:
             log(f'{key}: {val["status"]}, {val["message"]}', 'warn')
     return manifest
+
+
+def state_of(entry: Optional[Dict[str, Any]]) -> Tuple[str, str]:
+    """
+    Where an archive is, from what the manifest says of it: ok and what
+    it gave, none and why, failed and why (it could not be reached)
+
+    :return: tuple, the state (ok, none, failed) and words
+    """
+    if not entry:
+        return 'none', ''
+    if entry.get('status') == 'ok':
+        if entry.get('instruments'):
+            return 'ok', (f'{int(entry.get("npoints") or 0)} velocities: '
+                          + ', '.join(f'{name} {num}' for name, num
+                                      in entry['instruments'].items()))
+        sectors = entry.get('sectors') or []
+        return 'ok', (f'{len(sectors)} sector{"s" * (len(sectors) != 1)}, '
+                      f'{sum(int(one.get("npoints") or 0) for one in sectors)}'
+                      f' points')
+    return (('none' if entry.get('status') == 'none' else 'failed'),
+            str(entry.get('message') or ''))
+
+
+def space_state(archives: Dict[str, Any]) -> Tuple[str, str]:
+    """where Kepler, K2 and CoRoT are, in one line: the missions that
+    have the star, or none"""
+    told, failed = [], ''
+    for key, name in (('kepler', 'Kepler'), ('k2', 'K2'),
+                      ('corot', 'CoRoT')):
+        state, words = state_of(archives.get(key))
+        if state == 'ok':
+            told.append(f'{name}: {words}')
+        elif state == 'failed':
+            failed = words
+    if 'space' in archives and not told:
+        failed = failed or str(archives['space'].get('message') or '')
+    if told:
+        return 'ok', '; '.join(told)
+    return ('failed', failed) if failed else (
+        'none', 'the star is in none of their fields')
 
 
 def _published(notes: Sequence[Dict[str, Any]]) -> Dict[str, Any]:

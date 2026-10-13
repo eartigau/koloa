@@ -67,6 +67,41 @@ async function updateCommandsNow() {
   }
 }
 
+// the archives of the star, one a row, under Gather: what each gave when
+//   the star was gathered, or where each is while they are (a bar for the
+//   files of an archive as they come); the papers of the star in one row
+function archiveText(text) {
+  if (lang !== 'fr') return text;
+  return text.replace(/(\d+) velocities in (\d+) papers?/, (all, num, papers) => `${num} vitesses dans ${papers} article${+papers > 1 ? 's' : ''}`)
+    .replace(/ of the (\d+) of the star in SIMBAD/, ' sur les $1 de l’étoile dans SIMBAD')
+    .replace(/^no paper/, 'aucun article').replace(' with a table of its velocities', ' avec une table de ses vitesses')
+    .replace(/(\d+) velocities/, '$1 vitesses').replace(/(\d+) files not public yet/, '$1 fichiers pas encore publics')
+    .replace(/(\d+) sectors?/g, (all, num) => `${num} secteur${+num > 1 ? 's' : ''}`).replace('the star is in none of their fields', 'l’étoile n’est dans aucun de leurs champs')
+    .replace(/^not asked: a file of (\S+) is given/, 'un fichier $1 est fourni').replace('nothing public yet', 'rien de public pour l’instant');
+}
+// a reason that only says there is nothing: not said twice
+const ARCHIVE_NOTHING = /has no (public )?velocit|not in the survey|was not pointed at the star|not in CARMENES DR1|no light curve at MAST|none of their fields|aucun de leurs champs/;
+function drawArchiveRows(rows) {
+  const box = $('gathertable');
+  if (!rows || !rows.length) { box.innerHTML = ''; return; }
+  box.innerHTML = '<table>' + rows.map((row) => {
+    // as its box above calls it, in the language of the page
+    const label = `vz_${row.key}`;
+    const name = row.key === 'papers' ? t('gt_papers') : ((TEXT[lang] && TEXT[lang][label]) || TEXT.en[label] || row.name);
+    let text = archiveText(row.text || '');
+    let bar = '';
+    if (row.state === 'asking' && row.total) {
+      text = `${row.done} / ${row.total} ${t('gt_files')}`;
+      bar = `<div class="gbar"><span style="width:${(100 * row.done / row.total).toFixed(1)}%"></span></div>`;
+    } else if (row.state === 'none') {
+      text = t('gt_nothing') + (text && !ARCHIVE_NOTHING.test(text) ? ` (${text})` : '');
+    }
+    return `<tr class="g${row.state}"><td class="gname">${esc(name)}</td>`
+      + `<td><span class="gchip ${row.state}">${esc(t('gt_' + row.state))}</span></td>`
+      + `<td class="gtext">${esc(text)}${bar}</td></tr>`;
+  }).join('') + '</table>';
+}
+
 let onDisk = null;
 let diskTimer = null;
 function checkArchives() {
@@ -78,15 +113,16 @@ function checkArchives() {
     try {
       onDisk = await api(`/api/archives?${new URLSearchParams({ target, root: $('root').value.trim() })}`);
     } catch (err) { onDisk = null; }
+    drawArchiveRows(onDisk ? onDisk.rows : []);
     if (onDisk && onDisk.busy) {
       btn.textContent = t('busy'); btn.disabled = true;
       $('ondisk').textContent = '';
+      // the table follows the run
+      diskTimer = setTimeout(checkArchives, 1200);
     } else if (onDisk && onDisk.exists) {
       btn.textContent = t('refresh');
       showDiskPoints();
-      const what = Object.entries(onDisk.archives || {}).filter(([k, v]) => !(['kepler', 'k2', 'corot', 'space'].includes(k) && v === 'none'))
-        .map(([k, v]) => `${k} ${v}`).join(', ');
-      $('ondisk').textContent = `${t('on_disk')} (${onDisk.created || ''}): ${what}`;
+      $('ondisk').textContent = `${t('on_disk')} (${onDisk.created || ''})`;
     } else {
       btn.textContent = t('run_gather');
       $('ondisk').textContent = '';

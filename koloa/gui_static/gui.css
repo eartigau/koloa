@@ -324,3 +324,20 @@ table.batch td { vertical-align: top; }
 table.batch th.sorted { color: var(--text); }
 table.batch td button { margin-left: 4px; }
 table.batch .planets { font-size: 0.68rem; line-height: 1.2; margin-top: 1px; white-space: normal; }
+
+/* the archives of a star, one a row, under Gather: a chip says where each
+   is (in words too, not by its colour alone) */
+#gathertable table { width: 100%; border-collapse: collapse; margin: 8px 0 2px; font-size: 0.86rem; }
+#gathertable td { padding: 4px 10px 4px 0; border-bottom: 1px solid rgba(200, 220, 255, 0.07); vertical-align: top; }
+#gathertable td.gname { white-space: nowrap; }
+#gathertable td.gtext { width: 100%; font-family: "IBM Plex Mono", monospace; font-size: 0.78rem; color: var(--text); overflow-wrap: anywhere; }
+#gathertable tr.goff td, #gathertable tr.gwaiting td { color: var(--muted); }
+#gathertable tr.gnone td.gtext, #gathertable tr.goff td.gtext { color: var(--muted); }
+.gchip { display: inline-block; min-width: 6.4em; text-align: center; font-size: 0.72rem; padding: 1px 8px; border-radius: 999px; border: 1px solid rgba(200, 220, 255, 0.25); color: var(--muted); white-space: nowrap; }
+.gchip.ok { color: #3ddc97; border-color: rgba(61, 220, 151, 0.7); background: rgba(61, 220, 151, 0.10); font-weight: 600; }
+.gchip.asking { color: #6aa9ff; border-color: rgba(106, 169, 255, 0.75); background: rgba(106, 169, 255, 0.14); font-weight: 600; }
+.gchip.failed { color: #f0b429; border-color: rgba(240, 180, 41, 0.7); background: rgba(240, 180, 41, 0.10); font-weight: 600; }
+.gchip.waiting { border-style: dashed; }
+.gchip.off { border-color: transparent; }
+.gbar { height: 5px; max-width: 340px; margin-top: 5px; background: rgba(200, 220, 255, 0.12); border-radius: 999px; overflow: hidden; }
+.gbar span { display: block; height: 100%; background: #6aa9ff; border-radius: 999px; transition: width 1s linear; }
