@@ -37,7 +37,14 @@ them (the dict that goes with it):
 
 - perspective: whether its velocities still hold the perspective
   acceleration of the star (koloa.secular). Measured on Barnard's star
-  (4.54 m/s/yr): the pipelines of ESO do, NEID's and APERO do not;
+  (4.54 m/s/yr): the pipelines of ESO do (HARPS 4.0 to 4.2 m/s/yr,
+  NIRPS 4.0 +- 0.2), NEID's does not (-0.16 +- 0.11). APERO is told how
+  the star moves and does not either: its CCF velocities of SPIRou drift
+  by 2.51 +- 0.06 m/s/yr over 1761 exposures, between the 1.2 of its
+  line-by-line velocities and far from the 5.7 they would show with it.
+  SOPHIE and ELODIE are taken to hold it, as the pipelines of their
+  family do (SOPHIE+ drifts by 2.4 m/s/yr for GJ 411, where 1.35 is
+  expected: its zero point moves too, and does not settle it);
 - defer: the velocity of a CCF in the near infrared is a poor one (SPIRou
   here, like NIRPS on DACE): a file given of the same spectrograph (LBL)
   is believed first, and the dataset is left out altogether when there is
