@@ -704,6 +704,11 @@ def read_velocities():
     if USE_VIZIER and folder.exists():
         pub = published.load(str(folder))
         if pub is not None and files is not None:
+            # a file is believed before the CCF velocities of the same
+            #   spectrograph in the near infrared (SPIRou at the CFHT)
+            pub, _ = published.left_to_files(pub, str(folder),
+                                             files.instruments)
+        if pub is not None and files is not None:
             pub = published.new_spectra(pub, [files])
         if pub is not None and acc:
             pub = secular.without_perspective(

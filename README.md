@@ -47,6 +47,7 @@ exactly. That is what makes the outlier-aware FIP affordable.
 | `koloa.transit` | a transit in the TESS light curve at the period of a velocity signal or a TOI: high-passed (the transits found left out of the trend), folded, a box searched about the expected conjunction (its error carried to the epochs of TESS) or over the whole phase, the period scanned within 3 sigma when its error would move a transit by more than half a duration over the span of TESS; plausible at 7 sigma in 2 transits or more, not from one event, beyond the best box at the periods of a null where there is nothing and with a chance below 1 % of the null reaching it; depth, radius, the depths of 1 Earth and 1 Jupiter radius before the star |
 | `koloa.kit` | the analysis kit of a star (the GUI's Analysis script): a commented script of the analysis calling koloa's routines, its settings from the page, with the velocities, the archives and the star (YAML) in one .tar.gz that runs offline |
 | `koloa.tng` | the velocities of the pipeline of HARPS-N from the archive of its telescope (the TNG, at the IA2): a star found by where the telescope was pointed (`pointings`, `near`, `files`), the headers of its public CCF files read and kept in a table (`exposures`, with a tqdm bar), and its two reductions (3.7 and espdr) as two datasets of the same spectra (`series`, `velocities`); a source of `koloa.published` |
+| `koloa.observatories` | the velocities of the pipelines of the other spectrographs, from the archives of their observatories, each asked with no account: HARPS (the catalogue of its velocities), ESPRESSO and NIRPS at ESO (`eso`), NEID at NExScI (`neid`), SOPHIE and ELODIE at the OHP (`sophie`, `elodie`; the errors of ELODIE from Perrier et al. 2003), SPIRou at the CFHT (`cfht`, the CCF of APERO at the CADC); each dataset says whether it still holds the perspective acceleration and whether it defers to a file of the same spectrograph; sources of `koloa.published` |
 | `koloa.published` | the velocities published for one star on VizieR: the surveys (Keck HIRES to 2023, Teklu et al. 2025, and Tal-Or et al. 2019; the California Legacy Survey's HIRES, APF and Lick Hamilton, Rosenthal et al. 2021; the Lick Hamilton of Fischer et al. 2014; HARPS by SERVAL, Trifonov et al. 2020), the star found by its position in their lists of stars (kept on this machine), then the tables of the papers SIMBAD lists for it; each source its own offset, a spectrum published twice kept once |
 | `koloa.gpcheck` | the signals against a GP of the activity (its prior the rotation period of the archive): the likelihood each adds, periodograms whitened by the GP with false-alarm levels from simulations of its noise, and the whole series with the GP |
 | `koloa.latex` | the detailed analysis as a LaTeX report, compiled to PDF by pdflatex |
@@ -148,9 +149,13 @@ file per instrument era, with the indicators), those of CARMENES DR1
 velocities published on VizieR (`rv/published/`, `koloa.published`: the
 surveys of Keck HIRES, the APF, the Lick Hamilton and HARPS by SERVAL,
 asked only when the star is in their lists, the tables of the star's
-papers, and the velocities of the pipeline of HARPS-N read in the headers
-of the public CCF files of the archive of the TNG, `koloa.tng`, in its two
-reductions; each source kept whole; `--no-vizier` not to,
+papers, and the velocities of the pipelines from the archives of the
+observatories: HARPS-N read in the headers of the public CCF files of the
+archive of the TNG (`koloa.tng`, in its two reductions), and HARPS,
+ESPRESSO and NIRPS at ESO, NEID, SOPHIE and ELODIE at the OHP, SPIRou at
+the CFHT (`koloa.observatories`); each source kept whole; the velocities
+of a CCF in the near infrared (SPIRou at the CFHT, NIRPS at ESO) are left
+out when you give a file of that spectrograph; `--no-vizier` not to,
 `--vizier-sources teklu25 cls21 papers` for some of them only), the
 TESS light curves of every sector, every velocity of DACE and CARMENES together in
 `rv/all_rv.csv`, the identifiers and the periods of variability SIMBAD

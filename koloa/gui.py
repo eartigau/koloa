@@ -711,6 +711,14 @@ def whole_series(files: Any = '', target: str = '', root: str = '',
         pdir = os.path.join(folder, 'rv', 'published')
         from koloa import published as kpub
         pub = kpub.load(pdir) if os.path.isdir(pdir) else None
+        if pub is not None and vizier and filedata is not None:
+            # a file is believed before the velocities of a CCF in the
+            #   near infrared of the same spectrograph (SPIRou at the
+            #   CFHT): those are not used at all then
+            pub, gone = kpub.left_to_files(pub, pdir, filedata.instruments)
+            if gone:
+                notes.append(f'{", ".join(gone)}: left out, the files '
+                             f'have that spectrograph')
         if pub is not None and not vizier:
             notes.append(f'VizieR: {pub.n} points gathered, not ticked')
         elif pub is not None:

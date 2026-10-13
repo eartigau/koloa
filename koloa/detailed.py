@@ -1129,7 +1129,18 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
         except (OSError, ValueError) as err:
             pnotes = []
             log(f'published velocities: {err}', 'warn')
+        # a file is believed before the velocities of a CCF in the near
+        #   infrared of the same spectrograph (SPIRou at the CFHT)
+        have = {kpub.family(inst) for inst in mine} - {''}
         for note in pnotes:
+            if note.get('file') and note.get('defer') and any(
+                    kpub.family(inst) in have
+                    for inst in note.get('instruments') or {}):
+                sources.append(dict(
+                    kind='VizieR', label=note['reference'], n=0,
+                    instruments={}, note='left out: the file has that '
+                    'spectrograph'))
+                continue
             if note.get('file'):
                 one = RVData.from_csv(os.path.join(
                     dace_folder or outdir, 'published', note['file']),

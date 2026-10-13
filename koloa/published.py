@@ -103,7 +103,7 @@ NOT_PAPERS = {'J/A+A/670/A139'}
 #: spectrographs whose velocities, published twice, are the same spectra
 #: (the longer names first)
 FAMILIES = ('HARPS-N', 'HARPS', 'HIRES', 'CARMENES', 'ESPRESSO', 'SPIRou',
-            'NIRPS', 'SOPHIE', 'CORALIE', 'NEID', 'EXPRES', 'KPF', 'HPF',
+            'NIRPS', 'SOPHIE', 'ELODIE', 'CORALIE', 'NEID', 'EXPRES', 'KPF', 'HPF',
             'PFS', 'APF', 'Lick', 'UVES', 'MAROON-X', 'IRD')
 #: the surveys, in their order of preference (a spectrum in two is kept
 #: from the first): the table of stars (found by position) and its column
@@ -140,10 +140,20 @@ SURVEYS: List[Dict[str, Any]] = [
 #: do (the HARPS velocities of Mignon et al. 2024: 4.37 +- 0.08 m/s/yr for
 #: Barnard's star, whose perspective acceleration is 4.54)
 PERSPECTIVE = {'J/A+A/689/A32'}
-#: the archives of the observatories, whose files hold the velocity of
-#: their pipeline (koloa.tng: HARPS-N, at the archive of the TNG): what
-#: they are called where the datasets are listed
-ARCHIVES: Dict[str, str] = {'tng': 'TNG archive'}
+#: the archives of the observatories, which serve the velocity of their
+#: pipeline for each exposure (koloa.tng: HARPS-N at the TNG;
+#: koloa.observatories: HARPS, ESPRESSO and NIRPS at ESO, NEID, SOPHIE and
+#: ELODIE at the OHP, SPIRou at the CFHT): what they are called where the
+#: datasets are listed
+ARCHIVES: Dict[str, str] = {'tng': 'TNG archive', 'eso': 'ESO archive',
+                            'neid': 'NEID archive',
+                            'sophie': 'OHP archive (SOPHIE)',
+                            'elodie': 'OHP archive (ELODIE)',
+                            'cfht': 'CFHT archive'}
+#: the archives whose velocities defer to a file of their spectrograph
+#: (those of a CCF in the near infrared): not asked at all when a file of
+#: it is known to be given
+DEFERS: Dict[str, str] = {'cfht': 'SPIRou'}
 #: the sources of published velocities, each fetched or not on its own: the
 #: surveys (their keys), the tables of the star's papers ('papers') and
 #: the archives of the observatories
@@ -438,8 +448,8 @@ def _write(data: RVData, path: str) -> None:
 
 def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
           papers: bool = True, timeout: float = 60.0, workers: int = 8,
-          sources: Optional[Sequence[str]] = None
-          ) -> List[Dict[str, Any]]:
+          sources: Optional[Sequence[str]] = None,
+          have: Sequence[str] = ()) -> List[Dict[str, Any]]:
     """
     The published velocities of a star: the surveys, then the tables of
     its papers; each source kept as a CSV in a folder, with what was found
@@ -455,6 +465,9 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
     :param sources: list of str or None, the sources asked (keys of
                     SOURCES: the surveys, 'papers', and the archives of
                     the observatories), None for all
+    :param have: the spectrographs you have files of (SPIRou, NIRPS...):
+                 an archive that defers to them (DEFERS: SPIRou at the
+                 CFHT) is not asked, nor is NIRPS at ESO
 
     :return: list of dict, per source: kind (survey, paper or archive),
              key, reference, catalogue, n, instruments, file and note;
@@ -489,7 +502,7 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
         if fresh and fresh <= set(ARCHIVES) and set(last) <= set(asked):
             with open(index) as handle:
                 notes = json.load(handle)
-            notes += _archives(ident, folder, sorted(fresh), refresh)
+            notes += _archives(ident, folder, sorted(fresh), refresh, have)
             with open(index, 'w') as handle:
                 json.dump(notes, handle, indent=1)
             with open(before, 'w') as handle:
@@ -602,7 +615,7 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
                             instruments={}, file=None, note=words))
     # the archives of the observatories: the velocities of their pipelines
     notes += _archives(ident, folder, [key for key in ARCHIVES
-                                       if key in asked], refresh)
+                                       if key in asked], refresh, have)
     with open(index, 'w') as handle:
         json.dump(notes, handle, indent=1)
     with open(before, 'w') as handle:
@@ -611,7 +624,8 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
 
 
 def _archives(ident: Dict[str, Any], folder: str, keys: Sequence[str],
-              refresh: bool = False) -> List[Dict[str, Any]]:
+              refresh: bool = False, have: Sequence[str] = ()
+              ) -> List[Dict[str, Any]]:
     """
     The velocities of the pipelines, from the archives of the
     observatories asked (ARCHIVES): each reduction a dataset of its own,
@@ -621,10 +635,15 @@ def _archives(ident: Dict[str, Any], folder: str, keys: Sequence[str],
     :return: list of dict, the notes (as fetch: kind is archive)
     """
     notes = []
+    mine = {family(name) for name in have} - {''}
     for key in keys:
         where = ARCHIVES[key]
         empty = dict(kind='archive', key=key, reference=where, where=where,
                      catalogue='', n=0, instruments={}, file=None, note='')
+        if DEFERS.get(key) in mine:
+            notes.append(dict(empty, note=f'not asked: a file of '
+                                          f'{DEFERS[key]} is given'))
+            continue
         if ident.get('ra') is None:
             notes.append(dict(empty, note='no position of the star'))
             continue
@@ -632,13 +651,18 @@ def _archives(ident: Dict[str, Any], folder: str, keys: Sequence[str],
         from koloa.secular import star_astrometry
         astro = ident.get('astrometry') or star_astrometry(ident) or {}
         star = dict(ra=ident['ra'], dec=ident['dec'],
-                    pmra=astro.get('pmra'), pmdec=astro.get('pmdec'))
+                    pmra=astro.get('pmra'), pmdec=astro.get('pmdec'),
+                    have=sorted(mine))
         try:
             if key == 'tng':
                 from koloa import tng
                 parts, words = tng.velocities(star, folder, refresh,
                                               ident.get('main'))
                 empty['catalogue'] = tng.ARCHIVE
+            else:
+                from koloa import observatories
+                parts, words = observatories.SOURCES[key](
+                    star, folder, refresh, ident.get('main'))
         except RuntimeError as err:
             notes.append(dict(empty, note=str(err)))
             log(f'published, {where}: {err}', 'warn')
@@ -655,7 +679,9 @@ def _archives(ident: Dict[str, Any], folder: str, keys: Sequence[str],
                 continue
             note = dict(empty, key=about['key'],
                         reference=about['reference'], whole=True,
-                        perspective=True, file=f'{about["key"]}.csv',
+                        perspective=bool(about.get('perspective', True)),
+                        defer=bool(about.get('defer', False)),
+                        file=f'{about["key"]}.csv',
                         n=int(data.n), note=words + (
                             f'; left out: {about["left"]}'
                             if about.get('left') else ''),
@@ -747,6 +773,42 @@ def holding(folder: str) -> List[str]:
     return [str(inst) for note in _notes(folder)
             if note.get('perspective') or note.get('catalogue') in PERSPECTIVE
             for inst in note.get('instruments') or {}]
+
+
+def deferring(folder: str) -> List[str]:
+    """the instruments of a folder that defer to a file of the same
+    spectrograph: the velocities of a CCF in the near infrared (SPIRou at
+    the CFHT, NIRPS at ESO), left out altogether when a file of that
+    spectrograph is given (left_to_files)"""
+    return [str(inst) for note in _notes(folder) if note.get('defer')
+            for inst in note.get('instruments') or {}]
+
+
+def left_to_files(data: Optional[RVData], folder: str,
+                  files: Sequence[str]
+                  ) -> Tuple[Optional[RVData], List[str]]:
+    """
+    The published velocities of a folder without the datasets that defer
+    to the files given: a file of SPIRou is believed before the
+    velocities of SPIRou of the archive of its telescope, which are not
+    used at all then
+
+    :param data: RVData or None, the published velocities (load)
+    :param folder: str, their folder
+    :param files: the instruments of the files given
+
+    :return: tuple, the series (None when nothing is left) and the
+             datasets left out
+    """
+    if data is None:
+        return None, []
+    mine = {family(name) for name in files} - {''}
+    out = [name for name in deferring(folder)
+           if name in data.instruments and family(name) in mine]
+    if not out:
+        return data, []
+    keep = ~np.isin(data.inst.astype(str), out)
+    return (data.select(keep) if np.any(keep) else None), out
 
 
 def shown(folder: str) -> Dict[str, str]:

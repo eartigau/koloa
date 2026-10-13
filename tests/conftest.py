@@ -45,6 +45,12 @@ def no_observatory_archives(monkeypatch):
     monkeypatch.setattr(tng, 'pointings', lambda refresh=False: dict(
         asked=0.0, object=[], ra=np.zeros(0), dec=np.zeros(0),
         free=np.zeros(0, int), private=np.zeros(0, int)))
+    # nor are those of ESO, NExScI, the OHP and the CFHT
+    from koloa import observatories
+    monkeypatch.setattr(observatories, 'SOURCES', {
+        key: (lambda star, folder, refresh=False, name=None:
+              ([], 'not asked in a test'))
+        for key in observatories.SOURCES})
 
 
 @pytest.fixture(autouse=True)

@@ -397,8 +397,8 @@ def gather(target: str, root: str = '.', dace: bool = True,
            carmenes: bool = True, tess: bool = True,
            api_key: Any = None, refresh: bool = False,
            vizier: bool = True,
-           vizier_sources: Optional[Sequence[str]] = None
-           ) -> Dict[str, Any]:
+           vizier_sources: Optional[Sequence[str]] = None,
+           have: Sequence[str] = ()) -> Dict[str, Any]:
     """
     Everything public about a star, in root/<target> (see the module)
 
@@ -422,6 +422,8 @@ def gather(target: str, root: str = '.', dace: bool = True,
                     one (DACE_API_KEY, ~/.dacerc), False for the public
                     data only (the key is never written anywhere)
     :param refresh: bool, ask again for what is already there
+    :param have: the spectrographs you have files of: SPIRou at the CFHT
+                 and NIRPS at ESO, which defer to them, are not asked
 
     :return: dict, the manifest (also in manifest.json): folder, target,
              and per archive its status (ok, none, unreachable, error),
@@ -524,7 +526,8 @@ def gather(target: str, root: str = '.', dace: bool = True,
         from koloa.published import fetch as published_fetch
         pdir = os.path.join(rvdir, 'published')
         notes = attempt('published', lambda: published_fetch(
-            ident, pdir, refresh=refresh, sources=vizier_sources))
+            ident, pdir, refresh=refresh, sources=vizier_sources,
+            have=have))
         if notes is not None:
             manifest['archives']['published'] = _published(notes)
             kept = [note for note in notes if note.get('file')]
@@ -642,7 +645,7 @@ def stale(folder: str) -> bool:
         return not set(ARCHIVES) <= set(json.load(handle))
 
 
-def update(folder: str) -> bool:
+def update(folder: str, have: Sequence[str] = ()) -> bool:
     """
     Bring the folder of a star gathered earlier up to date, with nothing
     asked again of what it has: the astrometry of the star (target.json),
@@ -650,6 +653,7 @@ def update(folder: str) -> bool:
     beside its published velocities
 
     :param folder: str, the folder of the star
+    :param have: the spectrographs you have files of (see gather)
 
     :return: bool, whether anything was added
     """
@@ -674,7 +678,7 @@ def update(folder: str) -> bool:
         if not set(ARCHIVES) <= set(last):
             # the sources it had, and the archives: VizieR is not asked
             notes = published_fetch(info, pdir, sources=list(
-                dict.fromkeys(list(last) + list(ARCHIVES))))
+                dict.fromkeys(list(last) + list(ARCHIVES))), have=have)
             if os.path.exists(mfile):
                 with open(mfile) as handle:
                     manifest = json.load(handle)

@@ -270,7 +270,7 @@ def test_the_archive_among_the_published_velocities(tmp_path, monkeypatch):
     folder = str(tmp_path / 'pub')
     assert 'tng' in published.SOURCES
     # as a folder of before: the surveys only
-    old = [key for key in published.SOURCES if key not in ('papers', 'tng')]
+    old = [survey['key'] for survey in published.SURVEYS]
     notes = published.fetch(ident, folder, sources=old)
     assert len(asked) == 5 and not any(note['file'] for note in notes)
     notes = published.fetch(ident, folder, sources=old + ['tng'])

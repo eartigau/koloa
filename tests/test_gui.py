@@ -71,14 +71,13 @@ def test_the_command_lines():
                                         exclude='HIRES (CLS), HARPS03'))[
         -3:] == ['--exclude', 'HIRES (CLS)', 'HARPS03']
     # the sources of VizieR: all by default, some named, none no VizieR
-    #   (the archive of the TNG, HARPS-N, is one of them)
+    #   (the archives of the observatories are among them)
+    from koloa.published import ARCHIVES, SOURCES
     assert gui.command('gather', dict(target='x', vz_talor19=False,
-                                      vz_papers=False))[-6:] == [
-        '--vizier-sources', 'teklu25', 'cls21', 'fischer14', 'rvbank20',
-        'tng']
-    off = {f'vz_{key}': False for key in ('teklu25', 'cls21', 'talor19',
-                                          'fischer14', 'rvbank20', 'papers',
-                                          'tng')}
+                                      vz_papers=False))[3:] == [
+        '--vizier-sources', 'teklu25', 'cls21', 'fischer14', 'rvbank20'
+    ] + list(ARCHIVES)
+    off = {f'vz_{key}': False for key in SOURCES}
     assert gui.command('gather', dict(target='x', **off)) == [
         'x', '--gather', 'archives', '--no-vizier']
     # the archives only when asked: a file alone fetches nothing, a name

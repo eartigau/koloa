@@ -119,6 +119,9 @@ SURVEY_ARCHIVES = {'teklu25': ('HIRES', 'Teklu+ 2025'),
                    'fischer14': ('Lick', 'Fischer+ 2014'),
                    'rvbank20': ('HARPS', 'RVBank'),
                    'tng': ('HARPS-N', 'TNG')}
+#: the archives of the observatories other than the TNG's are asked when
+#: the velocities of a star are gathered, not when a sample is checked:
+#: they have no list of their stars to look a star up in
 #: the names DACE gives a spectrograph that koloa.published.family does
 #: not read
 DACE_NAMES = {'HARPN': 'HARPS-N'}
@@ -510,6 +513,22 @@ def overview(stars: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         spectrographs=sorted(table.values(), key=lambda row: (
             -row['stars'], row['name'])),
         several=several, single=single)
+
+
+def file_spectrographs(star: Dict[str, Any]) -> List[str]:
+    """the spectrographs of the files of a star (SPIRou, NIRPS...): the
+    archives whose velocities defer to them are not asked for it
+    (koloa.published.DEFERS)"""
+    from koloa.detailed import read_files
+    from koloa.published import family
+    found = set()
+    for path in star.get('files') or []:
+        try:
+            for part in read_files([path], [None]):
+                found |= {family(inst) for inst in part.instruments}
+        except Exception:  # a file that is not read says nothing
+            continue
+    return sorted(found - {''})
 
 
 def gaia_dr3(stars: Sequence[Dict[str, Any]], timeout: float = 120.0
@@ -2408,7 +2427,7 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
         try:
             gather_star(star['name'], root, dace=True, carmenes=True,
                         tess=tess, vizier=True, refresh=refresh,
-                        api_key=api_key)
+                        api_key=api_key, have=file_spectrographs(star))
         except Exception as err:  # the star with what there is
             log(f'pack: the archives of {star["name"]} not gathered '
                 f'({type(err).__name__}: {err})', 'warn')
@@ -2439,7 +2458,7 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
             here = os.path.join(root, _folder(star['name']))
             try:
                 if star not in todo and stale(here):
-                    update(here)
+                    update(here, file_spectrographs(star))
             except Exception as err:  # the star with what there is
                 log(f'pack: the archives of {star["name"]} not brought up '
                     f'to date ({type(err).__name__}: {err})', 'warn')
