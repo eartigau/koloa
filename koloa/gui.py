@@ -129,13 +129,16 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
         args = [target, '--gather', str(opts.get('root') or 'archives')]
         # the sources of VizieR, each its box: none, VizieR left out; some,
         #   named
-        from koloa.published import SOURCES
-        chosen = [key for key in SOURCES if opts.get(f'vz_{key}', True)]
+        #   (SPIRou at the CFHT only when ticked: it is slow)
+        from koloa.published import OPTIONAL, SOURCES
+        usual = [key for key in SOURCES if key not in OPTIONAL]
+        chosen = [key for key in SOURCES
+                  if opts.get(f'vz_{key}', key not in OPTIONAL)]
         novizier = off['vizier'] or not chosen
         args += ['--no-dace'] * off['dace'] + ['--no-carmenes'] * off[
             'carmenes'] + ['--no-vizier'] * novizier + ['--no-tess'] * \
             off['tess']
-        if not novizier and len(chosen) < len(SOURCES):
+        if not novizier and chosen != usual:
             args += ['--vizier-sources'] + chosen
         if opts.get('refresh'):
             args.append('--refresh')

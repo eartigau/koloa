@@ -72,11 +72,18 @@ def test_the_command_lines():
         -3:] == ['--exclude', 'HIRES (CLS)', 'HARPS03']
     # the sources of VizieR: all by default, some named, none no VizieR
     #   (the archives of the observatories are among them)
-    from koloa.published import ARCHIVES, SOURCES
+    from koloa.published import ARCHIVES, OPTIONAL, SOURCES
+    usual = [key for key in ARCHIVES if key not in OPTIONAL]
     assert gui.command('gather', dict(target='x', vz_talor19=False,
                                       vz_papers=False))[3:] == [
         '--vizier-sources', 'teklu25', 'cls21', 'fischer14', 'rvbank20'
-    ] + list(ARCHIVES)
+    ] + usual
+    # SPIRou at the CFHT is slow: asked only when ticked
+    assert OPTIONAL == ('cfht',)
+    assert gui.command('gather', dict(target='x')) == [
+        'x', '--gather', 'archives']
+    assert gui.command('gather', dict(target='x', vz_cfht=True))[3:] == [
+        '--vizier-sources'] + list(SOURCES)
     off = {f'vz_{key}': False for key in SOURCES}
     assert gui.command('gather', dict(target='x', **off)) == [
         'x', '--gather', 'archives', '--no-vizier']

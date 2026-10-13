@@ -58,7 +58,8 @@ def test_neid(monkeypatch):
 def test_the_archives_of_the_ohp(monkeypatch):
     urls = []
     ccf = [dict(seq=str(it), objname='HD1', bjd=str(2455000.5 + 300 * it),
-                rv=str(-33.18 + 1e-3 * it), err='0.0010', mask='G2')
+                rv=str(-33.18 + 1e-3 * it), err='0.0010', mask='G2',
+                fwhm='7.4', contrast='37.0', span='-0.012')
            for it in range(6)]
     ccf += [dict(ccf[0], mask='K5'),            # the same spectrum, twice
             # a protected programme: no date, a rounded velocity
@@ -75,7 +76,7 @@ def test_the_archives_of_the_ohp(monkeypatch):
             return modes
         return [dict(objname='HD1', jdb=str(50000.5 + it), imatyp=kind,
                      masque='R37000K0', vfit=str(4.768 + 1e-3 * it),
-                     sn='111.0') for it, kind in enumerate(
+                     sn='111.0', sigfit='4.0') for it, kind in enumerate(
             ['OBTH', 'OBTHs', 'OBTHd', 'OBJOd'])]
     monkeypatch.setattr(obs, '_table', table)
     parts, words = obs.sophie(STAR, 'nowhere')
@@ -88,6 +89,14 @@ def test_the_archives_of_the_ohp(monkeypatch):
     assert data.rv[1] - data.rv[0] == pytest.approx(1.0)
     assert about['perspective'] and '1 with another mask than G2' in \
         about['left']
+    # the indicators of its CCF, as koloa keeps those of DACE: m/s and
+    #   per cent, the errors of the pipelines
+    assert set(data.indicators) == {'fwhm', 'bis', 'contrast'}
+    assert data.indicators['fwhm'][0][0] == pytest.approx(7400.0)
+    assert data.indicators['fwhm'][1][0] == pytest.approx(2.0)
+    assert data.indicators['bis'][0][0] == pytest.approx(-12.0)
+    assert data.indicators['contrast'][1][0] == pytest.approx(
+        37.0 * 2.0 / 7400.0)
     assert {published.family(one[1]['label']) for one in parts} == {
         'SOPHIE'}
     assert len({one[1]['key'] for one in parts}) == 3
@@ -98,6 +107,9 @@ def test_the_archives_of_the_ohp(monkeypatch):
     assert words == 'ELODIE (OHP): 3' and data.time[0] == 50000.5
     assert data.err[0] == pytest.approx(np.hypot(6.0, 2.8), abs=0.01)
     assert '1 with no lamp beside the star' in about['left']
+    # the width of its CCF alone, from the sigma fitted
+    assert list(data.indicators) == ['fwhm']
+    assert data.indicators['fwhm'][0][0] == pytest.approx(9419.3, abs=0.1)
     assert published.family(about['label']) == 'ELODIE'
 
 
@@ -230,6 +242,11 @@ def test_a_file_believed_first(tmp_path, monkeypatch):
     monkeypatch.setattr(obs, 'SOURCES', dict(obs.SOURCES, cfht=cfht))
     ident = dict(main='GJ 699', aliases=[], ra=1.0, dec=2.0)
     folder = str(tmp_path / 'pub')
+    # slow, and of little use: asked only when it is named
+    assert 'cfht' in published.OPTIONAL
+    assert [note for note in published.fetch(
+        ident, str(tmp_path / 'usual'),
+        sources=None, papers=False) if note['key'] == 'spirou_cfht'] == []
     notes = published.fetch(ident, folder, sources=['cfht'])
     assert notes[0]['defer'] and not notes[0]['perspective']
     assert notes[0]['where'] == 'CFHT archive'

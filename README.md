@@ -152,8 +152,12 @@ asked only when the star is in their lists, the tables of the star's
 papers, and the velocities of the pipelines from the archives of the
 observatories: HARPS-N read in the headers of the public CCF files of the
 archive of the TNG (`koloa.tng`, in its two reductions), and HARPS,
-ESPRESSO and NIRPS at ESO, NEID, SOPHIE and ELODIE at the OHP, SPIRou at
-the CFHT (`koloa.observatories`); each source kept whole; the velocities
+ESPRESSO and NIRPS at ESO, NEID, SOPHIE and ELODIE at the OHP
+(`koloa.observatories`), with the width, the contrast and the bisector
+span of their CCFs as indicators where the archive gives them; SPIRou at
+the CFHT too, but only when it is named (`--vizier-sources ... cfht`, or
+its box in the GUI: the CADC takes half an hour for a star observed
+often); each source kept whole; the velocities
 of a CCF in the near infrared (SPIRou at the CFHT, NIRPS at ESO) are left
 out when you give a file of that spectrograph; `--no-vizier` not to,
 `--vizier-sources teklu25 cls21 papers` for some of them only), the

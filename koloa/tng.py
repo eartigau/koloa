@@ -102,6 +102,9 @@ WORKERS = 4
 #: was to be)
 FAR = 2.0
 OTHER = 0.5
+#: the most a bisector span can be, in widths of its CCF: beyond, the
+#: measure failed
+BIS_MOST = 0.1
 #: the two reductions: how koloa calls their datasets (the spectrograph
 #: first: koloa.published.family reads it), their key, and where they are
 #: from, in words
@@ -484,6 +487,46 @@ def exposures(star: Dict[str, Any], folder: str, refresh: bool = False
     return rows
 
 
+def ccf_indicators(err: Any, fwhm: Any = None, contrast: Any = None,
+                   bis: Any = None) -> Dict[str, Tuple[np.ndarray,
+                                                       np.ndarray]]:
+    """
+    The indicators of a CCF as koloa keeps them (those of DACE): its
+    width fwhm [m/s], its bisector span bis [m/s], its contrast [%], each
+    with the error the pipelines give it: twice that of the velocity for
+    the width and the bisector, and the contrast times the relative error
+    of the width. A bisector span of more than BIS_MOST of the width is
+    a measure that failed, not a span (the pipeline of ESPRESSO gives
+    1.8 km/s for most CCFs of Barnard's star with its M2 mask, and 4 m/s
+    for the others): left blank
+
+    :param err: the errors of the velocities [m/s]
+    :param fwhm: the widths [km/s], or None
+    :param contrast: the contrasts [%], or None
+    :param bis: the bisector spans [km/s], or None
+
+    :return: dict, {name: (values, errors)} for those given and not all
+             missing
+    """
+    err = np.asarray(err, float)
+    out = {}
+    if fwhm is not None:
+        fwhm = np.asarray(fwhm, float) * 1000.0
+        out['fwhm'] = (fwhm, np.where(np.isfinite(fwhm), 2.0 * err, np.nan))
+    if bis is not None:
+        bis = np.asarray(bis, float) * 1000.0
+        if fwhm is not None:
+            with np.errstate(invalid='ignore'):
+                bis = np.where(np.abs(bis) > BIS_MOST * fwhm, np.nan, bis)
+        out['bis'] = (bis, np.where(np.isfinite(bis), 2.0 * err, np.nan))
+    if contrast is not None and fwhm is not None:
+        contrast = np.asarray(contrast, float)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            out['contrast'] = (contrast, np.abs(contrast) * 2.0 * err / fwhm)
+    return {key: val for key, val in out.items()
+            if np.any(np.isfinite(val[0]))}
+
+
 def _number(value: Any) -> float:
     """a float, nan when it is not one"""
     try:
@@ -501,6 +544,9 @@ def series(rows: List[Dict[str, Any]], name: Optional[str] = None
 
     :param rows: list of dict, from exposures()
     :param name: str or None, the name of the star
+
+    Each has the indicators of its CCF (ccf_indicators): its width and
+    contrast, and its bisector span in the newer reduction
 
     :return: list of (RVData [m/s, BJD - 2400000], dict: reduction, key,
              reference, label, n, mask, version, objects, left (why
@@ -553,10 +599,14 @@ def series(rows: List[Dict[str, Any]], name: Optional[str] = None
         order = np.argsort(bjd[good])
         version = [str(row.get('version') or '') for row, ok
                    in zip(mine, good) if ok]
+        more = ccf_indicators(
+            err[good][order] * 1000.0,
+            *(np.array([_number(row.get(key)) for row in mine])[good][order]
+              for key in ('fwhm', 'contrast', 'bis')))
         data = RVData(bjd[good][order] - 2400000.0,
                       vel[good][order] * 1000.0, err[good][order] * 1000.0,
                       inst=np.full(int(np.sum(good)), about['label']),
-                      name=name)
+                      name=name, indicators=more)
         out.append((data, dict(
             about, reduction=red, n=int(data.n), mask=best,
             version=max(set(version), key=version.count),

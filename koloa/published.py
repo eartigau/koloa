@@ -150,6 +150,11 @@ ARCHIVES: Dict[str, str] = {'tng': 'TNG archive', 'eso': 'ESO archive',
                             'sophie': 'OHP archive (SOPHIE)',
                             'elodie': 'OHP archive (ELODIE)',
                             'cfht': 'CFHT archive'}
+#: the sources asked only when they are named, not with the others: the
+#: archive of the CFHT answers a header in 2.5 s (half an hour for the
+#: 1800 exposures of a star), for the velocities of a CCF that the files
+#: of SPIRou one has are better than
+OPTIONAL: Tuple[str, ...] = ('cfht',)
 #: the archives whose velocities defer to a file of their spectrograph
 #: (those of a CCF in the near infrared): not asked at all when a file of
 #: it is known to be given
@@ -437,13 +442,20 @@ def _tidy(data: RVData, title: str) -> RVData:
 
 
 def _write(data: RVData, path: str) -> None:
-    """a series as a CSV (rjd, vrad, svrad, inst), its zero points back"""
+    """a series as a CSV (rjd, vrad, svrad, inst, and each indicator it
+    has with its error), its zero points back"""
     zero = np.array([data.zero_point.get(str(inst), 0.0)
                      for inst in data.inst])
+    more = list(data.indicators)
     with open(path, 'w') as handle:
-        handle.write('rjd,vrad,svrad,inst\n')
-        for row in zip(data.time, data.rv + zero, data.err, data.inst):
-            handle.write(f'{row[0]:.6f},{row[1]:.6f},{row[2]:.6f},{row[3]}\n')
+        handle.write(','.join(['rjd', 'vrad', 'svrad', 'inst'] + [
+            name for key in more for name in (key, 's' + key)]) + '\n')
+        for it, row in enumerate(zip(data.time, data.rv + zero, data.err,
+                                     data.inst)):
+            handle.write(f'{row[0]:.6f},{row[1]:.6f},{row[2]:.6f},{row[3]}'
+                         + ''.join(f',{data.indicators[key][0][it]:.6g},'
+                                   f'{data.indicators[key][1][it]:.6g}'
+                                   for key in more) + '\n')
 
 
 def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
@@ -464,7 +476,8 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
     :param workers: int, the questions to the CDS at once
     :param sources: list of str or None, the sources asked (keys of
                     SOURCES: the surveys, 'papers', and the archives of
-                    the observatories), None for all
+                    the observatories), None for all but those of OPTIONAL
+                    (SPIRou at the CFHT, asked only when named)
     :param have: the spectrographs you have files of (SPIRou, NIRPS...):
                  an archive that defers to them (DEFERS: SPIRou at the
                  CFHT) is not asked, nor is NIRPS at ESO
@@ -475,7 +488,7 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
              velocities hold the perspective acceleration (perspective)
     """
     if sources is None:
-        sources = list(SOURCES)
+        sources = [key for key in SOURCES if key not in OPTIONAL]
     unknown = [key for key in sources if key not in SOURCES]
     if unknown:
         raise ValueError(f'no source {unknown} of published velocities: '

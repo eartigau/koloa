@@ -32,6 +32,15 @@ of a small file:
 A star is found by where the telescope was pointed, as in koloa.tng: the
 object names are the observers'.
 
+Each dataset has the indicators of its CCF where the archive gives them,
+as koloa keeps those of DACE (koloa.tng.ccf_indicators): its width, its
+contrast and its bisector span (the width alone for ELODIE; none for
+NEID, whose table has none).
+
+SPIRou at the CFHT is asked only when it is named (koloa.published
+.OPTIONAL): the CADC answers a header in 2.5 s, half an hour for the
+1800 exposures of a star.
+
 Two things differ from one archive to the next, and each dataset says
 them (the dict that goes with it):
 
@@ -194,7 +203,8 @@ def _pointed(ra: Any, dec: Any, rjd: Any, star: Dict[str, Any],
 def _part(label: str, key: str, reference: str, time: Any, rv: Any,
           err: Any, names: Optional[Sequence[str]] = None,
           name: Optional[str] = None, perspective: bool = True,
-          defer: bool = False, said: str = ''
+          defer: bool = False, said: str = '', fwhm: Any = None,
+          contrast: Any = None, bis: Any = None
           ) -> Optional[Tuple[RVData, Dict[str, Any]]]:
     """
     A dataset of an archive: its exposures with a velocity and an error,
@@ -203,6 +213,9 @@ def _part(label: str, key: str, reference: str, time: Any, rv: Any,
 
     :param time: [BJD - 2400000]; rv and err [m/s]
     :param names: the name the observer gave each, or None
+    :param fwhm: the widths of the CCFs [km/s], contrast [%] and bis (their
+                 bisector spans [km/s]), or None: the indicators of the
+                 dataset (koloa.tng.ccf_indicators)
 
     :return: (RVData, dict: key, label, reference, n, left, perspective,
              defer), or None when nothing is left
@@ -231,8 +244,12 @@ def _part(label: str, key: str, reference: str, time: Any, rv: Any,
     if not np.any(good):
         return None
     order = np.argsort(time[good])
+    more = tng.ccf_indicators(err[good][order], *(
+        None if val is None else np.asarray(val, float)[good][order]
+        for val in (fwhm, contrast, bis)))
     data = RVData(time[good][order], rv[good][order], err[good][order],
-                  inst=np.full(int(np.sum(good)), label), name=name)
+                  inst=np.full(int(np.sum(good)), label), name=name,
+                  indicators=more)
     return data, dict(key=key, label=label, reference=reference,
                       n=int(data.n), left='; '.join(left),
                       perspective=bool(perspective), defer=bool(defer))
@@ -367,7 +384,8 @@ def sophie(star: Dict[str, Any], folder: str, refresh: bool = False,
     :return: tuple, the datasets and what was found, in words
     """
     rows = _ohp(SOPHIE_URL, 'sophiecc', star,
-                'seq,objname,bjd,rv,err,mask', 'SOPHIE archive')
+                'seq,objname,bjd,rv,err,mask,fwhm,contrast,span',
+                'SOPHIE archive')
     modes = {row.get('seq'): str(row.get('mode') or '').upper()
              for row in _ohp(SOPHIE_URL, 'sophie', star, 'seq,mode',
                              'SOPHIE archive')} if rows else {}
@@ -400,7 +418,11 @@ def sophie(star: Dict[str, Any], folder: str, refresh: bool = False,
                      in zip(kept, sel) if ok],
                     [row['objname'] for row, ok in zip(kept, sel) if ok],
                     name, said=(f'{other} with another mask than {mask}'
-                                if other else ''))
+                                if other else ''),
+                    **{key: [_num(row.get(col)) for row, ok
+                             in zip(kept, sel) if ok]
+                       for key, col in (('fwhm', 'fwhm'), ('bis', 'span'),
+                                        ('contrast', 'contrast'))})
                 if got:
                     parts.append(got)
     return parts, _told(parts, 'SOPHIE has no public velocity of the star')
@@ -418,8 +440,9 @@ def elodie(star: Dict[str, Any], folder: str, refresh: bool = False,
     :return: tuple, the datasets and what was found, in words
     """
     rows = [row for row in _ohp(
-        ELODIE_URL, 'e501', star, 'objname,jdb,imatyp,masque,vfit,sn',
-        'ELODIE archive') if _num(row.get('sn')) > 0]
+        ELODIE_URL, 'e501', star,
+        'objname,jdb,imatyp,masque,vfit,sn,sigfit', 'ELODIE archive')
+        if _num(row.get('sn')) > 0]
     lamp = [row for row in rows if row.get('imatyp', '').startswith('OBTH')]
     parts = []
     if lamp:
@@ -435,7 +458,10 @@ def elodie(star: Dict[str, Any], folder: str, refresh: bool = False,
             [_num(row['vfit']) * 1000.0 for row in kept],
             [float(np.hypot(ELODIE_FLOOR, ELODIE_PHOTON / _num(row['sn'])))
              for row in kept], [row['objname'] for row in kept], name,
-            said='; '.join(word for word in said if word))
+            said='; '.join(word for word in said if word),
+            # the width of its CCF, from the sigma of the gaussian fitted
+            fwhm=[2.0 * np.sqrt(2.0 * np.log(2.0)) * _num(row.get('sigfit'))
+                  for row in kept])
         if got:
             parts.append(got)
     return parts, _told(parts, 'ELODIE has no velocity of the star with its '
@@ -459,7 +485,10 @@ def _eso_read(one: Dict[str, Any]) -> Dict[str, Any]:
         mask=head.get('ESO QC CCF MASK', ''),
         mode=head.get('ESO INS MODE', ''),
         version=head.get('ESO PRO REC1 PIPE ID', ''),
-        qc=head.get('ESO QC SCIRED CHECK', ''))
+        qc=head.get('ESO QC SCIRED CHECK', ''),
+        fwhm=head.get('ESO QC CCF FWHM', ''),
+        contrast=head.get('ESO QC CCF CONTRAST', ''),
+        bis=head.get('ESO QC CCF BIS SPAN', ''))
 
 
 def eso(star: Dict[str, Any], folder: str, refresh: bool = False,
@@ -478,7 +507,8 @@ def eso(star: Dict[str, Any], folder: str, refresh: bool = False,
     ra, dec = float(star['ra']), float(star['dec'])
     rows = _tap(ESO_CAT, (
         "SELECT tel_object, ins_mode, drs_bjd, drs_ccf_rvc, drs_ccf_noise, "
-        "drs_mask, ra_simbad, dec_simbad FROM safcat.HARPS_RVCAT_V1 WHERE "
+        "drs_mask, ra_simbad, dec_simbad, drs_ccf_fwhm, drs_ccf_contrast, "
+        "drs_bis_span FROM safcat.HARPS_RVCAT_V1 WHERE "
         "CONTAINS(POINT('ICRS', ra_simbad, dec_simbad), CIRCLE('ICRS', "
         f"{ra:.6f}, {dec:.6f}, 0.01))=1"), 'ESO archive', 'json')
     rows = [row for row in rows if str(row.get('ins_mode')).strip() == 'HAM'
@@ -505,7 +535,12 @@ def eso(star: Dict[str, Any], folder: str, refresh: bool = False,
                 [str(row['tel_object']) for row, ok in zip(mine, same)
                  if ok], name,
                 said=(f'{int(np.sum(~same))} with another mask than {mask}'
-                      if np.any(~same) else ''))
+                      if np.any(~same) else ''),
+                **{key: [_num(row.get(col)) for row, ok in zip(mine, same)
+                         if ok]
+                   for key, col in (('fwhm', 'drs_ccf_fwhm'),
+                                    ('contrast', 'drs_ccf_contrast'),
+                                    ('bis', 'drs_bis_span'))})
             if got:
                 parts.append(got)
     # the CCF files of the other pipelines
@@ -585,7 +620,10 @@ def eso(star: Dict[str, Any], folder: str, refresh: bool = False,
                 [str(row['target']) for row, ok in zip(these, same)
                  if ok], name, defer=ins == 'NIRPS',
                 said=(f'{int(np.sum(~same))} with another mask than '
-                      f'{mask}' if np.any(~same) else ''))
+                      f'{mask}' if np.any(~same) else ''),
+                **{key: [_num(row.get(key)) for row, ok
+                         in zip(these, same) if ok]
+                   for key in ('fwhm', 'contrast', 'bis')})
             if got:
                 parts.append(got)
     words = _told(parts, 'ESO has no public velocity of the star')
@@ -612,7 +650,9 @@ def _cadc_read(one: Dict[str, Any]) -> Dict[str, Any]:
                 rv=head.get('RV_CORR') or head.get('RV_OBJ', ''),
                 err=head.get('DVRMS_CC', ''), mask=head.get('CCFMASK', ''),
                 version=head.get('VERSION', ''), qc=head.get('QCC_ALL', ''),
-                dpr=head.get('DPRTYPE', ''))
+                dpr=head.get('DPRTYPE', ''), fwhm=head.get('CCFMFWHM', ''),
+                contrast=head.get('CCFMCONT', ''),
+                bis=head.get('CCFMBISV', ''))
 
 
 def cfht(star: Dict[str, Any], folder: str, refresh: bool = False,
@@ -665,7 +705,11 @@ def cfht(star: Dict[str, Any], folder: str, refresh: bool = False,
             [row['target'] for row in kept], name, perspective=False,
             defer=True, said=(f'{len(heads) - len(kept)} with another mask '
                               f'than {mask}' if len(heads) > len(kept)
-                              else ''))
+                              else ''),
+            fwhm=[_num(row.get('fwhm')) for row in kept],
+            # APERO gives the contrast as a fraction
+            contrast=[100.0 * _num(row.get('contrast')) for row in kept],
+            bis=[_num(row.get('bis')) for row in kept])
         if got:
             parts.append(got)
     words = _told(parts, 'SPIRou has no public velocity of the star')

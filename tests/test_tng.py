@@ -221,6 +221,47 @@ def test_two_reductions_two_datasets():
     assert tng.series([_exposure('h', 'espdr', '', '', policy='PRIV')]) == []
 
 
+def test_the_indicators_of_a_ccf(tmp_path):
+    """the width, the contrast and the bisector span of the CCF come with
+    the velocities, as koloa keeps those of DACE, and are kept on disk"""
+    rows = []
+    for it in range(4):
+        row = _exposure(f'b{it}', 'espdr', 2457451.5 + it, -110.3, 0.0035)
+        row.update(fwhm=3.1327, contrast=39.512, bis=-0.00382 + 1e-3 * it)
+        rows.append(row)
+        # the older reduction has no bisector span in its header
+        row = _exposure(f'a{it}', '3.7', 2457451.5 + it, -110.25, 0.0008)
+        row.update(fwhm=2.9713, contrast=29.516)
+        rows.append(row)
+    old, new = (part[0] for part in tng.series(rows))
+    assert set(new.indicators) == {'fwhm', 'contrast', 'bis'}
+    assert set(old.indicators) == {'fwhm', 'contrast'}
+    # the errors the pipeline gives: 6.9 m/s and 0.087 per cent here
+    assert new.indicators['fwhm'][0][0] == pytest.approx(3132.7)
+    assert new.indicators['fwhm'][1][0] == pytest.approx(7.0)
+    assert new.indicators['bis'][0][1] == pytest.approx(-2.82)
+    assert new.indicators['contrast'][1][0] == pytest.approx(0.0883,
+                                                             abs=1e-3)
+    # a span of half the width is a measure that failed: blank
+    got = tng.ccf_indicators(np.ones(2), fwhm=[3.1, 3.1], bis=[1.8, 0.004])
+    assert np.isnan(got['bis'][0][0]) and got['bis'][0][1] == pytest.approx(
+        4.0)
+    assert np.isnan(got['bis'][1][0]) and got['bis'][1][1] == 2.0
+    assert tng.ccf_indicators(np.ones(3)) == {}
+    assert tng.ccf_indicators(np.ones(2), fwhm=[np.nan, np.nan]) == {}
+    # written with the velocities, and read back
+    path = str(tmp_path / 'tng_espdr.csv')
+    published._write(new, path)
+    back = RVData.from_csv(path, inst='inst')
+    assert set(back.indicators) == {'fwhm', 'contrast', 'bis'}
+    assert back.indicators['bis'][0][1] == pytest.approx(-2.82)
+    # a series without indicators: as before
+    plain = RVData(np.arange(3.0), np.zeros(3), np.ones(3),
+                   inst=np.full(3, 'x'))
+    published._write(plain, path)
+    assert open(path).readline().strip() == 'rjd,vrad,svrad,inst'
+
+
 def test_the_velocities_of_a_star(tmp_path, monkeypatch):
     # never pointed at: nothing is asked beyond the list
     monkeypatch.setattr(tng, 'files', lambda star: 1 / 0)

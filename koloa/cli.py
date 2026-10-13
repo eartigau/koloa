@@ -191,7 +191,8 @@ def main(argv=None):
                              'eso (HARPS, ESPRESSO and NIRPS, the archive '
                              'of ESO), neid (NEID, the archive of NExScI), '
                              'sophie and elodie (the archives of the OHP), '
-                             'cfht (SPIRou, the CCF of APERO at the CADC)')
+                             'cfht (SPIRou, the CCF of APERO at the CADC: '
+                             'slow, and only when it is named here)')
     parser.add_argument('--gui', action='store_true',
                         help="koloa's GUI in the browser (koloa.gui): the "
                              'SIMBAD resolver, the velocities by instrument, '

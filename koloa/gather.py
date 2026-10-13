@@ -631,7 +631,7 @@ def stale(folder: str) -> bool:
     astrometry of the star with it, or read the archives of the
     observatories (koloa.published.ARCHIVES): update() brings it up to
     date"""
-    from koloa.published import ARCHIVES
+    from koloa.published import ARCHIVES, OPTIONAL
     target = os.path.join(folder, 'target.json')
     if not os.path.exists(target):
         return False
@@ -642,7 +642,7 @@ def stale(folder: str) -> bool:
     if not os.path.exists(asked):
         return False
     with open(asked) as handle:
-        return not set(ARCHIVES) <= set(json.load(handle))
+        return not set(ARCHIVES) - set(OPTIONAL) <= set(json.load(handle))
 
 
 def update(folder: str, have: Sequence[str] = ()) -> bool:
@@ -657,8 +657,10 @@ def update(folder: str, have: Sequence[str] = ()) -> bool:
 
     :return: bool, whether anything was added
     """
-    from koloa.published import ARCHIVES, fetch as published_fetch
+    from koloa.published import ARCHIVES, OPTIONAL
+    from koloa.published import fetch as published_fetch
     from koloa.secular import star_astrometry, star_perspective
+    usual = [key for key in ARCHIVES if key not in OPTIONAL]
     if not stale(folder):
         return False
     target, mfile = (os.path.join(folder, name)
@@ -675,10 +677,10 @@ def update(folder: str, have: Sequence[str] = ()) -> bool:
     if os.path.exists(asked):
         with open(asked) as handle:
             last = json.load(handle)
-        if not set(ARCHIVES) <= set(last):
+        if not set(usual) <= set(last):
             # the sources it had, and the archives: VizieR is not asked
             notes = published_fetch(info, pdir, sources=list(
-                dict.fromkeys(list(last) + list(ARCHIVES))), have=have)
+                dict.fromkeys(list(last) + usual)), have=have)
             if os.path.exists(mfile):
                 with open(mfile) as handle:
                     manifest = json.load(handle)
