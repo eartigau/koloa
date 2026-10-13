@@ -285,3 +285,113 @@ def test_a_file_believed_first(tmp_path, monkeypatch):
         '', 'GJ 699', str(tmp_path / 'arch'), vizier=True)
     assert whole.instruments == ['SPIRou (CFHT)']
     assert source['SPIRou (CFHT)'] == 'CFHT archive'
+
+
+def test_the_table_of_the_archives(tmp_path, monkeypatch, capsys):
+    """a gather tells koloa's GUI where each archive is, a row each (the
+    papers of the star in one), out of its log; and the page reads the
+    same rows from what a star gathered earlier left"""
+    from koloa import gui, tng
+    from koloa import log as klog
+    from koloa.gather import space_state, state_of
+    # said only to the GUI
+    monkeypatch.delenv('KOLOA_PROGRESS', raising=False)
+    klog.row('dace', 'asking')
+    assert capsys.readouterr().out == ''
+    monkeypatch.setenv('KOLOA_PROGRESS', 'gui')
+    klog.row('tng', 'asking', 'two\nlines', 3, 10)
+    assert capsys.readouterr().out.strip().endswith(
+        '| row: tng | asking | 3 | 10 | two lines')
+    # the files of an archive as they come: its row, and no line
+    monkeypatch.setattr(klog, 'VERBOSE', True)
+    assert len(list(tng._steps(iter(range(5)), 5, 'TNG', 'tng'))) == 5
+    said = capsys.readouterr().out.splitlines()
+    assert said and all('row: tng | asking' in line for line in said)
+    assert said[-1].rstrip().endswith('| row: tng | asking | 5 | 5 |')
+    # a run keeps the rows apart from its log
+    job = gui.Job.__new__(gui.Job)
+    job.rows = {}
+    assert job._row('row: tng | asking | 3 | 10 | ') is True
+    assert job._row('row: neid | ok |  |  | 215 velocities: NEID 215')
+    assert job._row('published, NEID: 215 kept') is False
+    assert job.rows == dict(
+        tng=dict(state='asking', text='', done=3, total=10),
+        neid=dict(state='ok', text='215 velocities: NEID 215', done=None,
+                  total=None))
+    # what a gather asks, from its command line
+    usual = [key for key in published.SOURCES if key != 'cfht']
+    assert gui.asked_archives(['x', '--gather', 'a']) == (
+        ['dace', 'carmenes'] + usual + ['tess', 'space'])
+    assert gui.asked_archives(['x', '--gather', 'a', '--no-dace',
+                               '--vizier-sources', 'tng', 'cfht',
+                               '--no-tess']) == ['carmenes', 'tng', 'cfht']
+    assert gui.asked_archives(['x', '--gather', 'a', '--no-vizier',
+                               '--no-carmenes']) == ['dace', 'tess', 'space']
+    # the states: of an entry of the manifest, of the notes of a source
+    assert state_of(dict(status='ok', npoints=3, instruments=dict(A=3))
+                    ) == ('ok', '3 velocities: A 3')
+    assert state_of(dict(status='ok', sectors=[dict(npoints=5)] * 2)
+                    ) == ('ok', '2 sectors, 10 points')
+    assert state_of(dict(status='unreachable', message='down')) == (
+        'failed', 'down')
+    assert state_of(None) == ('none', '')
+    assert space_state(dict(kepler=dict(status='none', message='x'))
+                       )[0] == 'none'
+    notes = [
+        dict(kind='survey', key='teklu25', file='t.csv', n=4,
+             instruments={'HIRES (Teklu+ 2025)': 4}),
+        dict(kind='survey', key='cls21', file=None, n=0,
+             note='not in the survey'),
+        dict(kind='paper', key='a', file='a.csv', n=7, instruments={'X': 7}),
+        dict(kind='paper', key='b', file='b.csv', n=3, instruments={'Y': 3}),
+        dict(kind='archive', key='tng_drs37', source='tng', file='x.csv',
+             n=5, instruments={'HARPS-N (TNG 3.7)': 5},
+             note='5 exposures; 2 files not public yet'),
+        dict(kind='archive', key='tng_espdr', source='tng', file='y.csv',
+             n=6, instruments={'HARPS-N (TNG espdr)': 6}, note='6'),
+        dict(kind='archive', key='neid', source='neid', file=None, n=0,
+             note='the NEID archive could not be reached (down)'),
+        dict(kind='archive', key='cfht', source='cfht', file=None, n=0,
+             note='not asked: a file of SPIRou is given')]
+    assert published.papers_state(notes, 40) == (
+        'ok', '10 velocities in 2 papers of the 40 of the star in SIMBAD')
+    assert published.papers_state([])[0] == 'none'
+    assert published.archive_state(notes[4:6]) == (
+        'ok', '11 velocities: HARPS-N (TNG 3.7) 5, HARPS-N (TNG espdr) 6; '
+        '2 files not public yet')
+    assert published.archive_state(notes[6:7])[0] == 'failed'
+    assert published.archive_state(notes[7:])[0] == 'off'
+    # the table of a star gathered earlier
+    star = tmp_path / 'arch' / 'GJ_1'
+    (star / 'rv' / 'published').mkdir(parents=True)
+    assert gui.archive_rows('GJ 1', str(tmp_path / 'arch')) == []
+    (star / 'manifest.json').write_text(json.dumps(dict(archives=dict(
+        dace=dict(status='ok', npoints=9, instruments=dict(HARPS03=9)),
+        carmenes=dict(status='none', message='not in CARMENES DR1'),
+        tess=dict(status='unreachable', message='MAST is down')))))
+    (star / 'rv' / 'published' / 'published.json').write_text(
+        json.dumps(notes))
+    (star / 'rv' / 'published' / 'sources.json').write_text(json.dumps(
+        ['teklu25', 'cls21', 'papers', 'tng', 'neid', 'cfht']))
+    rows = {row['key']: row for row in gui.archive_rows(
+        'GJ 1', str(tmp_path / 'arch'))}
+    assert list(rows) == (['dace', 'carmenes'] + list(published.SOURCES)
+                          + ['tess', 'space'])
+    assert {key: row['state'] for key, row in rows.items()} == dict(
+        dace='ok', carmenes='none', teklu25='ok', cls21='none',
+        talor19='off', fischer14='off', rvbank20='off', papers='ok',
+        tng='ok', eso='off', neid='failed', sophie='off', elodie='off',
+        cfht='off', tess='failed', space='off')
+    assert rows['papers']['text'] == '10 velocities in 2 papers'
+    assert rows['tng']['text'].startswith('11 velocities')
+    assert rows['dace']['name'] == 'DACE'
+    # while a run gathers it: where each archive is
+    job.action, job.returncode = 'gather', None
+    job.args, job.outputs = ['GJ 1', '--gather', 'arch'], str(star)
+    monkeypatch.setattr(gui, 'JOBS', dict(a=job))
+    rows = {row['key']: row for row in gui.archive_rows(
+        'GJ 1', str(tmp_path / 'arch'))}
+    assert rows['tng'] == dict(key='tng', name=published.LABELS['tng'],
+                               state='asking', text='', done=3, total=10)
+    assert rows['neid']['state'] == 'ok' and rows['dace']['state'] == 'waiting'
+    assert rows['cfht']['state'] == 'off'
