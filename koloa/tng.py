@@ -20,6 +20,8 @@ with it, whether a star has anything is known at once, for a whole sample.
 files() then lists the CCF files of one star (20 s), and exposures()
 fetches the public ones, four at a time (a hundred in 15 s), and keeps what
 their headers say in a table beside them, so that nothing is fetched twice.
+A terminal shows a bar meanwhile (tqdm); the page of the GUI and the log
+of a batch, which are read line by line, a line every tenth of the files.
 
 A star is found by where the telescope was told to point, not by its name:
 the object names are the observers' (Barnard's star is GJ699 and K4_02,
@@ -61,6 +63,7 @@ import io
 import json
 import os
 import re
+import sys
 import time as _time
 import urllib.error
 import urllib.parse
@@ -95,6 +98,8 @@ EPOCHS = (2000.0, 2015.0, 2015.5, 2016.0)
 FIRST = 2012.0
 #: the files fetched at once
 WORKERS = 4
+#: the lines that say how far the files are, where no bar can be drawn
+STEPS = 10
 #: a velocity this far from the median of its reduction is of another
 #: star, or of a CCF that failed [km/s]; and the exposures under a name
 #: whose median is this far from that of the name with the most are of
@@ -422,16 +427,37 @@ def _fetch(one: Dict[str, Any], timeout: float = 120.0) -> Dict[str, Any]:
     return row
 
 
+def _steps(things: Iterable, total: int, words: str) -> Iterable:
+    """the files as they come, with a line every tenth of them: how far,
+    how long so far and how long is left"""
+    start, step = _time.time(), max(1, -(-int(total) // STEPS))
+    for done, one in enumerate(things, 1):
+        if done % step == 0 or done == total:
+            took = _time.time() - start
+            log(f'{words}: {done} of {total} files, {took:.0f} s so far'
+                + (f', about {took * (total - done) / done:.0f} s left'
+                   if done < total else ''), 'info')
+        yield one
+
+
 def _progress(things: Iterable, total: int, words: str) -> Iterable:
-    """a bar as the files come (tqdm, when it is there and koloa talks)"""
+    """
+    How far the files are, as they come (when koloa talks): a bar in a
+    terminal (tqdm), which draws over itself there; a line every tenth of
+    the files where the output is read line by line (the page of the GUI,
+    the log of a batch: a bar would be a line at each of its steps), or
+    where there is no tqdm
+    """
     if not klog.VERBOSE:
         return things
-    try:
-        from tqdm import tqdm
-    except ImportError:
-        log(f'{words}: {total} files (no tqdm here for a bar)', 'info')
-        return things
-    return tqdm(things, total=total, desc=words, unit='file')
+    if sys.stderr.isatty():
+        try:
+            from tqdm import tqdm
+        except ImportError:
+            pass
+        else:
+            return tqdm(things, total=total, desc=words, unit='file')
+    return _steps(things, total, words)
 
 
 def exposures(star: Dict[str, Any], folder: str, refresh: bool = False

@@ -262,6 +262,29 @@ def test_the_indicators_of_a_ccf(tmp_path):
     assert open(path).readline().strip() == 'rjd,vrad,svrad,inst'
 
 
+def test_how_far_the_files_are(monkeypatch, capsys):
+    """a bar in a terminal; a line every tenth of the files where the
+    output is read line by line (the page, a log), not one at each step
+    of a bar"""
+    from koloa import log as klog
+    # koloa silent: nothing at all
+    monkeypatch.setattr(klog, 'VERBOSE', False)
+    assert tng._progress(range(5), 5, 'a test') == range(5)
+    monkeypatch.setattr(klog, 'VERBOSE', True)
+    monkeypatch.setattr(tng.sys.stderr, 'isatty', lambda: False,
+                        raising=False)
+    assert list(tng._progress(iter(range(374)), 374, 'HARPS-N, TNG archive')
+                ) == list(range(374))
+    lines = [line for line in capsys.readouterr().out.splitlines()
+             if 'HARPS-N, TNG archive' in line]
+    assert len(lines) == 10
+    assert '38 of 374 files, 0 s so far, about 0 s left' in lines[0]
+    assert lines[-1].rstrip('\x1b[0m').endswith('374 of 374 files, 0 s so far')
+    # a few files: a line each
+    list(tng._progress(iter(range(3)), 3, 'a test'))
+    assert len(capsys.readouterr().out.splitlines()) == 3
+
+
 def test_the_velocities_of_a_star(tmp_path, monkeypatch):
     # never pointed at: nothing is asked beyond the list
     monkeypatch.setattr(tng, 'files', lambda star: 1 / 0)
