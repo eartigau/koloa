@@ -449,6 +449,20 @@ def gather(target: str, root: str = '.', dace: bool = True,
     except Exception as err:  # SIMBAD's TAP is a help, not a need
         info['variability'] = []
         log(f'SIMBAD variability: {err}', 'warn')
+    # how the star moves (Gaia DR3): an archive of an observatory is
+    #   searched by where it was, and the velocities of a pipeline hold
+    #   its perspective acceleration, taken out when the series is read
+    from koloa.secular import star_astrometry, star_perspective
+    try:
+        info['astrometry'] = star_astrometry(ident)
+        info['perspective'] = star_perspective(info)
+    except Exception as err:  # a help too
+        info['astrometry'] = info['perspective'] = None
+        log(f'astrometry: {type(err).__name__}: {err}', 'warn')
+    if info.get('perspective'):
+        log(f'perspective acceleration: {info["perspective"]["value"]:.3f} '
+            f'm/s/yr ({info["perspective"]["source"]})', 'value')
+    ident = dict(ident, astrometry=info['astrometry'])
     manifest: Dict[str, Any] = dict(
         target=target, simbad=ident['main'], folder=os.path.abspath(folder),
         created=_time.strftime('%Y-%m-%d %H:%M:%S'), archives={})
@@ -512,26 +526,16 @@ def gather(target: str, root: str = '.', dace: bool = True,
         notes = attempt('published', lambda: published_fetch(
             ident, pdir, refresh=refresh, sources=vizier_sources))
         if notes is not None:
+            manifest['archives']['published'] = _published(notes)
             kept = [note for note in notes if note.get('file')]
-            insts: Dict[str, int] = {}
-            for note in kept:
-                for name, num in note['instruments'].items():
-                    insts[name] = insts.get(name, 0) + num
-            manifest['archives']['published'] = dict(
-                status='ok' if kept else 'none',
-                npoints=int(sum(insts.values())), instruments=insts,
-                sources=[dict(reference=note['reference'],
-                              catalogue=note['catalogue'], n=note['n'],
-                              kind=note['kind']) for note in kept],
-                files=[os.path.join('rv', 'published', note['file'])
-                       for note in kept],
-                message=('' if kept else 'no published velocity of the star '
-                         'in the surveys or its papers on VizieR'))
             nsurv = sum(note['kind'] == 'survey' for note in kept)
+            narch = sum(note['kind'] == 'archive' for note in kept)
+            npap = len(kept) - nsurv - narch
             outcome((_told(manifest['archives']['published'])
-                     + (f'; from {nsurv} survey{"s" * (nsurv != 1)} and '
-                        f'{len(kept) - nsurv} paper'
-                        f'{"s" * (len(kept) - nsurv != 1)}' if kept else '')))
+                     + (f'; from {nsurv} survey{"s" * (nsurv != 1)}, '
+                        f'{npap} paper{"s" * (npap != 1)} and {narch} '
+                        f'reduction{"s" * (narch != 1)} of the archive of '
+                        f'an observatory' if kept else '')))
     if tess:
         step('TESS')
         lcs = attempt('tess', lambda: tess_photometry(ident, target, photdir,
@@ -595,6 +599,90 @@ def gather(target: str, root: str = '.', dace: bool = True,
         else:
             log(f'{key}: {val["status"]}, {val["message"]}', 'warn')
     return manifest
+
+
+def _published(notes: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """what the manifest says of the published velocities of a star
+    (koloa.published.fetch): the surveys and the papers on VizieR, the
+    archives of the observatories"""
+    kept = [note for note in notes if note.get('file')]
+    insts: Dict[str, int] = {}
+    for note in kept:
+        for name, num in note['instruments'].items():
+            insts[name] = insts.get(name, 0) + num
+    return dict(
+        status='ok' if kept else 'none',
+        npoints=int(sum(insts.values())), instruments=insts,
+        sources=[dict(reference=note['reference'],
+                      catalogue=note['catalogue'], n=note['n'],
+                      kind=note['kind']) for note in kept],
+        files=[os.path.join('rv', 'published', note['file'])
+               for note in kept],
+        message=('' if kept else 'no published velocity of the star in '
+                 'the surveys or its papers on VizieR, nor in the archives '
+                 'of the observatories'))
+
+
+def stale(folder: str) -> bool:
+    """whether the folder of a gathered star is of before koloa kept the
+    astrometry of the star with it, or read the archives of the
+    observatories (koloa.published.ARCHIVES): update() brings it up to
+    date"""
+    from koloa.published import ARCHIVES
+    target = os.path.join(folder, 'target.json')
+    if not os.path.exists(target):
+        return False
+    with open(target) as handle:
+        if not json.load(handle).get('astrometry'):
+            return True
+    asked = os.path.join(folder, 'rv', 'published', 'sources.json')
+    if not os.path.exists(asked):
+        return False
+    with open(asked) as handle:
+        return not set(ARCHIVES) <= set(json.load(handle))
+
+
+def update(folder: str) -> bool:
+    """
+    Bring the folder of a star gathered earlier up to date, with nothing
+    asked again of what it has: the astrometry of the star (target.json),
+    and the archives of the observatories that koloa did not read then,
+    beside its published velocities
+
+    :param folder: str, the folder of the star
+
+    :return: bool, whether anything was added
+    """
+    from koloa.published import ARCHIVES, fetch as published_fetch
+    from koloa.secular import star_astrometry, star_perspective
+    if not stale(folder):
+        return False
+    target, mfile = (os.path.join(folder, name)
+                     for name in ('target.json', 'manifest.json'))
+    with open(target) as handle:
+        info = json.load(handle)
+    if not info.get('astrometry'):
+        info['astrometry'] = star_astrometry(info)
+        info['perspective'] = star_perspective(info)
+        with open(target, 'w') as handle:
+            json.dump(info, handle, indent=1, default=str)
+    pdir = os.path.join(folder, 'rv', 'published')
+    asked = os.path.join(pdir, 'sources.json')
+    if os.path.exists(asked):
+        with open(asked) as handle:
+            last = json.load(handle)
+        if not set(ARCHIVES) <= set(last):
+            # the sources it had, and the archives: VizieR is not asked
+            notes = published_fetch(info, pdir, sources=list(
+                dict.fromkeys(list(last) + list(ARCHIVES))))
+            if os.path.exists(mfile):
+                with open(mfile) as handle:
+                    manifest = json.load(handle)
+                manifest.setdefault('archives', {})['published'] = \
+                    _published(notes)
+                with open(mfile, 'w') as handle:
+                    json.dump(manifest, handle, indent=1, default=str)
+    return True
 
 
 def archive_berv(folder: str, times: np.ndarray, tol: float = 1e-4

@@ -9,7 +9,7 @@ description = "Keplerian Orbits Lifted from Outlier-Affliction: outlier-aware ra
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "Etienne Artigau" }]
-dependencies = ["numpy>=1.22", "scipy>=1.8", "matplotlib>=3.5"]
+dependencies = ["numpy>=1.22", "scipy>=1.8", "matplotlib>=3.5", "tqdm>=4"]
 
 [project.urls]
 Homepage = "https://eartigau.github.io/koloa/"

@@ -117,7 +117,8 @@ SURVEY_ARCHIVES = {'teklu25': ('HIRES', 'Teklu+ 2025'),
                    'cls21': ('HIRES', 'CLS'),
                    'talor19': ('HIRES', 'Tal-Or+ 2019'),
                    'fischer14': ('Lick', 'Fischer+ 2014'),
-                   'rvbank20': ('HARPS', 'RVBank')}
+                   'rvbank20': ('HARPS', 'RVBank'),
+                   'tng': ('HARPS-N', 'TNG')}
 #: the names DACE gives a spectrograph that koloa.published.family does
 #: not read
 DACE_NAMES = {'HARPN': 'HARPS-N'}
@@ -127,7 +128,7 @@ MAXREC = 50000
 TARGETS = 'targets.json'
 #: what of koloa's cache goes with a batch (not the light curves)
 CACHE_PARTS = ('archive', 'published', 'tic', 'apero_astrometrics',
-               'carmenes_objects.json')
+               'carmenes_objects.json', 'gaia')
 #: the mark of a star being computed, in its folder of the results
 RUNNING = 'running.json'
 #: what the batch needs of this Python
@@ -407,6 +408,18 @@ def check_star(star: Dict[str, Any], root: str = 'archives',
                 out['surveys'].append(survey['key'])
         except (OSError, ValueError) as err:
             out['surveys_error'] = str(err)
+    if vizier:
+        # the archive of the TNG (HARPS-N), from the list of where it was
+        #   pointed: by where the star was, so its proper motion counts
+        from koloa import tng
+        gaia = star.get('gaia') or {}
+        try:
+            if tng.near(dict(ra=star['ra'], dec=star['dec'],
+                             pmra=gaia.get('pmra'),
+                             pmdec=gaia.get('pmdec')))['free']:
+                out['surveys'].append('tng')
+        except (OSError, ValueError, RuntimeError) as err:
+            out['surveys_error'] = str(err)
     if dace:
         folder = os.path.join(root, folder_name(star['name']), 'rv', 'dace')
         try:
@@ -505,9 +518,11 @@ def gaia_dr3(stars: Sequence[Dict[str, Any]], timeout: float = 120.0
     What Gaia DR3 has of each star of a sample that has a Gaia DR3 number
     (asked of the archive of Gaia, all at once): set as star['gaia'], G,
     parallax [mas], ruwe, transits (its crossings of a field of view
-    matched in the 34 months of DR3) and periods (its visibility periods).
-    The astrometric signal of a candidate is weighed against these
-    (koloa.prospects.astrometry).
+    matched in the 34 months of DR3), periods (its visibility periods),
+    pmra and pmdec (its proper motion [mas/yr]). The astrometric signal of
+    a candidate is weighed against these (koloa.prospects.astrometry),
+    and the archive of an observatory is searched by where the star was
+    (koloa.tng).
 
     :param stars: list of dict, the stars (of sample())
     :param timeout: float [s]
@@ -519,7 +534,7 @@ def gaia_dr3(stars: Sequence[Dict[str, Any]], timeout: float = 120.0
     for star in stars:
         number = str((star.get('ids') or {}).get('Gaia DR3') or '')
         number = number.replace('Gaia DR3', '').strip()
-        if number.isdigit() and not star.get('gaia'):
+        if number.isdigit() and 'pmra' not in (star.get('gaia') or {}):
             numbers[number] = star
     found = 0
     listed = list(numbers)
@@ -527,7 +542,8 @@ def gaia_dr3(stars: Sequence[Dict[str, Any]], timeout: float = 120.0
         try:
             rows = _tap(GAIA_TAP, (
                 'SELECT source_id, phot_g_mean_mag, parallax, ruwe, '
-                'astrometric_matched_transits, visibility_periods_used '
+                'astrometric_matched_transits, visibility_periods_used, '
+                'pmra, pmdec '
                 'FROM gaiadr3.gaia_source WHERE source_id IN ('
                 + ', '.join(listed[it:it + 500]) + ')'), timeout)
         except (OSError, ValueError) as err:
@@ -543,7 +559,9 @@ def gaia_dr3(stars: Sequence[Dict[str, Any]], timeout: float = 120.0
                 parallax=_number(row.get('parallax')),
                 ruwe=_number(row.get('ruwe')),
                 transits=_number(row.get('astrometric_matched_transits')),
-                periods=_number(row.get('visibility_periods_used')))
+                periods=_number(row.get('visibility_periods_used')),
+                pmra=_number(row.get('pmra')),
+                pmdec=_number(row.get('pmdec')))
             found += 1
     if numbers:
         log(f'Gaia DR3: {found} of {len(numbers)} stars found', 'value')
@@ -574,7 +592,10 @@ def check(stars: Sequence[Dict[str, Any]], root: str = 'archives',
             carmenes_objects()
         for survey in kpub.SURVEYS if vizier else ():
             kpub.survey_stars(survey)
-    except (OSError, ValueError) as err:
+        if vizier:
+            from koloa import tng
+            tng.pointings()
+    except (OSError, ValueError, RuntimeError) as err:
         log(f'survey: a list could not be fetched ({err})', 'warn')
     # what Gaia DR3 has of them, for the astrometry of a candidate
     try:
@@ -2409,6 +2430,21 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
             log(f'pack: a table could not be fetched first ({err})', 'warn')
         with ThreadPoolExecutor(max_workers=max(1, int(workers))) as pool:
             list(pool.map(fetch, todo))
+    if gather:
+        # the stars gathered before koloa kept their astrometry or read
+        #   the archives of the observatories: only that is asked
+        from koloa.gather import stale, update
+
+        def late(star):
+            here = os.path.join(root, _folder(star['name']))
+            try:
+                if star not in todo and stale(here):
+                    update(here)
+            except Exception as err:  # the star with what there is
+                log(f'pack: the archives of {star["name"]} not brought up '
+                    f'to date ({type(err).__name__}: {err})', 'warn')
+        with ThreadPoolExecutor(max_workers=max(1, int(workers))) as pool:
+            list(pool.map(late, stars))
     for it, star in enumerate(stars):
         tag = _folder(star['name'])
         if progress is not None and not todo:

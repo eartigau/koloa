@@ -69,13 +69,19 @@ Created on 2026-09-27
 """
 import csv
 import io
+import json
+import os
+import re
+import time as _time
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 import numpy as np
 
 from koloa.data import RVData
+from koloa.log import log
+from koloa.paths import cache
 
 # =============================================================================
 # Define variables
@@ -89,6 +95,14 @@ JULIAN_YEAR = 365.25 * 86400.0
 #: a [m/s/yr] = SECULAR_CONSTANT mu^2 / parallax, mu in mas/yr, parallax
 #: in mas (the perspective acceleration)
 SECULAR_CONSTANT = MAS ** 2 * PARSEC * 1000.0 / JULIAN_YEAR
+#: where the astrometry of the stars is kept (a file per star: a machine
+#: without the network has it once it was asked)
+ASTROMETRY_CACHE = cache('gaia')
+#: the stars whose astrometry could not be asked, and when
+_FAILED: Dict[str, float] = {}
+#: where the drift taken out of the archives is zero [BJD - 2400000]
+#: (J2016.0; the offset of each dataset takes any other choice)
+PERSPECTIVE_TREF = 57389.0
 #: one astronomical unit [m] (IAU 2012 B2)
 AU = 1.495978707e11
 #: the nominal solar and jovian mass parameters G M [m^3/s^2] (IAU 2015 B3)
@@ -370,6 +384,139 @@ def gaia_astrometry(name: str, timeout: float = 60.0) -> Dict[str, Any]:
         val = rows[0].get(key, '')
         out[key] = float(val) if val not in ('', None) else float('nan')
     return out
+
+
+def star_astrometry(ident: Dict[str, Any], timeout: float = 60.0,
+                    refresh: bool = False) -> Optional[Dict[str, Any]]:
+    """
+    The astrometry of a star that was resolved (koloa.archive.resolve):
+    that of its Gaia DR3 source, else SIMBAD's proper motion and parallax
+    (a star too bright for Gaia). Kept in koloa's cache, a file per star,
+    so that a machine without the network has it once it was asked
+
+    :param ident: dict, the star: gaia_dr3 (its Gaia DR3 source) and main
+                  (its SIMBAD name)
+    :param timeout: float [s]
+    :param refresh: bool, ask again
+
+    :return: dict or None (no astrometry, or no network and nothing
+             kept): pmra, pmdec [mas/yr], parallax [mas], source (in
+             words), and Gaia's other columns when it is Gaia's
+    """
+    # the number of the source, not the 3 of the release
+    found = re.findall(r'\d{6,}', str(ident.get('gaia_dr3') or ''))
+    number = found[-1] if found else ''
+    name = str(ident.get('main') or ident.get('name') or '')
+    if not number and not name:
+        return None
+    key = number or 'name_' + re.sub(r'[^A-Za-z0-9]+', '_', name)
+    path = os.path.join(ASTROMETRY_CACHE, f'{key}.json')
+    if os.path.exists(path) and not refresh:
+        with open(path) as handle:
+            return json.load(handle) or None
+    # not asked again at once where it could not be (no network)
+    if _time.time() - _FAILED.get(key, 0.0) < 600.0:
+        return None
+    out: Optional[Dict[str, Any]] = None
+    # the archive of Gaia stalls at times: SIMBAD's then, and Gaia's
+    #   asked again another time (nothing is kept)
+    stalled = False
+    try:
+        if number:
+            try:
+                rows = _tap(GAIA_TAP, f"SELECT {', '.join(GAIA_COLUMNS)} "
+                                      f"FROM gaiadr3.gaia_source WHERE "
+                                      f"source_id = {number}",
+                            min(timeout, 20.0))
+            except (OSError, ValueError) as err:
+                rows, stalled = [], True
+                log(f'astrometry of {name or number}: Gaia not asked '
+                    f'({err}), SIMBAD instead', 'warn')
+            if rows:
+                out = dict(source_id=int(number),
+                           source=f'Gaia DR3 {number}')
+                for col in GAIA_COLUMNS[1:]:
+                    val = rows[0].get(col, '')
+                    out[col] = (float(val) if val not in ('', None)
+                                else float('nan'))
+        if (out is None or not np.isfinite(out['pmra'] + out['pmdec']
+                                           + out['parallax'])) and name:
+            safe = name.replace("'", "''")
+            rows = _tap(SIMBAD_TAP,
+                        "SELECT pmra, pmdec, plx_value FROM basic JOIN "
+                        f"ident ON oidref = oid WHERE id = '{safe}'",
+                        timeout)
+            vals = [rows[0].get(col, '') for col in
+                    ('pmra', 'pmdec', 'plx_value')] if rows else []
+            out = (dict(source='SIMBAD', pmra=float(vals[0]),
+                        pmdec=float(vals[1]), parallax=float(vals[2]))
+                   if vals and '' not in vals else None)
+    except (OSError, ValueError) as err:
+        _FAILED[key] = _time.time()
+        log(f'astrometry of {name or number}: not asked ({err})', 'warn')
+        return None
+    if stalled:
+        return out
+    os.makedirs(ASTROMETRY_CACHE, exist_ok=True)
+    with open(path, 'w') as handle:
+        json.dump(out or {}, handle)
+    return out
+
+
+def star_perspective(ident: Dict[str, Any], timeout: float = 60.0
+                     ) -> Optional[Dict[str, Any]]:
+    """
+    The perspective acceleration of a star that was resolved, from its
+    astrometry (star_astrometry; that of ident['astrometry'] when the
+    star carries it, as the folder of a gathered star does)
+
+    :return: dict or None (no astrometry): value and error [m/s/yr], and
+             source, pmra, pmdec [mas/yr], parallax [mas]
+    """
+    astro = ident.get('astrometry') or star_astrometry(ident, timeout)
+    if not astro:
+        return None
+    try:
+        if 'parallax_error' in astro:
+            value, error = perspective_from_astrometry(astro)
+        else:
+            value, error = perspective_acceleration(
+                float(astro['pmra']), float(astro['pmdec']),
+                float(astro['parallax']))
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return None
+    if not np.isfinite(value):
+        return None
+    return dict(value=float(value),
+                error=float(error) if np.isfinite(error) else 0.0,
+                source=str(astro.get('source') or 'astrometry'),
+                pmra=float(astro['pmra']), pmdec=float(astro['pmdec']),
+                parallax=float(astro['parallax']))
+
+
+def without_perspective(data: RVData, holding: Iterable[str],
+                        acceleration: float,
+                        tref: float = PERSPECTIVE_TREF) -> RVData:
+    """
+    A copy of a series with the perspective drift taken out of those of
+    its datasets that still hold it (the velocities of a pipeline that is
+    not told how the star moves: HARPS, ESPRESSO, HARPS-N; not those of
+    APERO, SERVAL or the Keck surveys), so that every dataset is on the
+    same footing
+
+    :param data: RVData, the series
+    :param holding: the names of the datasets that hold it
+    :param acceleration: float, the perspective acceleration [m/s/yr]
+    :param tref: float, where the drift is zero [BJD - 2400000]
+
+    :return: RVData, the corrected copy (the series itself when none of
+             its datasets holds it)
+    """
+    sel = np.isin(data.inst.astype(str), [str(name) for name in holding])
+    if not np.any(sel):
+        return data
+    drift = perspective_drift(data.time, acceleration, tref)
+    return data.with_values(data.rv - np.where(sel, drift, 0.0))
 
 
 #: the names of the first version, when "secular" meant the perspective term

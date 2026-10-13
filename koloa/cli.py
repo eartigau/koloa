@@ -97,7 +97,9 @@ def main(argv=None):
                              'on VizieR (the surveys: Keck HIRES, the APF, '
                              'the Lick Hamilton, HARPS by SERVAL; the tables '
                              'of the star\'s papers and of its known '
-                             'planets\'), koloa.published')
+                             'planets\'), and the pipeline\'s velocities of '
+                             'HARPS-N from the archive of the TNG '
+                             '(koloa.published, koloa.tng)')
     parser.add_argument('--no-dace', action='store_true',
                         help='with --gather: not DACE')
     parser.add_argument('--no-archive', action='store_true',
@@ -180,7 +182,10 @@ def main(argv=None):
                              'Tal-Or et al. 2019), fischer14 (the Lick '
                              'Hamilton, Fischer et al. 2014), rvbank20 '
                              '(HARPS by SERVAL, Trifonov et al. 2020), papers '
-                             '(the tables of the star\'s papers)')
+                             '(the tables of the star\'s papers), tng (the '
+                             'pipeline\'s velocities of HARPS-N, from the '
+                             'headers of the public CCF files of the '
+                             'archive of the TNG, in its two reductions)')
     parser.add_argument('--gui', action='store_true',
                         help="koloa's GUI in the browser (koloa.gui): the "
                              'SIMBAD resolver, the velocities by instrument, '

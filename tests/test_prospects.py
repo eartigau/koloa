@@ -186,7 +186,8 @@ def test_what_gaia_has_of_the_stars(monkeypatch):
         return [dict(source_id='4393265392167891712',
                      phot_g_mean_mag='12.9968', parallax='68.2986',
                      ruwe='1.0087', astrometric_matched_transits='52',
-                     visibility_periods_used='21')]
+                     visibility_periods_used='21', pmra='580.2',
+                     pmdec='-749.7')]
     monkeypatch.setattr(gather, '_tap', tap)
     stars = [dict(name='GJ 1214', ids={'Gaia DR3': 'Gaia DR3 '
                                        '4393265392167891712'}),
@@ -194,8 +195,10 @@ def test_what_gaia_has_of_the_stars(monkeypatch):
     assert survey.gaia_dr3(stars) == 1
     assert asked[0][0] == survey.GAIA_TAP
     assert '4393265392167891712' in asked[0][1]
+    # with how it moves: an archive is searched by where the star was
     assert stars[0]['gaia'] == dict(G=12.9968, parallax=68.2986, ruwe=1.0087,
-                                    transits=52.0, periods=21.0)
+                                    transits=52.0, periods=21.0,
+                                    pmra=580.2, pmdec=-749.7)
     assert 'gaia' not in stars[1]
     # asked once: what a star already has is kept
     assert survey.gaia_dr3(stars) == 0 and len(asked) == 1

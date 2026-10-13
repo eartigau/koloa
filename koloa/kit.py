@@ -489,14 +489,17 @@ l'étoile, en masses de la Terre, de Neptune et de Jupiter."""),
         en="""10. The acceleration of the star: the slope of the trend, dv/dt
 [m/s/yr] (and its change with TREND = 2), with its error
 (secular.acceleration). A companion too far out to complete an orbit
-shows as one. The velocities also hold the perspective acceleration (the
-proper motion of the star times its distance): not removed here.""",
+shows as one. The perspective acceleration (the proper motion of the star
+squared times its distance) is not part of it: the velocities of the
+pipelines that hold it (DACE, the archives of the observatories) had it
+taken out when they were read; your files are taken as they are.""",
         fr="""10. L'accélération de l'étoile : la pente de la tendance, dv/dt
 [m/s/an] (et sa variation avec TREND = 2), avec son erreur
 (secular.acceleration). Un compagnon trop loin pour boucler une orbite se
-montre ainsi. Les vitesses contiennent aussi l'accélération de
-perspective (le mouvement propre de l'étoile fois sa distance) : pas
-retirée ici."""),
+montre ainsi. L'accélération de perspective (le carré du mouvement propre
+de l'étoile fois sa distance) n'en fait pas partie : les vitesses des
+pipelines qui la contiennent (DACE, les archives des observatoires) en
+ont été débarrassées à la lecture ; vos fichiers sont pris tels quels."""),
     'folds': dict(
         en="""11. The folds: each orbit seen alone, the velocities minus the
 offsets, the trend and the other orbits, against the phase (the time
@@ -666,6 +669,13 @@ def read_velocities():
     files = (series[0] if len(series) == 1 else merge(series)) \\
         if series else None
     mine = list(origin)
+    # the perspective acceleration of the star (its proper motion and its
+    #   distance): the velocities of the pipelines still hold it (DACE,
+    #   the archives of the observatories), the others do not
+    acc = None
+    if (ARCHIVES / 'target.json').exists():
+        with open(ARCHIVES / 'target.json') as handle:
+            acc = secular.star_perspective(json.load(handle))
 
     #> read_archives
     if (USE_DACE or USE_CARMENES) and (ARCHIVES / 'rv' / 'all_rv.csv').exists():
@@ -676,6 +686,9 @@ def read_velocities():
             if not use or not np.any(sel):
                 continue
             part = gathered.select(sel)
+            if acc and tag == 'DACE':
+                part = secular.without_perspective(part, part.instruments,
+                                                   acc['value'])
             #> distinct
             if files is not None:
                 part = distinct(part, files.instruments, files.time, tag)
@@ -692,6 +705,9 @@ def read_velocities():
         pub = published.load(str(folder))
         if pub is not None and files is not None:
             pub = published.new_spectra(pub, [files])
+        if pub is not None and acc:
+            pub = secular.without_perspective(
+                pub, published.holding(str(folder)), acc['value'])
         if pub is not None:
             series.append(pub)
             came = published.origins(str(folder))

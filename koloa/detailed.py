@@ -1039,6 +1039,24 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
         dict(kind='file', label=_label(src), n=int(part.n),
              instruments=_counts(part), note='')
         for src, part in zip(files, parts)]
+    # the perspective acceleration of the star, which the velocities of
+    #   the pipelines hold (DACE, the archives of the observatories) and
+    #   the others do not: taken out of the first (koloa.secular)
+    acc, freed = None, ''
+    if ident is not None and (dace or vizier):
+        from koloa.secular import star_perspective, without_perspective
+        try:
+            acc = star_perspective(ident)
+        except Exception as err:  # a correction, not a need
+            log(f'perspective acceleration: {type(err).__name__}: {err}',
+                'warn')
+        if acc:
+            freed = (f'; the perspective acceleration of the star '
+                     f'({acc["value"]:.2f} m/s/yr, {acc["source"]}) taken '
+                     f'out')
+            log(f'perspective acceleration: {acc["value"]:.3f} m/s/yr '
+                f'({acc["source"]}), taken out of the velocities of the '
+                f'pipelines', 'value')
     if not dace:
         sources.append(dict(kind='DACE', label='DACE', n=0, instruments={},
                             note='not asked'))
@@ -1051,6 +1069,8 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
                           exclude=data.instruments if data else (),
                           times=data.time if data else None,
                           refresh=refresh)
+        if more is not None and acc:
+            more = without_perspective(more, more.instruments, acc['value'])
         if more is not None:
             origin.update({inst: 'DACE' for inst in more.instruments})
             data = (more if data is None
@@ -1063,7 +1083,7 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
             instruments=_counts(more) if more else {},
             note=(('what the file does not have; an instrument of the file '
                    'too is named <inst>_DACE (another pipeline, its own '
-                   'offset)') if more else
+                   'offset)' + freed) if more else
                   'nothing added (unreachable, or no velocity the file does '
                   'not have) under ' + ', '.join(names))))
     if not carmenes:
@@ -1111,11 +1131,19 @@ def detailed_analysis(source: Union[str, RVData, Sequence[Any],
             log(f'published velocities: {err}', 'warn')
         for note in pnotes:
             if note.get('file'):
-                others.append(RVData.from_csv(os.path.join(
+                one = RVData.from_csv(os.path.join(
                     dace_folder or outdir, 'published', note['file']),
-                    inst='inst', name=note['reference']))
+                    inst='inst', name=note['reference'])
+                held = bool(acc and note.get('perspective'))
+                if held:
+                    # the velocities of a pipeline, from the archive of
+                    #   an observatory
+                    one = without_perspective(one, one.instruments,
+                                              acc['value'])
+                others.append(one)
                 labels.append(note['reference'])
-                kinds.append(('VizieR', note['catalogue'], note['note']))
+                kinds.append(('VizieR', note['catalogue'],
+                              note['note'] + (freed if held else '')))
             elif note['kind'] == 'survey':
                 sources.append(dict(kind='VizieR', label=note['reference'],
                                     n=0, instruments={},

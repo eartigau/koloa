@@ -19,6 +19,15 @@ States that DACE does not have among them):
 - HARPS by SERVAL with its nightly zero points (Trifonov et al. 2020, A&A
   636, A74; J/A+A/636/A74), before and after the 2015 fibre change.
 
+Beside VizieR, the archives of the observatories (ARCHIVES), which serve
+files and not tables: the velocity of the pipeline is in a header of each
+exposure. HARPS-N at the archive of the TNG (koloa.tng), in its two
+reductions, each a dataset of its own: two releases of the same spectra,
+between which koloa.datasets chooses. These velocities still hold the
+perspective acceleration of the star (holding() names them), which the
+surveys above do not: it is taken out where the series are put together
+(koloa.secular.without_perspective).
+
 The list of the stars of each survey (its names and positions) is kept on
 this machine (CACHE), asked once: a star not in a survey's list (none
 within RADIUS) is not asked of it. A survey's star has its velocities
@@ -126,9 +135,20 @@ SURVEYS: List[Dict[str, Any]] = [
          rv='DRVmlcnzp', err='e_DRVmlcnzp', offset=2400000.0,
          eras=(57174.5, 'HARPS03 (RVBank)', 'HARPS15 (RVBank)')),
 ]
+#: the catalogues of papers whose velocities still hold the perspective
+#: acceleration of the star, as those of the archives of the observatories
+#: do (the HARPS velocities of Mignon et al. 2024: 4.37 +- 0.08 m/s/yr for
+#: Barnard's star, whose perspective acceleration is 4.54)
+PERSPECTIVE = {'J/A+A/689/A32'}
+#: the archives of the observatories, whose files hold the velocity of
+#: their pipeline (koloa.tng: HARPS-N, at the archive of the TNG): what
+#: they are called where the datasets are listed
+ARCHIVES: Dict[str, str] = {'tng': 'TNG archive'}
 #: the sources of published velocities, each fetched or not on its own: the
-#: surveys (their keys) and the tables of the star's papers ('papers')
-SOURCES: List[str] = [survey['key'] for survey in SURVEYS] + ['papers']
+#: surveys (their keys), the tables of the star's papers ('papers') and
+#: the archives of the observatories
+SOURCES: List[str] = ([survey['key'] for survey in SURVEYS] + ['papers']
+                      + list(ARCHIVES))
 
 
 # =============================================================================
@@ -433,10 +453,13 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
     :param timeout: float [s]
     :param workers: int, the questions to the CDS at once
     :param sources: list of str or None, the sources asked (keys of
-                    SOURCES: the surveys, and 'papers'), None for all
+                    SOURCES: the surveys, 'papers', and the archives of
+                    the observatories), None for all
 
-    :return: list of dict, per source: kind (survey or paper), key,
-             reference, catalogue, n, instruments, file and note
+    :return: list of dict, per source: kind (survey, paper or archive),
+             key, reference, catalogue, n, instruments, file and note;
+             an archive's also say where it is from (where) and that its
+             velocities hold the perspective acceleration (perspective)
     """
     if sources is None:
         sources = list(SOURCES)
@@ -460,6 +483,18 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
         if set(last) == set(asked):
             with open(index) as handle:
                 return json.load(handle)
+        # only archives of observatories are new (a folder of before
+        #   koloa read them): VizieR is not asked again for the rest
+        fresh = set(asked) - set(last)
+        if fresh and fresh <= set(ARCHIVES) and set(last) <= set(asked):
+            with open(index) as handle:
+                notes = json.load(handle)
+            notes += _archives(ident, folder, sorted(fresh), refresh)
+            with open(index, 'w') as handle:
+                json.dump(notes, handle, indent=1)
+            with open(before, 'w') as handle:
+                json.dump(asked, handle)
+            return notes
     names = [ident.get('main') or ''] + list(ident.get('aliases') or [])
     notes, kept = [], []
 
@@ -565,10 +600,70 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
             keep(data, dict(kind='paper', key=key, reference=title,
                             bibcode=code, catalogue=cat, n=0,
                             instruments={}, file=None, note=words))
+    # the archives of the observatories: the velocities of their pipelines
+    notes += _archives(ident, folder, [key for key in ARCHIVES
+                                       if key in asked], refresh)
     with open(index, 'w') as handle:
         json.dump(notes, handle, indent=1)
     with open(before, 'w') as handle:
         json.dump(asked, handle)
+    return notes
+
+
+def _archives(ident: Dict[str, Any], folder: str, keys: Sequence[str],
+              refresh: bool = False) -> List[Dict[str, Any]]:
+    """
+    The velocities of the pipelines, from the archives of the
+    observatories asked (ARCHIVES): each reduction a dataset of its own,
+    kept whole as a CSV of the folder (two reductions of the same spectra
+    are two releases: koloa.datasets chooses, spectrum by spectrum)
+
+    :return: list of dict, the notes (as fetch: kind is archive)
+    """
+    notes = []
+    for key in keys:
+        where = ARCHIVES[key]
+        empty = dict(kind='archive', key=key, reference=where, where=where,
+                     catalogue='', n=0, instruments={}, file=None, note='')
+        if ident.get('ra') is None:
+            notes.append(dict(empty, note='no position of the star'))
+            continue
+        # how the star moves: an archive is searched by where it was
+        from koloa.secular import star_astrometry
+        astro = ident.get('astrometry') or star_astrometry(ident) or {}
+        star = dict(ra=ident['ra'], dec=ident['dec'],
+                    pmra=astro.get('pmra'), pmdec=astro.get('pmdec'))
+        try:
+            if key == 'tng':
+                from koloa import tng
+                parts, words = tng.velocities(star, folder, refresh,
+                                              ident.get('main'))
+                empty['catalogue'] = tng.ARCHIVE
+        except RuntimeError as err:
+            notes.append(dict(empty, note=str(err)))
+            log(f'published, {where}: {err}', 'warn')
+            continue
+        if not parts:
+            notes.append(dict(empty, note=words))
+            log(f'published, {where}: {words}', 'info')
+        for data, about in parts:
+            data = _keep_precise(data)
+            if data is None:
+                notes.append(dict(
+                    empty, key=about['key'], reference=about['reference'],
+                    note=words + f'; not below {MAX_ERROR:.0f} m/s'))
+                continue
+            note = dict(empty, key=about['key'],
+                        reference=about['reference'], whole=True,
+                        perspective=True, file=f'{about["key"]}.csv',
+                        n=int(data.n), note=words + (
+                            f'; left out: {about["left"]}'
+                            if about.get('left') else ''),
+                        instruments={str(inst): int(np.sum(
+                            data.inst == inst)) for inst in data.instruments})
+            _write(data, os.path.join(folder, note['file']))
+            notes.append(note)
+            log(f'published, {note["reference"]}: {note["n"]} kept', 'value')
     return notes
 
 
@@ -633,6 +728,33 @@ def origins(folder: str) -> Dict[str, str]:
         notes = json.load(handle)
     return {str(inst): str(note['reference']) for note in notes
             if note.get('file') for inst in note.get('instruments') or {}}
+
+
+def _notes(folder: str) -> List[Dict[str, Any]]:
+    """what was kept in a folder (published.json), the sources with a
+    file"""
+    index = os.path.join(folder, 'published.json')
+    if not os.path.exists(index):
+        return []
+    with open(index) as handle:
+        return [note for note in json.load(handle) if note.get('file')]
+
+
+def holding(folder: str) -> List[str]:
+    """the instruments of a folder whose velocities still hold the
+    perspective acceleration of the star (those of a pipeline, from the
+    archive of an observatory; koloa.secular.without_perspective)"""
+    return [str(inst) for note in _notes(folder)
+            if note.get('perspective') or note.get('catalogue') in PERSPECTIVE
+            for inst in note.get('instruments') or {}]
+
+
+def shown(folder: str) -> Dict[str, str]:
+    """where each instrument of a folder is from, as a page says it:
+    VizieR, or the archive of an observatory"""
+    return {str(inst): str(note.get('where') or 'VizieR')
+            for note in _notes(folder)
+            for inst in note.get('instruments') or {}}
 
 
 def whole(folder: str) -> bool:

@@ -605,6 +605,24 @@ def rules_mode(value: Any) -> str:
     return 'on'
 
 
+def _perspective(folder: str) -> Optional[Dict[str, Any]]:
+    """the perspective acceleration of the star of a gathered folder
+    (koloa.secular.star_perspective), from the astrometry gather kept
+    with it, else asked; None when there is none"""
+    from koloa.log import log
+    from koloa.secular import star_perspective
+    path = os.path.join(folder, 'target.json')
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as handle:
+            return star_perspective(json.load(handle))
+    except Exception as err:  # a correction, not a need
+        log(f'perspective acceleration: {type(err).__name__}: {err}',
+            'warn')
+        return None
+
+
 def whole_series(files: Any = '', target: str = '', root: str = '',
                  dace: bool = False, carmenes: bool = False,
                  vizier: bool = False, legacy: bool = False):
@@ -627,6 +645,7 @@ def whole_series(files: Any = '', target: str = '', root: str = '',
     from koloa.data import merge
     from koloa.detailed import distinct, read_files
     from koloa.gather import folder_name, load
+    from koloa.secular import without_perspective
     series, notes, source, origin, mine = [], [], {}, {}, []
     filedata = None
     if isinstance(files, str):
@@ -646,6 +665,10 @@ def whole_series(files: Any = '', target: str = '', root: str = '',
         filedata = parts[0] if len(parts) == 1 else merge(parts)
     if target:
         folder = os.path.join(root or 'archives', folder_name(target))
+        # the perspective acceleration of the star, which the velocities
+        #   of the pipelines hold (DACE, the archives of the
+        #   observatories) and the others do not: taken out of the first
+        acc, freed = _perspective(folder), []
         if os.path.exists(os.path.join(folder, 'rv', 'all_rv.csv')):
             # the velocities only (the photometry is not plotted), with the
             #   BERV of each (the raw files of DACE and CARMENES)
@@ -673,6 +696,10 @@ def whole_series(files: Any = '', target: str = '', root: str = '',
                                     filedata.time, tag)
                 if part is None:
                     continue
+                if acc and arch == 'DACE':
+                    part = without_perspective(part, part.instruments,
+                                               acc['value'])
+                    freed += part.instruments
                 series.append(part)
                 source.update({name: arch for name in part.instruments})
                 origin.update({name: arch for name in part.instruments})
@@ -693,8 +720,15 @@ def whole_series(files: Any = '', target: str = '', root: str = '',
                 fresh = (pub if filedata is None
                          else kpub.new_spectra(pub, [filedata]))
             if fresh is not None:
+                held = [name for name in kpub.holding(pdir)
+                        if name in fresh.instruments]
+                if acc and held:
+                    fresh = without_perspective(fresh, held, acc['value'])
+                    freed += held
+                where = kpub.shown(pdir)
                 series.append(fresh)
-                source.update({name: 'VizieR' for name in fresh.instruments})
+                source.update({name: where.get(name, 'VizieR')
+                               for name in fresh.instruments})
                 came = kpub.origins(pdir)
                 origin.update({name: came.get(name, 'VizieR')
                                for name in fresh.instruments})
@@ -707,6 +741,15 @@ def whole_series(files: Any = '', target: str = '', root: str = '',
                                  'choose among them)')
             else:
                 notes.append('VizieR: only spectra the files have')
+        if freed:
+            notes.append(f'perspective acceleration of the star '
+                         f'({acc["value"]:.2f} m/s/yr, {acc["source"]}) '
+                         f'taken out of {", ".join(freed)}')
+        elif acc is None and any(val in ('DACE',) + tuple(
+                kpub.ARCHIVES.values()) for val in source.values()):
+            notes.append('perspective acceleration of the star not taken '
+                         'out of the velocities of the pipelines: no '
+                         'astrometry of it')
     if not series:
         return None, source, notes, origin, mine
     return ((series[0] if len(series) == 1 else merge(series)), source,
@@ -3354,8 +3397,12 @@ def _quicklook_tex(data, source, quick, opts, xr, yr, pr, figs,
                                + (f', at BJD$-$2400000 = {acc["tref"]:.1f}'
                                   if key == 'accel' else '') + '.\n')
             out.append('From the fit of the quick look (its signals and '
-                       'the known planets, no GP; Laplace errors), the '
-                       'perspective acceleration included.\n')
+                       'the known planets, no GP; Laplace errors). The '
+                       'perspective acceleration of the star was taken out '
+                       'of the velocities of the pipelines that hold it '
+                       '(DACE, the archives of the observatories) when '
+                       'its astrometry was found; the files are as they '
+                       'came.\n')
         folds = {item['id']: item for item in quick.get('folds') or []}
         out.append('{\\small\\begin{tabular}{@{}rrrrrrr@{}}\n\\toprule\n'
                    'ID & P [d] & FIP (P or alias) & FIP (P alone) & '
