@@ -87,6 +87,7 @@ import numpy as np
 from koloa import tng
 from koloa.data import RVData
 from koloa.log import log
+from koloa.paths import cache
 
 # =============================================================================
 # Define variables
@@ -114,6 +115,10 @@ HARPS_2015, ESPRESSO_2019, SOPHIE_2011 = 57174.5, 58660.0, 55730.0
 ELODIE_FLOOR, ELODIE_PHOTON = 6.0, 311.0
 #: the files fetched at once
 WORKERS = 4
+#: where the list of the pointings of NEID is kept, and for how long
+#: [days]
+NEID_POINTINGS = cache('observatories', 'neid_pointings.json')
+MAX_AGE = 30.0
 
 
 # =============================================================================
@@ -726,6 +731,64 @@ def cfht(star: Dict[str, Any], folder: str, refresh: bool = False,
 #: the archives, by their key in koloa.published.ARCHIVES
 SOURCES: Dict[str, Callable] = dict(eso=eso, neid=neid, sophie=sophie,
                                     elodie=elodie, cfht=cfht)
+
+
+def neid_pointings(refresh: bool = False) -> Dict[str, np.ndarray]:
+    """
+    Every place NEID has velocities of (a thousand; one question, 10 s,
+    kept MAX_AGE days), so that whether it has a star is known at once
+    for a whole sample
+
+    :return: dict, ra and dec [deg], and n (their exposures)
+    """
+    kept = None
+    if os.path.exists(NEID_POINTINGS) and not refresh:
+        with open(NEID_POINTINGS) as handle:
+            kept = json.load(handle)
+        if _time.time() - kept.get('asked', 0) > MAX_AGE * 86400:
+            kept = None
+    if kept is None:
+        rows = _tap(NEID_TAP, 'select qrad, qdecd, count(*) as n from '
+                    'neidl2 group by qrad, qdecd', 'NEID archive')
+        kept = dict(asked=_time.time(),
+                    ra=[_num(row['qrad']) for row in rows],
+                    dec=[_num(row['qdecd']) for row in rows],
+                    n=[int(_num(row['n'])) for row in rows])
+        os.makedirs(os.path.dirname(NEID_POINTINGS), exist_ok=True)
+        with open(NEID_POINTINGS, 'w') as handle:
+            json.dump(kept, handle)
+        log(f'NEID archive: {len(rows)} pointings', 'value')
+    return dict(ra=np.array(kept['ra'], float),
+                dec=np.array(kept['dec'], float),
+                n=np.array(kept['n'], int))
+
+
+def has(key: str, star: Dict[str, Any]) -> bool:
+    """
+    Whether an archive has public velocities of a star, asked lightly
+    (for the stars of a sample, before anything is gathered): HARPS-N and
+    NEID from the lists of where they were pointed, SOPHIE and ELODIE
+    from their tables (a second each). The archives asked only when
+    named (ESO, the CFHT) are not looked at: False
+
+    :param key: str, the archive (koloa.published.ARCHIVES)
+    :param star: dict, ra, dec [deg, J2000], pmra, pmdec [mas/yr]
+
+    :return: bool
+    """
+    if key == 'tng':
+        return bool(tng.near(star)['free'])
+    if key == 'neid':
+        there = neid_pointings()
+        if not len(there['ra']):
+            return False
+        return bool(np.any(
+            (tng.away(there['ra'], there['dec'], star) < POINTED)
+            | (tng.offpath(there['ra'], there['dec'], star, start=2015.0)
+               < POINTED)))
+    if key in ('sophie', 'elodie'):
+        return bool(SOURCES[key](star, '')[0])
+    return False
 
 # =============================================================================
 # End of code

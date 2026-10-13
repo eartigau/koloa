@@ -2508,7 +2508,7 @@ def _batch_star(item: Dict[str, Any]) -> None:
 def _batch_archives(batch: Dict[str, Any], item: Dict[str, Any]):
     """the series of a file of a batch with every archive of its star
     (gathered first unless on disk): the series, its sources, the star"""
-    from koloa.gather import folder_name, gather
+    from koloa.gather import folder_name, gather, stale, update
     target = (item['star'] or {}).get('target') or ''
     files = [dict(path=path) for path in item.get('files')
              or ([item['path']] if item['path'] else [])]
@@ -2519,13 +2519,22 @@ def _batch_archives(batch: Dict[str, Any], item: Dict[str, Any]):
     folder = os.path.join(batch['root'], folder_name(target))
     # a batch carried to a machine without the network has its archives
     #   with it, and asks for nothing (gather False)
-    if batch.get('gather', True) and (
-            batch['regather'] or not os.path.exists(os.path.join(
-                folder, 'manifest.json'))):
-        item['stage'] = 'gather'
+    #   Every archive a gather of the star asks, the same ones: a folder
+    #   of before koloa read some of them has those added
+    if batch.get('gather', True):
+        from koloa.survey import file_spectrographs
+        have = file_spectrographs(dict(files=[one['path'] for one in files]))
+        fresh = batch['regather'] or not os.path.exists(os.path.join(
+            folder, 'manifest.json'))
         try:
-            gather(target, batch['root'], dace=True, carmenes=True,
-                   tess=False, vizier=True, refresh=batch['regather'])
+            if fresh:
+                item['stage'] = 'gather'
+                gather(target, batch['root'], dace=True, carmenes=True,
+                       tess=False, vizier=True, refresh=batch['regather'],
+                       have=have)
+            elif stale(folder):
+                item['stage'] = 'gather'
+                update(folder, have)
         except Exception as err:  # the file alone, and why
             item['note'] = f'archives not gathered ({type(err).__name__}: ' \
                 f'{err})'

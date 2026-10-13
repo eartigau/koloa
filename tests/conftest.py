@@ -47,6 +47,10 @@ def no_observatory_archives(monkeypatch):
         free=np.zeros(0, int), private=np.zeros(0, int)))
     # nor are those of ESO, NExScI, the OHP and the CFHT
     from koloa import observatories
+    monkeypatch.setattr(observatories, 'neid_pointings',
+                        lambda refresh=False: dict(
+                            ra=np.zeros(0), dec=np.zeros(0),
+                            n=np.zeros(0, int)))
     monkeypatch.setattr(observatories, 'SOURCES', {
         key: (lambda star, folder, refresh=False, name=None:
               ([], 'not asked in a test'))

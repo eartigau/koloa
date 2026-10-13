@@ -118,10 +118,13 @@ SURVEY_ARCHIVES = {'teklu25': ('HIRES', 'Teklu+ 2025'),
                    'talor19': ('HIRES', 'Tal-Or+ 2019'),
                    'fischer14': ('Lick', 'Fischer+ 2014'),
                    'rvbank20': ('HARPS', 'RVBank'),
-                   'tng': ('HARPS-N', 'TNG')}
-#: the archives of the observatories other than the TNG's are asked when
-#: the velocities of a star are gathered, not when a sample is checked:
-#: they have no list of their stars to look a star up in
+                   'tng': ('HARPS-N', 'TNG'), 'neid': ('NEID', 'NExScI'),
+                   'sophie': ('SOPHIE', 'OHP'), 'elodie': ('ELODIE', 'OHP'),
+                   'eso': ('HARPS', 'ESO'), 'cfht': ('SPIRou', 'CFHT')}
+#: the archives of the observatories looked at when a sample is checked,
+#: as when the archives of one star are gathered (those asked only when
+#: named, ESO and the CFHT, are not): koloa.observatories.has
+CHECKED_ARCHIVES = ('tng', 'neid', 'sophie', 'elodie')
 #: the names DACE gives a spectrograph that koloa.published.family does
 #: not read
 DACE_NAMES = {'HARPN': 'HARPS-N'}
@@ -412,17 +415,18 @@ def check_star(star: Dict[str, Any], root: str = 'archives',
         except (OSError, ValueError) as err:
             out['surveys_error'] = str(err)
     if vizier:
-        # the archive of the TNG (HARPS-N), from the list of where it was
-        #   pointed: by where the star was, so its proper motion counts
-        from koloa import tng
+        # the archives of the observatories, as a gather of the star asks
+        #   them: by where the star was, so its proper motion counts
+        from koloa import observatories
         gaia = star.get('gaia') or {}
-        try:
-            if tng.near(dict(ra=star['ra'], dec=star['dec'],
-                             pmra=gaia.get('pmra'),
-                             pmdec=gaia.get('pmdec')))['free']:
-                out['surveys'].append('tng')
-        except (OSError, ValueError, RuntimeError) as err:
-            out['surveys_error'] = str(err)
+        place = dict(ra=star['ra'], dec=star['dec'],
+                     pmra=gaia.get('pmra'), pmdec=gaia.get('pmdec'))
+        for key in CHECKED_ARCHIVES:
+            try:
+                if observatories.has(key, place):
+                    out['surveys'].append(key)
+            except (OSError, ValueError, RuntimeError) as err:
+                out['surveys_error'] = str(err)
     if dace:
         folder = os.path.join(root, folder_name(star['name']), 'rv', 'dace')
         try:
@@ -612,8 +616,9 @@ def check(stars: Sequence[Dict[str, Any]], root: str = 'archives',
         for survey in kpub.SURVEYS if vizier else ():
             kpub.survey_stars(survey)
         if vizier:
-            from koloa import tng
+            from koloa import observatories, tng
             tng.pointings()
+            observatories.neid_pointings()
     except (OSError, ValueError, RuntimeError) as err:
         log(f'survey: a list could not be fetched ({err})', 'warn')
     # what Gaia DR3 has of them, for the astrometry of a candidate

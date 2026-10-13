@@ -398,3 +398,55 @@ def test_the_table_of_the_archives(tmp_path, monkeypatch, capsys):
                                state='asking', text='', done=3, total=10)
     assert rows['neid']['state'] == 'ok' and rows['dace']['state'] == 'waiting'
     assert rows['cfht']['state'] == 'off'
+
+
+def test_the_archives_of_a_sample(tmp_path, monkeypatch):
+    """a sample is checked against the archives a gather of one star
+    asks, lightly: HARPS-N and NEID from the lists of where they were
+    pointed, SOPHIE and ELODIE from their tables; not those asked only
+    when named"""
+    from koloa import survey, tng
+    monkeypatch.undo()
+    monkeypatch.setattr(tng, 'pointings', lambda refresh=False: dict(
+        asked=0.0, object=['GJ699'], ra=np.array([BARNARD['ra']]),
+        dec=np.array([BARNARD['dec']]), free=np.array([4]),
+        private=np.array([0])))
+    # NEID was pointed at where the star was in 2016, and elsewhere
+    late = 16.0 * BARNARD['pmdec'] / 3.6e6
+    monkeypatch.setattr(obs, 'neid_pointings', lambda refresh=False: dict(
+        ra=np.array([BARNARD['ra'] - 16.0 * 801.551 / 3.6e6, 10.0]),
+        dec=np.array([BARNARD['dec'] + late, 20.0]), n=np.array([200, 5])))
+    asked = []
+
+    def table(star, folder, refresh=False, name=None):
+        asked.append(folder)
+        return [('a dataset', dict())], 'SOPHIE (OHP): 3'
+    monkeypatch.setattr(obs, 'SOURCES', dict(
+        obs.SOURCES, sophie=table,
+        elodie=lambda star, folder, refresh=False, name=None: ([], 'none'),
+        eso=lambda *a, **k: 1 / 0, cfht=lambda *a, **k: 1 / 0))
+    assert obs.has('tng', BARNARD) and obs.has('neid', BARNARD)
+    assert obs.has('sophie', BARNARD) and asked == ['']
+    assert not obs.has('elodie', BARNARD)
+    # asked only when named: not looked at
+    assert not obs.has('eso', BARNARD) and not obs.has('cfht', BARNARD)
+    assert not obs.has('neid', STAR) and not obs.has('tng', STAR)
+    assert survey.CHECKED_ARCHIVES == ('tng', 'neid', 'sophie', 'elodie')
+    # the cross-match of a star of a sample: the same archives, and the
+    #   star counts as one with data for them alone
+    monkeypatch.setattr(published, 'survey_stars',
+                        lambda item, refresh=False, timeout=120.0: [])
+    star = dict(name='GJ 699', ra=BARNARD['ra'], dec=BARNARD['dec'],
+                gaia=dict(pmra=BARNARD['pmra'], pmdec=BARNARD['pmdec']))
+    survey.check_star(star, str(tmp_path / 'arch'), dace=False,
+                      carmenes=False, vizier=True)
+    assert star['archives']['surveys'] == ['tng', 'neid', 'sophie']
+    assert survey.has_data(star)
+    assert [(one['name'], one['where']) for one in survey.spectrographs(
+        star['archives'])] == [('HARPS-N', ['TNG']), ('NEID', ['NExScI']),
+                               ('SOPHIE', ['OHP'])]
+    # not asked: not looked at
+    other = dict(star)
+    survey.check_star(other, str(tmp_path / 'arch'), dace=False,
+                      carmenes=False, vizier=False)
+    assert other['archives']['surveys'] == []
