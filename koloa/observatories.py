@@ -37,9 +37,13 @@ as koloa keeps those of DACE (koloa.tng.ccf_indicators): its width, its
 contrast and its bisector span (the width alone for ELODIE; none for
 NEID, whose table has none).
 
-SPIRou at the CFHT is asked only when it is named (koloa.published
-.OPTIONAL): the CADC answers a header in 2.5 s, half an hour for the
-1800 exposures of a star.
+Two of them are asked only when they are named (koloa.published
+.OPTIONAL). ESO has what DACE has of HARPS, ESPRESSO and NIRPS: the same
+pipeline and the same spectra (for GJ 436, 169, 23 and 99 velocities
+from each), so it is of use where DACE cannot be reached, or to see the
+velocities of a pipeline as its archive has them. SPIRou at the CFHT:
+the CADC answers a header in 2.5 s, half an hour for the 1800 exposures
+of a star.
 
 Two things differ from one archive to the next, and each dataset says
 them (the dict that goes with it):

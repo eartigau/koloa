@@ -242,8 +242,9 @@ def test_a_file_believed_first(tmp_path, monkeypatch):
     monkeypatch.setattr(obs, 'SOURCES', dict(obs.SOURCES, cfht=cfht))
     ident = dict(main='GJ 699', aliases=[], ra=1.0, dec=2.0)
     folder = str(tmp_path / 'pub')
-    # slow, and of little use: asked only when it is named
-    assert 'cfht' in published.OPTIONAL
+    # slow, and of little use: asked only when it is named (as ESO,
+    #   which has what DACE has)
+    assert published.OPTIONAL == ('eso', 'cfht')
     assert [note for note in published.fetch(
         ident, str(tmp_path / 'usual'),
         sources=None, papers=False) if note['key'] == 'spirou_cfht'] == []
@@ -319,7 +320,9 @@ def test_the_table_of_the_archives(tmp_path, monkeypatch, capsys):
         neid=dict(state='ok', text='215 velocities: NEID 215', done=None,
                   total=None))
     # what a gather asks, from its command line
-    usual = [key for key in published.SOURCES if key != 'cfht']
+    usual = [key for key in published.SOURCES
+             if key not in published.OPTIONAL]
+    assert 'eso' not in usual and 'cfht' not in usual
     assert gui.asked_archives(['x', '--gather', 'a']) == (
         ['dace', 'carmenes'] + usual + ['tess', 'space'])
     assert gui.asked_archives(['x', '--gather', 'a', '--no-dace',

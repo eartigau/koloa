@@ -188,11 +188,12 @@ def main(argv=None):
                              'pipeline\'s velocities of HARPS-N, from the '
                              'headers of the public CCF files of the '
                              'archive of the TNG, in its two reductions), '
-                             'eso (HARPS, ESPRESSO and NIRPS, the archive '
-                             'of ESO), neid (NEID, the archive of NExScI), '
-                             'sophie and elodie (the archives of the OHP), '
-                             'cfht (SPIRou, the CCF of APERO at the CADC: '
-                             'slow, and only when it is named here)')
+                             'neid (NEID, the archive of NExScI), sophie '
+                             'and elodie (the archives of the OHP); and, '
+                             'only when they are named here, eso (HARPS, '
+                             'ESPRESSO and NIRPS from the archive of ESO: '
+                             'what DACE has) and cfht (SPIRou, the CCF of '
+                             'APERO at the CADC: slow)')
     parser.add_argument('--gui', action='store_true',
                         help="koloa's GUI in the browser (koloa.gui): the "
                              'SIMBAD resolver, the velocities by instrument, '

@@ -78,11 +78,15 @@ def test_the_command_lines():
                                       vz_papers=False))[3:] == [
         '--vizier-sources', 'teklu25', 'cls21', 'fischer14', 'rvbank20'
     ] + usual
-    # SPIRou at the CFHT is slow: asked only when ticked
-    assert OPTIONAL == ('cfht',)
+    # ESO has what DACE has, SPIRou at the CFHT is slow: asked only when
+    #   ticked
+    assert OPTIONAL == ('eso', 'cfht')
     assert gui.command('gather', dict(target='x')) == [
         'x', '--gather', 'archives']
     assert gui.command('gather', dict(target='x', vz_cfht=True))[3:] == [
+        '--vizier-sources'] + [key for key in SOURCES if key != 'eso']
+    assert gui.command('gather', dict(target='x', vz_cfht=True,
+                                      vz_eso=True))[3:] == [
         '--vizier-sources'] + list(SOURCES)
     off = {f'vz_{key}': False for key in SOURCES}
     assert gui.command('gather', dict(target='x', **off)) == [

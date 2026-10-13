@@ -163,11 +163,13 @@ LABELS: Dict[str, str] = {
     'eso': 'HARPS, ESPRESSO, NIRPS (ESO archive)',
     'neid': 'NEID (NExScI archive)', 'sophie': 'SOPHIE (OHP archive)',
     'elodie': 'ELODIE (OHP archive)', 'cfht': 'SPIRou (CFHT archive)'}
-#: the sources asked only when they are named, not with the others: the
-#: archive of the CFHT answers a header in 2.5 s (half an hour for the
-#: 1800 exposures of a star), for the velocities of a CCF that the files
-#: of SPIRou one has are better than
-OPTIONAL: Tuple[str, ...] = ('cfht',)
+#: the sources asked only when they are named, not with the others. The
+#: archive of ESO has what DACE has of HARPS, ESPRESSO and NIRPS (the
+#: same pipeline, the same spectra), fetched file by file; that of the
+#: CFHT answers a header in 2.5 s (half an hour for the 1800 exposures of
+#: a star), for the velocities of a CCF that the files of SPIRou one has
+#: are better than
+OPTIONAL: Tuple[str, ...] = ('eso', 'cfht')
 #: the archives whose velocities defer to a file of their spectrograph
 #: (those of a CCF in the near infrared): not asked at all when a file of
 #: it is known to be given
@@ -490,7 +492,8 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
     :param sources: list of str or None, the sources asked (keys of
                     SOURCES: the surveys, 'papers', and the archives of
                     the observatories), None for all but those of OPTIONAL
-                    (SPIRou at the CFHT, asked only when named)
+                    (ESO, which has what DACE has, and SPIRou at the
+                    CFHT, which is slow: asked only when named)
     :param have: the spectrographs you have files of (SPIRou, NIRPS...):
                  an archive that defers to them (DEFERS: SPIRou at the
                  CFHT) is not asked, nor is NIRPS at ESO
