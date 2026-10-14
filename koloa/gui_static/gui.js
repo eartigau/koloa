@@ -464,14 +464,14 @@ async function drawVelocities(res, extra) {
   rvRight = bervMode ? 100 : PLOT_MARGIN.r;
   let barShown = false;
   const traces = res.instruments.map((inst, i) => {
-    let marker = { color: COLOURS[i % 8], symbol: SYMBOLS[i % 8], size: 7, line: { color: '#08111f', width: 1 } };
+    let marker = { color: COLOURS[i % COLOURS.length], symbol: SYMBOLS[i % 8], size: 7, line: { color: '#08111f', width: 1 } };
     if (bervMode && inst.berv) {
       marker = { ...marker, color: inst.berv, colorscale: 'RdBu', reversescale: false, cmin: -top, cmax: top, showscale: !barShown,
         colorbar: { title: { text: 'BERV [km/s]' }, thickness: 12, len: 0.9, x: 1.01, outlinewidth: 0, tickfont: { size: 10 } } };
       barShown = true;
     } else if (bervMode) marker = { ...marker, color: '#5a6476' };
     return { x: inst.time, y: inst.rv, name: `${inst.name} (${inst.source}, ${inst.n})`, type: 'scatter', mode: 'markers',
-      error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: bervMode ? 'rgba(200,220,255,0.35)' : COLOURS[i % 8] },
+      error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: bervMode ? 'rgba(200,220,255,0.35)' : COLOURS[i % COLOURS.length] },
       marker,
       // the calendar date (and the BERV) of each point, under the cursor
       customdata: inst.time.map((tt, k) => [dateText(tt), inst.berv ? inst.berv[k] : null]),
@@ -497,8 +497,8 @@ async function drawVelocities(res, extra) {
     res.instruments.forEach((inst, i) => {
       traces.push({ x: inst.time, y: inst.time.map((tt, k) => Math.round((inst.rv[k] - curve.at(tt)) * 1000) / 1000),
         xaxis: 'x', yaxis: 'y3', type: 'scatter', mode: 'markers', uid: `resid-${i}`, showlegend: false,
-        error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: COLOURS[i % 8] },
-        marker: { color: COLOURS[i % 8], symbol: SYMBOLS[i % 8], size: 5, line: { color: '#08111f', width: 0.5 } },
+        error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: COLOURS[i % COLOURS.length] },
+        marker: { color: COLOURS[i % COLOURS.length], symbol: SYMBOLS[i % 8], size: 5, line: { color: '#08111f', width: 0.5 } },
         hovertemplate: `${inst.name}<br>rjd %{x:.4f}<br>${t('resid')} %{y:.2f} m/s<extra></extra>` });
     });
   }
@@ -549,7 +549,7 @@ async function drawVelocities(res, extra) {
   $('rvtable').innerHTML = `<table class="mini"><tr><th>${esc(t('use'))}</th><th>${esc(t('inst'))}</th><th>${esc(t('source'))}</th><th>${esc(t('n'))}</th><th>${esc(t('rms'))}</th>`
     + `${anyRule ? `<th>${esc(t('ds_why'))} <button type="button" class="info" data-help="datasets" aria-label="?">i</button></th>` : ''}</tr>`
     + res.instruments.map((inst, i) => `<tr data-row="${esc(inst.name)}"><td><input type="checkbox" data-inst="${esc(inst.name)}" checked></td>`
-      + `<td><span class="swatch" style="background:${COLOURS[i % 8]}"></span>${esc(inst.name)}</td>`
+      + `<td><span class="swatch" style="background:${COLOURS[i % COLOURS.length]}"></span>${esc(inst.name)}</td>`
       + `<td class="src${(inst.source || '').startsWith('file') ? ' src-file' : ''}">${esc((inst.source || '').startsWith('file') ? inst.source.replace('file', t('src_file')) : inst.source)}</td>`
       + `<td class="num">${inst.total && inst.total !== inst.n ? `${inst.n}/${inst.total}` : inst.n}</td><td class="num">${inst.rms.toFixed(2)}</td>`
       + `${anyRule ? `<td class="why">${esc(ruleNote(inst))}</td>` : ''}</tr>`).join('') + '</table>';
@@ -892,8 +892,11 @@ async function loadPeriodograms() {
   $('pgcard').classList.add('on');
   $('pgnote').innerHTML = `<span class="spin"></span> ${esc(t('loading'))}`;
   try {
-    const res = await api(`/api/periodograms?${rvQuery()}`);
+    // the quick FIP of what is shown: its outliers left out of them
+    const fresh = quick && quick.status === 'done' && quick.of === JSON.stringify(shownOptions()) ? quick.id : '';
+    const res = await api(`/api/periodograms?${rvQuery()}&quick=${encodeURIComponent(fresh || '')}`);
     if (mine !== pgAgain) return;
+    res.quick = fresh;
     pgram = res;
   } catch (err) {
     if (mine === pgAgain) { pgram = null; $('pgnote').textContent = err.message; }
@@ -933,16 +936,43 @@ function drawPeriodograms() {
   const px = 1 / (height - frame), gap = 26 * px;
   const axis = { gridcolor: 'rgba(200,220,255,0.10)', zerolinecolor: 'rgba(200,220,255,0.25)', color: '#7a8597' };
   const traces = [], notes = [], lines = [];
+  // the periods of the FIP, when it is zoomed: the same here
+  const zoom = pview && pview.p && pview.dom && (pview.p[0] > pview.dom[0] * 1.0001 || pview.p[1] < pview.dom[1] * 0.9999)
+    ? [Math.log10(pview.p[0]), Math.log10(pview.p[1])] : null;
   const layout = { paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(4,8,16,0.35)', height, showlegend: false,
     font: { family: 'Space Grotesk, sans-serif', color: '#e8eef8' }, margin: { ...PLOT_MARGIN, t: 78, b: 48 },
-    xaxis: { ...axis, type: 'log', title: t('period_axis'), anchor: `y${nrow > 1 ? nrow : ''}` } };
-  const colours = { rv: '#62c2ff', window: '#a8b4ca' };
+    xaxis: { ...axis, type: 'log', title: t('period_axis'), anchor: `y${nrow > 1 ? nrow : ''}`, ...(zoom ? { range: zoom } : {}) } };
+  // each dataset in its colour (that of the series), the joint one over
+  //   them, in white when there are several
+  const datasets = new Set();
   shown.forEach((one, it) => {
     const ax = it ? `y${it + 1}` : 'y';
     const top = 1 - it / nrow, bottom = 1 - (it + 1) / nrow + gap;
     layout[it ? `yaxis${it + 1}` : 'yaxis'] = { ...axis, domain: [bottom, top], rangemode: 'tozero', nticks: 3, tickfont: { size: 9 } };
-    traces.push({ x: pgram.period, y: one.power, xaxis: 'x', yaxis: ax, type: 'scattergl', mode: 'lines', name: pgName(one),
-      line: { color: colours[one.key] || '#3ddc97', width: 1 }, hovertemplate: `${esc(pgName(one))}<br>%{x:.4f} d<br>%{y:.3f}<extra></extra>` });
+    const several = (one.instruments || []).length > 0;
+    (one.instruments || []).forEach((each) => {
+      datasets.add(each.name);
+      traces.push({ x: pgram.period, y: each.power, xaxis: 'x', yaxis: ax, type: 'scattergl', mode: 'lines', name: each.name,
+        opacity: 0.75, line: { color: instColour(each.name), width: 0.8 },
+        hovertemplate: `${esc(each.name)} (${each.n})<br>%{x:.4f} d<br>%{y:.3f}<extra></extra>` });
+    });
+    const main = several ? '#ffffff' : (one.key === 'window' ? '#a8b4ca' : instColour((lastRV && lastRV[0] && lastRV[0].name) || ''));
+    traces.push({ x: pgram.period, y: one.power, xaxis: 'x', yaxis: ax, type: 'scattergl', mode: 'lines',
+      name: several ? t('pg_joint') : pgName(one), line: { color: main, width: several ? 1.3 : 1 },
+      hovertemplate: `${esc(several ? t('pg_joint') : pgName(one))}<br>%{x:.4f} d<br>%{y:.3f}<extra></extra>` });
+    // its false-alarm levels: dotted, at the right; a label only where it
+    //   has room (the legend says which three they are)
+    const highest = Math.max(...one.power, ...(one.instruments || []).map((each) => Math.max(...each.power)),
+      ...(one.fap || []).map(([, power]) => power));
+    const perPixel = (1.05 * highest) / (row - 26);
+    let last = -Infinity;
+    (one.fap || []).forEach(([fap, power]) => {
+      lines.push({ type: 'line', xref: 'paper', yref: ax, x0: 0, x1: 1, y0: power, y1: power, line: { color: 'rgba(232,238,248,0.45)', width: 1, dash: 'dot' } });
+      if ((power - last) / perPixel < 10) return;
+      last = power;
+      notes.push({ xref: 'paper', yref: ax, x: 1, y: power, xanchor: 'right', yanchor: 'bottom', showarrow: false,
+        text: `FAP ${fap * 100 >= 1 ? fap * 100 : (fap * 100).toFixed(1)}%`, font: { size: 9, color: 'rgba(232,238,248,0.6)' } });
+    });
     notes.push({ xref: 'paper', yref: 'paper', x: 0.005, y: top + 2 * px, xanchor: 'left', yanchor: 'bottom', showarrow: false,
       text: `<b>${esc(pgName(one))}</b>` + (one.key === 'window' ? '' : ` <span style="color:#7a8597">(${one.n})</span>`), font: { size: 11, color: '#e8eef8' } });
   });
@@ -965,14 +995,23 @@ function drawPeriodograms() {
   const planets = (starIdent.planets || []).filter((pl) => inside(+pl.P));
   planets.forEach((pl) => vline(+pl.P, '#e66767', pl.name, 2, 1.6));
   // what each colour is, in words
-  const key = (colour, text) => `<span class="pgkey"><span class="pgline" style="border-color:${colour}"></span>${esc(text)}</span>`;
-  $('pglegend').innerHTML = key('#7a8597', t('pg_aliases')) + (peaks.length ? key('#6aa9ff', t('pg_fip')) : '')
-    + (planets.length ? key('#e66767', t('pg_planets')) : '') + (tois.length ? key('#f0b429', t('pg_tois')) : '');
+  const key = (colour, text, dash) => `<span class="pgkey"><span class="pgline${dash ? '' : ' solid'}" style="border-color:${colour}"></span>${esc(text)}</span>`;
+  $('pglegend').innerHTML = key('#7a8597', t('pg_aliases'), 1) + (peaks.length ? key('#6aa9ff', t('pg_fip'), 1) : '')
+    + (planets.length ? key('#e66767', t('pg_planets'), 1) : '') + (tois.length ? key('#f0b429', t('pg_tois'), 1) : '')
+    + key('rgba(232,238,248,0.6)', t('pg_faps'), 1)
+    + (datasets.size ? key('#ffffff', t('pg_joint')) + [...datasets].map((name) => key(instColour(name), name)).join('') : '');
   layout.shapes = lines; layout.annotations = notes;
   Plotly.newPlot(div, traces, layout, { responsive: true, displaylogo: false });
   const rv = pgram.series.find((one) => one.key === 'rv');
-  $('pgnote').textContent = fill(t('pg_note'), { n: pgram.nights, span: Math.round(pgram.span), left: rv ? rv.left || 0 : 0 })
-    + ((pgram.notes || []).length ? ` ${pgram.notes.filter((n) => /left out/.test(n)).join(' \u00b7 ')}` : '');
+  $('pgnote').textContent = fill(t(pgram.rejected === 'fip' ? 'pg_note_fip' : 'pg_note'),
+    { n: pgram.nights, span: Math.round(pgram.span), left: pgram.rejected === 'fip' ? pgram.outliers : (rv ? rv.left || 0 : 0) });
+}
+// the periods of the FIP, zoomed or not: the same in the periodograms
+function pgZoom() {
+  const div = $('pgplot');
+  if (!pgram || !div.classList.contains('on') || !window.Plotly || !div.layout) return;
+  const full = !pview || !pview.p || !(pview.p[0] > pview.dom[0] * 1.0001 || pview.p[1] < pview.dom[1] * 0.9999);
+  Plotly.relayout(div, full ? { 'xaxis.autorange': true } : { 'xaxis.range': [Math.log10(pview.p[0]), Math.log10(pview.p[1])] });
 }
 document.addEventListener('change', (e) => {
   const box = e.target.closest('[data-pg]');
@@ -1110,12 +1149,17 @@ function accelText(r) {
 // the colour of an instrument: its colour in the plot of the velocities
 function instColour(name) {
   const i = (lastRV || []).findIndex((inst) => inst.name === name);
-  return COLOURS[Math.max(0, i) % 8];
+  return COLOURS[Math.max(0, i) % COLOURS.length];
 }
 
 function drawFip(r, each) {
   pgFip = r;
-  setTimeout(drawPeriodograms, 0);
+  // the periodograms again, its outliers left out, once the FIP is of
+  //   what is shown; drawn again otherwise (its peaks)
+  setTimeout(() => {
+    const fresh = quick && quick.status === 'done' && quick.of === JSON.stringify(shownOptions()) ? quick.id : '';
+    if (fresh && (!pgram || pgram.quick !== fresh)) loadPeriodograms(); else drawPeriodograms();
+  }, 0);
   each = each || [];
   const div = $('fipplot');
   div.classList.add('on');
@@ -1176,7 +1220,9 @@ function drawFip(r, each) {
     div.removeAllListeners && div.removeAllListeners('plotly_relayout');
     div.on('plotly_relayout', (ev) => {
       if (!pview) return;
+      // a zoom of the mouse ('xaxis.range[0]'), or one asked ('xaxis.range')
       if (ev['xaxis.range[0]'] !== undefined) pview.p = [10 ** ev['xaxis.range[0]'], 10 ** ev['xaxis.range[1]']];
+      else if (Array.isArray(ev['xaxis.range'])) pview.p = [10 ** ev['xaxis.range'][0], 10 ** ev['xaxis.range'][1]];
       if (ev['xaxis.autorange']) pview.p = pview.dom.slice();
       syncPeriods();
     });
@@ -1820,7 +1866,7 @@ function showFold(id) {
   const traces = f.instruments.map((inst) => {
     const i = Math.max(0, order.indexOf(inst.name));
     const vals = mode === 'date' ? inst.time : mode === 'berv' ? inst.berv : null;
-    let marker = { color: COLOURS[i % 8], symbol: SYMBOLS[i % 8], size: 7, line: { color: '#08111f', width: 1 } };
+    let marker = { color: COLOURS[i % COLOURS.length], symbol: SYMBOLS[i % 8], size: 7, line: { color: '#08111f', width: 1 } };
     if (scale && vals) {
       marker = { ...marker, color: vals, colorscale: scale.colorscale, reversescale: !!scale.reversescale, cmin: scale.cmin, cmax: scale.cmax,
         showscale: !barShown, colorbar: { ...scale.colorbar, thickness: 12, len: 0.9, x: 1.01, outlinewidth: 0, tickfont: { size: 10 } } };
@@ -1832,7 +1878,7 @@ function showFold(id) {
       + (inst.time ? '<br>%{customdata[1]}' : '') + (inst.berv ? '<br>BERV %{customdata[2]:.2f} km/s' : '')
       + (inst.valid ? `<br>${esc(t('p_valid'))} %{customdata[0]:.2f}` : '');
     return { x: inst.phase, y: inst.rv, name: inst.name, type: 'scatter', mode: 'markers', customdata: custom,
-      error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: scale ? 'rgba(200,220,255,0.35)' : COLOURS[i % 8] },
+      error_y: { type: 'data', array: inst.err, visible: true, thickness: 1, width: 0, color: scale ? 'rgba(200,220,255,0.35)' : COLOURS[i % COLOURS.length] },
       marker, hovertemplate: `${hover}<extra></extra>` };
   });
   // the 1-sigma envelope of the fit, light grey, under the points
@@ -2079,6 +2125,7 @@ const pSlider = (p) => Math.round(STEPS * Math.min(1, Math.max(0, Math.log(p / p
 const pFromSlider = (k) => pview.dom[0] * (pview.dom[1] / pview.dom[0]) ** (k / STEPS);
 function syncPeriods() {
   if (!pview) return;
+  pgZoom();
   $('plo').value = pSlider(pview.p[0]); $('phi').value = pSlider(pview.p[1]);
   const lo = +$('plo').value / STEPS, hi = +$('phi').value / STEPS;
   $('psel').style.left = `${100 * lo}%`; $('psel').style.width = `${100 * (hi - lo)}%`;

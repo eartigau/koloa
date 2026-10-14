@@ -975,25 +975,31 @@ RULE_KEYS = ('status', 'n', 'used', 'better', 'same', 'by', 'extra',
 
 
 #: the periodograms of the page: the shortest period [days] (below a day,
-#: for the line of a day and its aliases), the points
-#: per peak width, the most frequencies computed, and the most shown (the
-#: highest of each bin of log period: no peak lost)
-PGRAM_PMIN, PGRAM_OVERSAMPLE, PGRAM_MAXFREQ, PGRAM_SHOWN = 0.8, 5, 60000, 5000
-#: the fewest values an indicator needs for its periodogram
+#: for the line of a day and its aliases), the points per peak width, the
+#: most frequencies computed, and the most shown (the highest of each bin
+#: of log period: no peak lost)
+PGRAM_PMIN, PGRAM_OVERSAMPLE, PGRAM_MAXFREQ, PGRAM_SHOWN = 0.8, 5, 60000, 4000
+#: the fewest values a periodogram needs (of all the datasets, or of one)
 PGRAM_MIN_POINTS = 8
-#: a value this many robust sigma from the median of its instrument is
-#: left out of the periodograms (they are not outlier-aware, as a FIP is)
+#: before a quick FIP has said which nights are outliers, a value this
+#: many robust sigma from the median of its dataset is left out
 PGRAM_CLIP = 5.0
+#: a night the quick FIP holds for an outlier with at least this
+#: probability is left out of the periodograms, as from the series
+PGRAM_OUTLIER = 0.5
+#: the false-alarm probabilities whose powers are drawn
+PGRAM_FAPS = (0.1, 0.01, 0.001)
 
 
-def _robust(value: np.ndarray, err: np.ndarray, inst: np.ndarray
-            ) -> Tuple[np.ndarray, np.ndarray]:
+def _robust(value: np.ndarray, err: np.ndarray, inst: np.ndarray,
+            clip: bool = True) -> Tuple[np.ndarray, np.ndarray]:
     """
     The values of a series a periodogram takes, and their errors: each
-    instrument without what lies more than PGRAM_CLIP robust sigma from
-    its median, and its scatter beyond its error bars (a jitter) added to
-    them, so that neither a few wild points nor the most precise
-    instrument make the periodogram alone
+    dataset without what lies more than PGRAM_CLIP robust sigma from its
+    median (clip; not when a quick FIP said which nights are outliers),
+    and its scatter beyond its error bars (a jitter) added to them, so
+    that neither a few wild points nor the most precise dataset make the
+    periodogram alone
 
     :return: tuple, the values kept (bool) and the errors
     """
@@ -1005,7 +1011,7 @@ def _robust(value: np.ndarray, err: np.ndarray, inst: np.ndarray
             continue
         dev = value[sel] - np.median(value[sel])
         sigma = 1.4826 * np.median(np.abs(dev))
-        if sigma > 0:
+        if clip and sigma > 0:
             far = np.abs(dev) > PGRAM_CLIP * sigma
             idx = np.where(sel)[0]
             keep[idx[far]] = False
@@ -1015,64 +1021,132 @@ def _robust(value: np.ndarray, err: np.ndarray, inst: np.ndarray
     return keep, out
 
 
+def fap_levels(power_n: int, ndatasets: int, freq: np.ndarray, span: float,
+               levels: Sequence[float] = PGRAM_FAPS) -> List[List[float]]:
+    """
+    The powers of a periodogram at some false-alarm probabilities, to an
+    approximation: one frequency exceeds a power p by chance with the
+    probability (1 - p)^((N - K - 2) / 2) (Zechmeister & Kurster 2009, for
+    N values, K offsets and a sinusoid), and the periodogram has about
+    (fmax - fmin) T independent frequencies, T the span
+
+    :return: list of [false-alarm probability, power]
+    """
+    dof = power_n - ndatasets - 2
+    if dof < 2 or span <= 0:
+        return []
+    nfreq = max(1.0, (float(np.max(freq)) - float(np.min(freq))) * span)
+    out = []
+    for fap in levels:
+        single = 1.0 - (1.0 - fap) ** (1.0 / nfreq)
+        out.append([fap, round(float(1.0 - single ** (2.0 / dof)), 5)])
+    return out
+
+
 def periodograms(files: Any = '', target: str = '', root: str = '',
                  dace: bool = False, carmenes: bool = False,
                  vizier: bool = False, exclude: Any = '', include: Any = '',
-                 rules: Any = True) -> Dict[str, Any]:
+                 rules: Any = True, quick: str = '') -> Dict[str, Any]:
     """
-    The periodograms of the series used (not FIPs), each night its mean:
-    the velocities (a sinusoid with an offset per instrument:
-    koloa.periodogram.gls_offsets), the window function of their dates,
-    and each activity indicator the series has (each instrument its own
-    offset), on one grid of periods, from PGRAM_PMIN to twice the span.
-    They are not outlier-aware: what lies far from its instrument is
-    left out first, and each instrument has its jitter (_robust)
+    The periodograms of the series used (not FIPs), each night of a
+    dataset its mean (as the quick FIP), from PGRAM_PMIN to twice the
+    span: the velocities, the window function of their dates, and each
+    activity indicator the series has. Each is the joint one (a sinusoid
+    with an offset per dataset: koloa.periodogram.gls_offsets) and, with
+    several datasets, that of each dataset that has PGRAM_MIN_POINTS
+    values of it, overplotted; with its false-alarm levels (fap_levels).
+
+    They are not outlier-aware: a night the quick FIP holds for an
+    outlier (PGRAM_OUTLIER) is left out of all of them, as of the series;
+    before a quick FIP, what lies far from its dataset (_robust). Each
+    dataset has its jitter.
+
+    :param quick: str, the quick FIP of the same series, whose outliers
+                  are left out ('' or another series: none)
 
     :return: dict, period (the periods shown, increasing), series (key,
-             n, power: the velocities 'rv', the window 'window', then each
-             indicator), aliases (day, month, year [days]), notes
+             n, power, fap, left: the nights left out, instruments: each
+             dataset's n and power), aliases (day, month, year [days]),
+             rejected (fip or clip), nights, span, notes
     """
     from koloa import periodogram as kpg
     whole, used, source, notes, rows, default = chosen_series(
         files, target, root, dace, carmenes, vizier, exclude, include, rules)
     if used is None or used.n < 4:
         return dict(period=[], series=[], aliases={}, notes=notes)
-    data = used.binned()
+    data = used.nightly()
     span = float(np.ptp(data.time))
     if span <= 0:
         return dict(period=[], series=[], aliases={}, notes=notes)
+    # the nights the quick FIP holds for outliers, by dataset and date
+    valid, by = np.ones(data.n), 'clip'
+    held = _QUICK_DATA.get(quick) if quick else None
+    if held and held.get('valid') is not None:
+        nights = held['nights']
+        table = {(str(inst), round(float(time), 4)): float(val)
+                 for inst, time, val in zip(nights.inst, nights.time,
+                                            held['valid'])}
+        valid = np.array([table.get((str(inst), round(float(time), 4)), 1.0)
+                          for inst, time in zip(data.inst, data.time)])
+        by = 'fip'
+    base = valid >= 1.0 - PGRAM_OUTLIER
     pmax = max(2.0 * span, 3.0 * PGRAM_PMIN)
     over = PGRAM_OVERSAMPLE
     freq = kpg.frequency_grid(data.time, PGRAM_PMIN, pmax, over)
     while len(freq) > PGRAM_MAXFREQ and over > 1:
         over -= 1
         freq = kpg.frequency_grid(data.time, PGRAM_PMIN, pmax, over)
-    keep, err = _robust(data.rv, data.err, data.inst)
-    out = [dict(key='rv', n=int(np.sum(keep)), left=int(np.sum(~keep)),
-                power=kpg.gls_offsets(data.time[keep], data.rv[keep],
-                                      err[keep], data.inst[keep], freq)),
-           dict(key='window', n=int(data.n),
-                power=kpg.window(data.time, freq))]
+
+    def one(key, value, err, good):
+        """the joint periodogram of a quantity and that of each dataset"""
+        keep, sigma = _robust(np.where(good, value, np.nan), err, data.inst,
+                              clip=by == 'clip')
+        if np.sum(keep) < PGRAM_MIN_POINTS:
+            return None
+        names = sorted({str(inst) for inst in data.inst[keep]})
+        time = data.time[keep]
+        out = dict(key=key, n=int(np.sum(keep)),
+                   left=int(np.sum(good & ~keep)),
+                   power=kpg.gls_offsets(time, value[keep], sigma[keep],
+                                         data.inst[keep], freq),
+                   fap=fap_levels(int(np.sum(keep)), len(names), freq,
+                                  float(np.ptp(time))), instruments=[])
+        for name in names if len(names) > 1 else ():
+            sel = keep & (data.inst == name)
+            if np.sum(sel) >= PGRAM_MIN_POINTS and np.ptp(data.time[sel]) > 0:
+                out['instruments'].append(dict(
+                    name=name, n=int(np.sum(sel)),
+                    power=kpg.gls(data.time[sel], value[sel], sigma[sel],
+                                  freq)))
+        return out
+    out = [one('rv', data.rv, data.err, base)]
+    if out[0] is None:
+        return dict(period=[], series=[], aliases={}, notes=notes)
+    # the window of the nights kept, and of each dataset
+    kept = base & np.isfinite(data.rv)
+    win = dict(key='window', n=int(np.sum(kept)), fap=[], instruments=[],
+               power=kpg.window(data.time[kept], freq))
+    names = sorted({str(inst) for inst in data.inst[kept]})
+    for name in names if len(names) > 1 else ():
+        sel = kept & (data.inst == name)
+        if np.sum(sel) >= PGRAM_MIN_POINTS:
+            win['instruments'].append(dict(
+                name=name, n=int(np.sum(sel)),
+                power=kpg.window(data.time[sel], freq)))
+    out.append(win)
     for name, (val, sval) in data.indicators.items():
         val, sval = np.asarray(val, float), np.asarray(sval, float)
         # DACE says 'none' with -99999 and an error of -99
-        good = np.isfinite(val) & (val > -9999.0)
+        good = base & np.isfinite(val) & (val > -9999.0)
         if np.sum(good) < PGRAM_MIN_POINTS:
             continue
         err = np.where(np.isfinite(sval) & (sval > 0), sval, np.nan)
         fill = np.nanmedian(err[good]) if np.any(np.isfinite(err[good])) \
             else 1.0
-        err = np.where(np.isfinite(err), err, fill)
-        kept, err = _robust(np.where(good, val, np.nan), err, data.inst)
-        if np.sum(kept) < PGRAM_MIN_POINTS:
-            continue
-        out.append(dict(key=str(name), n=int(np.sum(kept)),
-                        left=int(np.sum(good & ~kept)),
-                        instruments=sorted({str(inst) for inst
-                                            in data.inst[kept]}),
-                        power=kpg.gls_offsets(data.time[kept], val[kept],
-                                              err[kept], data.inst[kept],
-                                              freq)))
+        made = one(str(name), val, np.where(np.isfinite(err), err, fill),
+                   good)
+        if made is not None:
+            out.append(made)
     # shown: the highest of each bin of log period
     period = 1.0 / freq[::-1]
     edges = np.linspace(np.log10(period[0]), np.log10(period[-1]),
@@ -1080,16 +1154,21 @@ def periodograms(files: Any = '', target: str = '', root: str = '',
     which = np.clip(np.digitize(np.log10(period), edges) - 1, 0,
                     PGRAM_SHOWN - 1)
     bins = np.unique(which)
-    for one in out:
-        power = one['power'][::-1]
+
+    def shown(power):
         top = np.full(PGRAM_SHOWN, -1.0)
-        np.maximum.at(top, which, power)
-        one['power'] = [round(float(val), 5) for val in top[bins]]
+        np.maximum.at(top, which, np.asarray(power)[::-1])
+        return [round(float(val), 4) for val in top[bins]]
+    for item in out:
+        item['power'] = shown(item['power'])
+        for each in item['instruments']:
+            each['power'] = shown(each['power'])
     centre = 10 ** (0.5 * (edges[bins] + edges[bins + 1]))
     return dict(period=[round(float(val), 6) for val in centre], series=out,
                 aliases={'1 day': kpg.SIDEREAL_DAY,
                          '1 month': kpg.SYNODIC_MONTH, '1 year': kpg.YEAR},
-                notes=notes, nights=int(data.n), span=span)
+                rejected=by, outliers=int(np.sum(~base)), notes=notes,
+                nights=int(data.n), span=span)
 
 
 def velocities(files: Any = '', target: str = '', root: str = '',
@@ -4269,7 +4348,8 @@ class Handler(BaseHTTPRequestHandler):
                     files, query.get('target', ''), query.get('root', ''),
                     bool(query.get('dace')), bool(query.get('carmenes')),
                     bool(query.get('vizier')), query.get('exclude', ''),
-                    query.get('include', ''), query.get('rules', 'on')))
+                    query.get('include', ''), query.get('rules', 'on'),
+                    query.get('quick', '')))
             if url.path == '/api/rv':
                 files = (json.loads(query['files']) if query.get('files')
                          else query.get('file', ''))

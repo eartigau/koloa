@@ -450,5 +450,30 @@ def test_the_periodograms_of_the_page(tmp_path):
     assert best['rv'] == pytest.approx(13.7, rel=0.02)
     assert best['fwhm'] == pytest.approx(41.0, rel=0.02)
     assert set(res['aliases']) == {'1 day', '1 month', '1 year'}
-    assert res['nights'] <= 160
+    assert res['nights'] <= 160 and res['rejected'] == 'clip'
+    # each dataset's own, beside the joint one, in the same periods
+    rvs = res['series'][0]
+    assert [each['name'] for each in rvs['instruments']] == ['A', 'B']
+    assert all(len(each['power']) == len(period)
+               for each in rvs['instruments'])
+    assert period[int(np.argmax(rvs['instruments'][1]['power']))] == \
+        pytest.approx(13.7, rel=0.02)
+    # the false-alarm levels: rarer, higher
+    levels = [power for _, power in rvs['fap']]
+    assert [fap for fap, _ in rvs['fap']] == [0.1, 0.01, 0.001]
+    assert levels == sorted(levels) and 0 < levels[0] < levels[-1] < 1
+    assert max(rvs['power']) > levels[-1]
+    assert gui.fap_levels(3, 1, np.array([0.1, 1.0]), 100.0) == []
+    # the nights a quick FIP holds for outliers: out of all of them
+    nights = data.nightly()
+    valid = np.ones(nights.n)
+    valid[:5] = 0.2
+    gui._QUICK_DATA['a test'] = dict(nights=nights, valid=valid)
+    try:
+        held = gui.periodograms([dict(path=path)], quick='a test')
+    finally:
+        gui._QUICK_DATA.pop('a test')
+    assert held['rejected'] == 'fip' and held['outliers'] == 5
+    assert held['series'][0]['n'] == res['series'][0]['n'] - 5
+    assert held['series'][1]['n'] == res['series'][1]['n'] - 5
     assert gui.periodograms([dict(path='')])['series'] == []
