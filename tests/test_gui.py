@@ -1048,3 +1048,16 @@ def test_where_a_light_curve_is_shown_from(tmp_path, monkeypatch):
         assert where == f'the archives of the star ({short})'
     assert gui._path_shown(os.path.expanduser('~/elsewhere/x.csv')) \
         == os.path.join('~', 'elsewhere', 'x.csv')
+
+
+def test_the_choice_of_sharing():
+    """the box of the page: off by default, kept with the names never to
+    share, and whether gh is logged in said"""
+    from koloa import gui, shared
+    state = gui.share_state()
+    assert state['share'] is False and state['never'] == []
+    assert state['gh'] is False and state['repo'] == shared.REPO
+    state = gui.share_save(dict(share=True, never='GJ 1, HD 2 ,'))
+    assert state['share'] is True and state['never'] == ['GJ 1', 'HD 2']
+    assert shared.never(['* gj 1']) and not shared.never(['GJ 10'])
+    assert gui.share_save(dict(share=False, never=[]))['share'] is False

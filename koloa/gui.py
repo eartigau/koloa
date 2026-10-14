@@ -2239,6 +2239,31 @@ def forget() -> Dict[str, Any]:
     return dict(kept=[job.id for job in JOBS.values()])
 
 
+def share_state() -> Dict[str, Any]:
+    """
+    Whether you share the HARPS-N velocities koloa fetches (koloa.shared):
+    your choice, the names never to share, and whether gh is there and
+    logged in (without it nothing is shared)
+
+    :return: dict, share, never, gh, repo
+    """
+    from koloa import shared
+    mine = shared.settings()
+    return dict(share=bool(mine.get('share')), never=mine.get('never') or [],
+                gh=shared.can_share(), repo=shared.REPO)
+
+
+def share_save(body: Dict[str, Any]) -> Dict[str, Any]:
+    """your choice of sharing, kept (koloa.shared.save_settings)"""
+    from koloa import shared
+    never = body.get('never') or []
+    if isinstance(never, str):
+        never = never.split(',')
+    shared.save_settings(bool(body.get('share')), [str(name) for name in
+                                                    never][:500])
+    return share_state()
+
+
 def star_of_file(path: str) -> Dict[str, Any]:
     """the star of a file of velocities: its OBJECT column, else its
     name, in APERO's database of names (koloa.apero_names), as SIMBAD knows
@@ -4325,6 +4350,8 @@ class Handler(BaseHTTPRequestHandler):
                                        defaults=DEFAULTS,
                                        archive=fetched(),
                                        eu=encyclopaedia_fetched()))
+            if url.path == '/api/share':
+                return self._json(share_state())
             if url.path == '/api/resolve':
                 return self._json(resolve_star(
                     query.get('name', ''), query.get('root', ''),
@@ -4487,6 +4514,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(transit_check(body.get('options', {})))
             if path == '/api/forget':
                 return self._json(forget())
+            if path == '/api/share':
+                return self._json(share_save(body))
             if path == '/api/quickstop':
                 return self._json(stop_quick(body.get('id', '')))
             if path == '/api/batch':

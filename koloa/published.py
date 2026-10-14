@@ -716,7 +716,8 @@ def _archives(ident: Dict[str, Any], folder: str, keys: Sequence[str],
         row(key, 'asking')
         star = dict(ra=ident['ra'], dec=ident['dec'],
                     pmra=astro.get('pmra'), pmdec=astro.get('pmdec'),
-                    have=sorted(mine))
+                    have=sorted(mine), names=[ident.get('main') or ''] + list(
+                        ident.get('aliases') or []))
         try:
             if key == 'tng':
                 from koloa import tng

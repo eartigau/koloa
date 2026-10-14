@@ -8,6 +8,8 @@ Created on 2026-10-03
 
 @author: artigau
 """
+import os
+
 import pytest
 
 
@@ -55,6 +57,19 @@ def no_observatory_archives(monkeypatch):
         key: (lambda star, folder, refresh=False, name=None:
               ([], 'not asked in a test'))
         for key in observatories.SOURCES})
+
+
+@pytest.fixture(autouse=True)
+def no_shared_velocities(tmp_path_factory, monkeypatch):
+    """what koloa's users shared is not read, nothing is shared, and your
+    settings are not those of the tests"""
+    from koloa import shared
+    monkeypatch.setattr(shared, 'index', lambda refresh=False: [])
+    monkeypatch.setattr(shared, 'can_share', lambda: False)
+    monkeypatch.setenv('KOLOA_CONFIG', str(tmp_path_factory.mktemp('config')))
+    monkeypatch.delenv('KOLOA_SHARE', raising=False)
+    monkeypatch.setattr(shared, 'SETTINGS', os.path.join(
+        os.environ['KOLOA_CONFIG'], 'share.json'))
 
 
 @pytest.fixture(autouse=True)

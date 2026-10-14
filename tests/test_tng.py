@@ -98,10 +98,10 @@ def test_the_pointings_of_a_star(monkeypatch):
         dec=np.array([4.69336497, 4.69336, 4.7, 4.69337]),
         free=np.array([10, 20, 5, 0]), private=np.array([0, 0, 0, 7])))
     got = tng.near(BARNARD)
-    assert got == dict(free=True, private=True,
+    assert got == dict(free=True, private=True, nfree=30, nprivate=7,
                        objects=['GJ699', 'K4_02', 'still private'])
-    assert tng.near(dict(ra=0.0, dec=0.0)) == dict(free=False, private=False,
-                                                   objects=[])
+    assert tng.near(dict(ra=0.0, dec=0.0)) == dict(
+        free=False, private=False, nfree=0, nprivate=0, objects=[])
 
 
 def _rows(star, dates, name='GJ699', policy='FREE', shift=0.0, years=0.0):
@@ -295,7 +295,7 @@ def test_the_velocities_of_a_star(tmp_path, monkeypatch):
     assert 'nothing public yet' in tng.velocities(BARNARD, str(tmp_path))[1]
     monkeypatch.setattr(tng, 'near', lambda star, refresh=False: dict(
         free=True, private=False, objects=['GJ699']))
-    monkeypatch.setattr(tng, 'exposures', lambda star, folder, refresh: [
+    monkeypatch.setattr(tng, 'exposures', lambda star, folder, refresh, told=None: [
         _exposure(f'b{it}', 'espdr', 2457451.5 + it, -110.3)
         for it in range(4)] + [_exposure('p', 'espdr', '', '', policy='PRIV')])
     parts, words = tng.velocities(BARNARD, str(tmp_path), name='GJ 699')
@@ -303,7 +303,7 @@ def test_the_velocities_of_a_star(tmp_path, monkeypatch):
     assert words == ('4 exposures by the pipeline espdr/3.2.0 (mask M2), as '
                      'GJ699; 1 files not public yet')
     # pointed near it, at another star
-    monkeypatch.setattr(tng, 'exposures', lambda star, folder, refresh: [])
+    monkeypatch.setattr(tng, 'exposures', lambda star, folder, refresh, told=None: [])
     assert 'not at it' in tng.velocities(BARNARD, str(tmp_path))[1]
 
 
@@ -479,3 +479,101 @@ def test_the_perspective_drift_out_of_the_pipelines(tmp_path):
     assert any(note.startswith('perspective acceleration of the star (4.54 '
                                'm/s/yr, Gaia DR3 1) taken out of HARPS03, '
                                'HARPS-N (TNG espdr)') for note in notes)
+
+
+def test_what_koloas_users_shared(tmp_path, monkeypatch):
+    """the shared table of a star read before the archive: when it has
+    every public file the pointings count at the star, the archive is not
+    asked; when it has fewer, only the files it lacks are fetched; a table
+    written and read back as it was; the star found by where it is"""
+    from koloa import shared
+    rows = [_exposure(f'r.HARPN.2016-03-0{it + 1}T01-02-03.456_CCF_A.fits.gz',
+                      'espdr', 2457451.5 + it, -110.3) for it in range(3)]
+    text = shared.write_rdb(rows)
+    assert text.splitlines()[0].split('\t') == shared.FIELDS
+    back = shared.read_rdb(text)
+    assert [row['file'] for row in back] == [row['file'] for row in rows]
+    assert back[0]['date'] == '2016-03-01T01:02:03.456'
+    assert back[0]['policy'] == 'FREE' and float(back[1]['rv']) == -110.3
+    # the star of the index: by where it is (within 2 arcsec)
+    entry = dict(id='J175748.5+044137', name='GJ 699', ra=BARNARD['ra'],
+                 dec=BARNARD['dec'] + 1.0 / 3600, path='stars/x.rdb',
+                 pointed=3)
+    monkeypatch.setattr(shared, 'index', lambda refresh=False: [entry])
+    assert shared.entry(BARNARD) == entry
+    assert shared.entry(dict(BARNARD, dec=BARNARD['dec'] + 3 / 3600)) is None
+    monkeypatch.setattr(shared, '_get', lambda path, timeout=20.0:
+                        text.encode() if path == 'stars/x.rdb' else None)
+    # the pointings count three public files there: the archive not asked
+    monkeypatch.setattr(tng, 'pointings', lambda refresh=False: dict(
+        asked=0.0, object=['GJ699'], ra=np.array([BARNARD['ra']]),
+        dec=np.array([BARNARD['dec']]), free=np.array([3]),
+        private=np.array([0])))
+    monkeypatch.setattr(tng, 'files', lambda star: 1 / 0)
+    told = {}
+    got = tng.exposures(BARNARD, str(tmp_path), told=told)
+    assert len(got) == 3 and told == dict(shared=3, fetched=0, asked=False)
+    parts, words = tng.velocities(BARNARD, str(tmp_path / 'v'), name='GJ 699')
+    assert parts[0][0].n == 3 and 'the archive not asked' in words
+    # a fourth since: the archive asked, the fourth alone fetched
+    monkeypatch.setattr(tng, 'pointings', lambda refresh=False: dict(
+        asked=0.0, object=['GJ699'], ra=np.array([BARNARD['ra']]),
+        dec=np.array([BARNARD['dec']]), free=np.array([4]),
+        private=np.array([0])))
+    listed = [dict(file=row['file'], url='http://a/' + row['file'],
+                   reduction='espdr', policy='FREE', object='GJ699',
+                   date=shared.date_of(row['file'])) for row in rows]
+    listed.append(dict(file='r.HARPN.2016-03-09T01-02-03.456_CCF_A.fits.gz',
+                       url='http://a/4', reduction='espdr', policy='FREE',
+                       object='GJ699', date='2016-03-09T01:02:03.456'))
+    monkeypatch.setattr(tng, 'files', lambda star: listed)
+    fetched = []
+
+    def fetch(one, timeout=120.0):
+        fetched.append(one['file'])
+        return _exposure(one['file'], 'espdr', 2457459.5, -110.3)
+    monkeypatch.setattr(tng, '_fetch', fetch)
+    told = {}
+    got = tng.exposures(BARNARD, str(tmp_path / 'w'), told=told)
+    assert len(got) == 4 and fetched == [listed[-1]['file']]
+    assert told == dict(shared=3, fetched=1, asked=True)
+    # refresh: what was shared not read, every file fetched
+    fetched.clear()
+    tng.exposures(BARNARD, str(tmp_path / 'w'), refresh=True)
+    assert len(fetched) == 4
+
+
+def test_a_star_asked_to_be_shared(monkeypatch):
+    """only when sharing is on, gh logged in, and the star not among the
+    names never to share: an issue that says where the star is"""
+    from koloa import shared
+    calls = []
+
+    def gh(*args, timeout=60.0):
+        calls.append(args)
+
+        class Done:
+            returncode, stdout, stderr = 0, b'', b''
+        return Done()
+    monkeypatch.setattr(shared, '_gh', gh)
+    star = dict(BARNARD, names=['NAME Barnard\'s Star', 'GJ 699', 'Gl 699'])
+    # off by default
+    assert shared.request(star, 'GJ 699', 5) == '' and not calls
+    shared.save_settings(True, ['* alf Cen', 'gl699'])
+    assert shared.settings()['share'] is True
+    assert shared.request(star, 'GJ 699', 5).startswith('not shared')
+    assert not calls
+    shared.save_settings(True, ['alf Cen'])
+    # gh not logged in: nothing more
+    assert shared.request(star, 'GJ 699', 5) == '' and not calls
+    monkeypatch.setattr(shared, 'can_share', lambda: True)
+    assert shared.request(star, 'GJ 699', 5) == 'asked to be shared'
+    args = calls[-1]
+    assert args[:4] == ('issue', 'create', '--repo', shared.REPO)
+    body = json.loads(args[args.index('--body') + 1])
+    assert body['ra'] == BARNARD['ra'] and body['fetched'] == 5
+    assert set(body) == {'name', 'ra', 'dec', 'pmra', 'pmdec', 'fetched',
+                         'koloa'}
+    # KOLOA_SHARE=0 says no, whatever the file says
+    monkeypatch.setenv('KOLOA_SHARE', '0')
+    assert shared.request(star, 'GJ 699', 5) == ''

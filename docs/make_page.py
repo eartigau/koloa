@@ -302,7 +302,8 @@ def colour_comments(html):
 
     def recolour(mt):
         head, body, tail = mt.group(1), mt.group(2), mt.group(3)
-        code = htmlmod.unescape(re.sub(r'</?span[^>]*>', '', body))
+        # the text of the code: its colours and any link taken out
+        code = htmlmod.unescape(re.sub(r'</?(?:span|a)\b[^>]*>', '', body))
         spans = _comment_spans(code)
         lines = []
         for it, line in enumerate(code.split('\n')):

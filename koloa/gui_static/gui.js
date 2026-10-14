@@ -2328,6 +2328,8 @@ function newTarget() {
   for (const [id, job] of [...jobs]) if (job.status !== 'running') { jobs.delete(id); closedLogs.delete(id); }
   renderJobs();
   api('/api/forget', {}).catch(() => {});
+  // your choice of sharing is not of the target: read back as it is kept
+  loadShare();
   history.replaceState(null, '', location.pathname);
   updateCommands();
   checkArchives();
@@ -2873,11 +2875,35 @@ document.addEventListener('click', async (e) => {
   }
 });
 
+// sharing the HARPS-N velocities fetched (koloa.shared): your choice and the
+//   names never to share, kept by the server; whether gh is logged in
+let shareNow = null;
+function shareNote() {
+  $('share-never').placeholder = t('share_never_ph');
+  if (!shareNow) { $('share-state').textContent = ''; return; }
+  $('share-state').textContent = !shareNow.gh ? t('share_gh_none') : shareNow.share ? t('share_gh_on') : t('share_gh_off');
+}
+async function loadShare() {
+  try { shareNow = await api('/api/share'); } catch (err) { shareNow = null; }
+  if (shareNow) { $('share-on').checked = !!shareNow.share; $('share-never').value = (shareNow.never || []).join(', '); }
+  shareNote();
+}
+async function saveShare() {
+  try {
+    shareNow = await api('/api/share', { share: $('share-on').checked,
+      never: $('share-never').value.split(',').map((one) => one.trim()).filter(Boolean) });
+  } catch (err) { $('share-state').textContent = err.message; return; }
+  shareNote();
+}
+$('share-on').addEventListener('change', saveShare);
+$('share-never').addEventListener('change', saveShare);
+
 (async () => {
   $('detailed-options').innerHTML = renderOptions('detailed');
   renderBatchFiles();
   aperoState();
-  langHooks.push(drawPeriodograms, aperoState, showCwd, renderJobs, renderFiles, checkArchives, renderRemembered, dateAxis, renderBatchFiles, renderBatch,
+  loadShare();
+  langHooks.push(drawPeriodograms, aperoState, showCwd, renderJobs, renderFiles, checkArchives, renderRemembered, dateAxis, renderBatchFiles, renderBatch, shareNote,
     () => { if (quick && quick.each) drawEach(quick.each); });
   loadRemembered();
   jobDoneHooks.push(async (job) => {

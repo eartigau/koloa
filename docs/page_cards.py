@@ -1028,13 +1028,21 @@ def link_citations(html: str) -> str:
     """
     Every citation of CITATIONS in the text of the page linked to its paper
     ("Hara et al. (2022)" or "Hara et al. 2022"), except where it already
-    is a link, in an attribute, a script or a style
+    is a link, in an attribute, a script or a style, or in code (whose
+    text is written again as text: a link there came back escaped, one
+    more at each build)
     """
+    # the code blocks of the page (div.codeblock) as they are
+    blocks = re.split(r'(<div class="codeblock">.*?</div>)', html, flags=re.S)
+    if len(blocks) > 1:
+        return ''.join(block if block.startswith('<div class="codeblock">')
+                       else link_citations(block) for block in blocks)
     pats = [(re.compile(re.escape(who).replace(r'\ ', r'\s+')
                         + r'\s+(?:\(' + year + r'\)|' + year + r')'), url)
             for who, year, url in CITATIONS]
     parts = re.split(r'(<[^>]+>)', html)
-    inside = {'a': 0, 'script': 0, 'style': 0, 'head': 0}
+    inside = {'a': 0, 'script': 0, 'style': 0, 'head': 0, 'pre': 0,
+              'code': 0}
     for it, part in enumerate(parts):
         if part.startswith('<'):
             tag = re.match(r'</?\s*([a-zA-Z]+)', part)

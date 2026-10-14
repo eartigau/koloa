@@ -313,13 +313,16 @@ def near(star: Dict[str, Any], refresh: bool = False) -> Dict[str, Any]:
     :param star: dict, ra, dec [deg, J2000], and pmra, pmdec [mas/yr]
 
     :return: dict, free and private (whether it has public and private
-             files), objects (the names the observers gave it)
+             files), nfree and nprivate (how many: those of a companion
+             too), objects (the names the observers gave it)
     """
     there = pointings(refresh)
     sel = ((away(there['ra'], there['dec'], star) < RADIUS)
            | (offpath(there['ra'], there['dec'], star) < RADIUS))
     return dict(free=bool(np.any(there['free'][sel] > 0)),
                 private=bool(np.any(there['private'][sel] > 0)),
+                nfree=int(np.sum(there['free'][sel])),
+                nprivate=int(np.sum(there['private'][sel])),
                 objects=sorted({there['object'][it]
                                 for it in np.where(sel)[0]}))
 
@@ -470,19 +473,28 @@ def _progress(things: Iterable, total: int, words: str,
     return _steps(things, total, words, key)
 
 
-def exposures(star: Dict[str, Any], folder: str, refresh: bool = False
+def exposures(star: Dict[str, Any], folder: str, refresh: bool = False,
+              told: Optional[Dict[str, Any]] = None
               ) -> List[Dict[str, Any]]:
     """
     What the headers of the CCF files of a star say, kept in a table of
     the folder (tng_exposures.csv); only the public files that are not in
-    it yet are fetched, and the private ones are listed with nothing read
+    it yet are fetched, and the private ones are listed with nothing read.
+    What koloa's users shared of the star (koloa.shared) is read first:
+    when it has every public file the list of the pointings counts at the
+    star, the archive is not asked at all
 
     :param star: dict, as for near()
     :param folder: str, where the table is kept
-    :param refresh: bool, fetch again what is there
+    :param refresh: bool, fetch again what is there (the archive, not
+                    what was shared)
+    :param told: dict or None, filled with how the files came: shared
+                 (from the shared tables), fetched (from the archive),
+                 asked (whether the archive was asked)
 
     :return: list of dict, a row per file (COLUMNS)
     """
+    from koloa import shared
     table = os.path.join(folder, 'tng_exposures.csv')
     known: Dict[str, Dict[str, Any]] = {}
     if os.path.exists(table) and not refresh:
@@ -491,6 +503,22 @@ def exposures(star: Dict[str, Any], folder: str, refresh: bool = False
             #   private then
             known = {row['file']: row for row in csv.DictReader(handle)
                      if not row.get('error') and row.get('policy') == 'FREE'}
+    told = told if told is not None else {}
+    told.update(shared=0, fetched=0, asked=False)
+    entry, common = (None, []) if refresh else shared.rows(star)
+    for row in common:
+        if row['file'] not in known:
+            known[row['file']] = row
+            told['shared'] += 1
+    if entry is not None and near(star)['nfree'] <= int(
+            entry.get('pointed', -1)):
+        # every public file of the star is in the shared table: the
+        #   archive is not asked
+        rows = sorted(known.values(), key=lambda one: (one.get('date') or '',
+                                                       one['file']))
+        _keep(rows, table)
+        return rows
+    told['asked'] = True
     listed = files(star)
     ask = [one for one in listed
            if one['policy'] == 'FREE' and one['file'] not in known]
@@ -510,17 +538,23 @@ def exposures(star: Dict[str, Any], folder: str, refresh: bool = False
                        object=one['object'], date=one['date'])
         row = dict(row, policy=one['policy'])
         rows.append(row)
-    os.makedirs(folder, exist_ok=True)
-    with open(table, 'w', newline='') as handle:
-        writer = csv.DictWriter(handle, fieldnames=COLUMNS,
-                                extrasaction='ignore')
-        writer.writeheader()
-        writer.writerows(rows)
+    _keep(rows, table)
+    told['fetched'] = sum(1 for row in fetched if not row['error'])
     failed = [row for row in fetched if row['error']]
     if failed:
         log(f'TNG archive: {len(failed)} files could not be read '
             f'({failed[0]["error"]})', 'warn')
     return rows
+
+
+def _keep(rows: List[Dict[str, Any]], table: str):
+    """the table of the exposures of a star, written"""
+    os.makedirs(os.path.dirname(table) or '.', exist_ok=True)
+    with open(table, 'w', newline='') as handle:
+        writer = csv.DictWriter(handle, fieldnames=COLUMNS,
+                                extrasaction='ignore')
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def ccf_indicators(err: Any, fwhm: Any = None, contrast: Any = None,
@@ -673,12 +707,19 @@ def velocities(star: Dict[str, Any], folder: str, refresh: bool = False,
     if not there['free']:
         return [], (f'HARPS-N was pointed there (as '
                     f'{", ".join(there["objects"])}), nothing public yet')
-    rows = exposures(star, folder, refresh)
+    told: Dict[str, Any] = dict(shared=0, fetched=0, asked=True)
+    rows = exposures(star, folder, refresh, told)
+    # the files fetched from the archive that koloa's users had not
+    #   shared: the repository asked to add them (when you share)
+    from koloa import shared
+    asked = shared.request(star, name, told['fetched']) \
+        if told['fetched'] else ''
     if not rows:
         return [], (f'HARPS-N was pointed near the star (as '
                     f'{", ".join(there["objects"])}), not at it')
     parts = series(rows, name)
-    private = sum(row['policy'] != 'FREE' for row in rows)
+    private = (sum(row['policy'] != 'FREE' for row in rows)
+               if told['asked'] else 0)
     words = ('; '.join(f'{note["n"]} exposures by the pipeline '
                        f'{note["version"] or note["reduction"]} (mask '
                        f'{note["mask"]})' for _, note in parts)
@@ -686,6 +727,11 @@ def velocities(star: Dict[str, Any], folder: str, refresh: bool = False,
     words += ', as ' + ', '.join(sorted({str(row['object']) for row in rows}))
     if private:
         words += f'; {private} files not public yet'
+    if told['shared']:
+        words += (f'; {told["shared"]} files from what koloa\'s users shared'
+                  + ('' if told['asked'] else ', the archive not asked'))
+    if asked:
+        words += f'; {asked}'
     return parts, words
 
 # =============================================================================
