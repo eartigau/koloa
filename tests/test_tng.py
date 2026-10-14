@@ -577,3 +577,22 @@ def test_a_star_asked_to_be_shared(monkeypatch):
     # KOLOA_SHARE=0 says no, whatever the file says
     monkeypatch.setenv('KOLOA_SHARE', '0')
     assert shared.request(star, 'GJ 699', 5) == ''
+
+
+def test_a_star_shared_since_the_index_was_read(tmp_path, monkeypatch):
+    """a star the index kept lacks: the index read again, once it is more
+    than MISS_AGE old, not before"""
+    import time as _t
+    from koloa import shared
+    entry = dict(id='x', name='GJ 699', ra=BARNARD['ra'], dec=BARNARD['dec'],
+                 path='stars/x.rdb', pointed=1)
+    asked = []
+    monkeypatch.setattr(shared, 'index', lambda refresh=False: (
+        asked.append(refresh) or ([entry] if refresh else [])))
+    monkeypatch.setattr(shared, 'INDEX', str(tmp_path / 'idx.json'))
+    (tmp_path / 'idx.json').write_text(json.dumps(dict(asked=_t.time(),
+                                                       stars=[])))
+    assert shared.entry(BARNARD) is None and asked == [False]
+    (tmp_path / 'idx.json').write_text(json.dumps(dict(
+        asked=_t.time() - 60 * (shared.MISS_AGE + 1), stars=[])))
+    assert shared.entry(BARNARD) == entry and asked[-2:] == [False, True]

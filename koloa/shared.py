@@ -51,6 +51,9 @@ RAW = f'https://raw.githubusercontent.com/{REPO}/main/'
 #: the index, as it was last read, and for how long it is kept [days]
 INDEX = cache('tng', 'shared_index.json')
 INDEX_AGE = 1.0
+#: a star the index kept does not have: the index read again when it is
+#: older than this [minutes] (a star shared since)
+MISS_AGE = 10.0
 #: how far from a star of the index a star may be, where both were in 2000
 #: [arcsec] (the coordinates of SIMBAD, which differ little from one
 #: user to the next)
@@ -138,18 +141,39 @@ def index(refresh: bool = False) -> List[Dict[str, Any]]:
     return stars
 
 
-def entry(star: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """the star of the index where a star is (within MATCH), the nearest;
-    None when there is none"""
+def _nearest(stars: List[Dict[str, Any]], star: Dict[str, Any]
+             ) -> Optional[Dict[str, Any]]:
+    """the star of a list where a star is (within MATCH), the nearest"""
     from koloa.tng import _offsets
-    stars = index()
-    if not stars or star.get('ra') is None:
+    if not stars:
         return None
     east, north = _offsets([one['ra'] for one in stars],
                            [one['dec'] for one in stars], star)
     far = np.hypot(east, north)
     best = int(np.argmin(far))
     return stars[best] if far[best] < MATCH else None
+
+
+def _age() -> float:
+    """how old the index kept is [minutes] (infinite when there is none)"""
+    try:
+        with open(INDEX) as handle:
+            return (_time.time() - json.load(handle).get('asked', 0)) / 60.0
+    except (OSError, ValueError):
+        return float('inf')
+
+
+def entry(star: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """the star of the index where a star is (within MATCH), the nearest;
+    None when there is none. A star the index kept lacks is looked for
+    again in the index read anew, when the one kept is more than MISS_AGE
+    old (it may have been shared since)"""
+    if star.get('ra') is None:
+        return None
+    found = _nearest(index(), star)
+    if found is None and _age() > MISS_AGE:
+        found = _nearest(index(refresh=True), star)
+    return found
 
 
 def date_of(name: str) -> str:
