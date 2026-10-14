@@ -66,6 +66,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time as _time
 import urllib.error
 import uuid
@@ -187,8 +188,11 @@ def check_python(python: str, timeout: float = 120.0) -> Dict[str, Any]:
             'print(open(os.path.join(here, "version.txt")).read().split()[0]);'
             ' print(here)')
     try:
+        # from a folder of its own: a folder called lbl where it is asked
+        #   (~/lbl of logs, say) would be imported in place of LBL
         done = subprocess.run([python, '-c', code], capture_output=True,
-                              text=True, timeout=timeout)
+                              text=True, timeout=timeout,
+                              cwd=tempfile.gettempdir())
     except (OSError, subprocess.SubprocessError) as err:
         return dict(ok=False, version='', where='', error=str(err))
     lines = done.stdout.split()
