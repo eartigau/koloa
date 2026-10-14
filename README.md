@@ -48,6 +48,7 @@ exactly. That is what makes the outlier-aware FIP affordable.
 | `koloa.kit` | the analysis kit of a star (the GUI's Analysis script): a commented script of the analysis calling koloa's routines, its settings from the page, with the velocities, the archives and the star (YAML) in one .tar.gz that runs offline |
 | `koloa.tng` | the velocities of the pipeline of HARPS-N from the archive of its telescope (the TNG, at the IA2): a star found by where the telescope was pointed (`pointings`, `near`, `files`), the headers of its public CCF files read and kept in a table (`exposures`, with a tqdm bar), and its two reductions (3.7 and espdr) as two datasets of the same spectra (`series`, `velocities`); a source of `koloa.published` |
 | `koloa.shared` | the velocities of HARPS-N that koloa's users fetched, shared in a repository (koloa-harpsn): the table of a star read before the archive (`rows`, `index`), and a star asked to be added after its files were fetched (`request`: only when you share, with `gh auth login`, never for the names you keep apart) |
+| `koloa.lblbatch` | LBL for many stars on a server: a package (`koloa STAR... --lbl-pack INST...`, the Batch LBL tab) with the list of the spectra the archives have of each star and their size (`fetch_list.csv`), their archives, koloa, and `run_lbl.py`, which fetches the spectra there, runs LBL, adds the rdb to koloa-rvs and runs koloa's batch on them (`--check`, `--part i/N`, `--merge`); `--fetch` carries the spectra of one star in it |
 | `koloa.rvstore` | the team's private repository of velocities (koloa-rvs, for its collaborators): what it has of a star copied into its folder before the archives are asked (`pull`), what you gather added to it when you choose to (`push`, `push_all`; `koloa --rvs-push archives`), never a star you keep apart; through `gh`, with no copy of the repository |
 | `koloa.lblrun` | LBL velocities from the public spectra of the archives: the spectra of a star fetched (HARPS-N: the espdr S2D_A of the TNG, of the exposures `koloa.tng` keeps), and lbl-rapide (the faster branch of LBL) run on them with a Python of its own, in a process of its own; the rdb kept in the folder of the star (`lbl_star`; `koloa "GJ 436" --lbl HARPSN`, the LBL tab of the GUI) |
 | `koloa.observatories` | the velocities of the pipelines of the other spectrographs, from the archives of their observatories, each asked with no account: HARPS (the catalogue of its velocities), ESPRESSO and NIRPS at ESO (`eso`), NEID at NExScI (`neid`), SOPHIE and ELODIE at the OHP (`sophie`, `elodie`; the errors of ELODIE from Perrier et al. 2003), SPIRou at the CFHT (`cfht`, the CCF of APERO at the CADC); each dataset says whether it still holds the perspective acceleration and whether it defers to a file of the same spectrograph; sources of `koloa.published` |
@@ -201,6 +202,19 @@ already there are neither fetched nor computed again.
 | ESPRESSO19, GJ 1002 | 57 | 9 min (3.6 GB) | 3 min 55 s | 0.38 m/s | 2.08 m/s | 0.60 m/s, 2.27 m/s (DACE) |
 | SPIRou, TOI-1452 | 210 | 11 min (3.7 GB) | 42 s (template of GJ 699) | 7.0 m/s | 11.2 m/s | 13.8 m/s on 18 of them |
 | NIRPS, GJ 699 | 70 | 6 min (1.7 GB) | 2 min 10 s | 1.66 m/s | 3.5 m/s (a line out) | |
+
+For many stars, or a star whose spectra are too large for this machine,
+`koloa "Gl 408" "GJ 1002" --lbl-pack HARPSN SOPHIE ESPRESSO --pack-name
+lbl_two --server-root /scratch/me/lbl_two --server-lbl-python
+/path/to/lbl-rapide/python` makes a package to run on a server (the Batch
+LBL tab does the same): here, only the list of the spectra and their size
+(`fetch_list.csv`), the archives of the stars and koloa; there, `python
+run_lbl.py --check`, then `python run_lbl.py`, which fetches the spectra,
+runs LBL, adds the rdb to the team's repository and runs koloa's batch on
+them (`results/summary.pdf`). Tried here on those two stars: 9 min, the
+rdb of HARPS-N, SOPHIE, SOPHIE+ and ESPRESSO used by the batch under
+their names. `--fetch` carries the spectra in the package (the LBL tab's
+Fetch the spectra and prepare a package).
 
 The archives of a star often hold the same spectra more than once
 (HARPS through the ESO pipeline on DACE, through SERVAL on VizieR, in a

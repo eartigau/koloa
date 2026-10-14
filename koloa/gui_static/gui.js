@@ -2349,9 +2349,11 @@ function showTab(name) {
   $('tab-survey').hidden = name !== 'survey';
   $('tab-lbl').hidden = name !== 'lbl';
   if (name === 'lbl' && window.lblShow) lblShow();
+  $('tab-lblbatch').hidden = name !== 'lblbatch';
+  if (name === 'lblbatch' && window.lbShow) lbShow();
   // the batch and the survey over the whole window, their tabs and the
   //   banner with them
-  document.body.classList.toggle('wide', name === 'batch' || name === 'survey');
+  document.body.classList.toggle('wide', name === 'batch' || name === 'survey' || name === 'lblbatch');
   if (name === 'remembered') loadRemembered();
   else if (view) setTimeout(() => { syncSliders(); syncPeriods(); }, 50);
 }

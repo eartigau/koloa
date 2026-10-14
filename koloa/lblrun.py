@@ -648,7 +648,7 @@ def groups(target: str, inst: str, root: str = 'archives',
         return [dict(key='', obj=obj, lbl='HARPSN', source='ESO',
                      input='*S2D_A.fits', tellu=True, params={},
                      spectra=[dict(id=name, name=name[:-3]) for name in names],
-                     eras=[('', 'HARPS-N (LBL)') + ALWAYS], get=_get_tng)]
+                     eras=[('', 'HARPS-N (LBL)') + ALWAYS], get=_get_tng, via='tng')]
     if inst == 'SOPHIE':
         from koloa import observatories
         parts, _ = observatories.sophie(_star(ident or _ident(target)), '',
@@ -669,7 +669,7 @@ def groups(target: str, inst: str, root: str = 'archives',
                          for seq in seqs],
                 eras=[(key, f'SOPHIE{tail} (LBL)', ALWAYS[0], cut),
                       (key + 'p', f'SOPHIE+{tail} (LBL)', cut, ALWAYS[1])],
-                get=_get_sophie))
+                get=_get_sophie, via='sophie'))
         return out
     if inst == 'SPIROU':
         uris = spirou_spectra(_star(ident or _ident(target)))
@@ -677,7 +677,7 @@ def groups(target: str, inst: str, root: str = 'archives',
                      input='*t.fits', tellu=False, params={},
                      spectra=[dict(id=uri, name=uri.rsplit('/', 1)[-1])
                               for uri in uris],
-                     eras=[('', 'SPIRou (LBL)') + ALWAYS], get=_get_cadc)]
+                     eras=[('', 'SPIRou (LBL)') + ALWAYS], get=_get_cadc, via='cadc')]
     if inst == 'NIRPS':
         found = eso_spectra(_star(ident or _ident(target)), 'NIRPS')
         out = []
@@ -692,7 +692,7 @@ def groups(target: str, inst: str, root: str = 'archives',
                         f'r.NIRPS.{one["id"]}_S2D_BLAZE_TCORR_A.fits'))
                         for one in mine],
                     eras=[(key, 'NIRPS' + ('' if mode == 'HE' else '_HA')
-                           + ' (LBL)') + ALWAYS], get=_get_nirps))
+                           + ' (LBL)') + ALWAYS], get=_get_nirps, via='nirps'))
         return out
     if inst == 'ESPRESSO':
         from koloa.observatories import ESPRESSO_2019
@@ -716,9 +716,26 @@ def groups(target: str, inst: str, root: str = 'archives',
                            ESPRESSO_2019),
                           (key + '19', f'ESPRESSO19{tail} (LBL)',
                            ESPRESSO_2019, ALWAYS[1])],
-                    get=_get_espresso))
+                    get=_get_espresso, via='espresso'))
         return out
     raise ValueError(f'no instrument {inst} for LBL: {", ".join(INSTRUMENTS)}')
+
+
+#: how the spectra of a run are fetched, by its name in a plan
+GETTERS = dict(tng=_get_tng, sophie=_get_sophie, cadc=_get_cadc,
+               nirps=_get_nirps, espresso=_get_espresso)
+
+
+def plain_group(group: Dict[str, Any]) -> Dict[str, Any]:
+    """a run as a plan keeps it (JSON: the way its spectra are fetched by
+    its name)"""
+    return {key: val for key, val in group.items() if key != 'get'}
+
+
+def live_group(group: Dict[str, Any]) -> Dict[str, Any]:
+    """a run of a plan, its way of fetching its spectra back"""
+    return dict(group, get=GETTERS[group['via']],
+                eras=[tuple(era) for era in group['eras']])
 
 
 def folders(group: Dict[str, Any], lbl_dir: str) -> Tuple[str, str, str]:
@@ -1003,6 +1020,55 @@ def kept(target: str, root: str = 'archives') -> List[Dict[str, Any]]:
     return out
 
 
+def run_group(target: str, inst: str, group: Dict[str, Any], lbl_dir: str,
+              teff: float, python: str, nproc: int = 4,
+              tellu: Optional[bool] = None, template: Optional[str] = None,
+              root: str = 'archives', ident: Optional[Dict[str, Any]] = None,
+              push: Optional[bool] = None) -> List[Tuple[str, str, int]]:
+    """
+    One run of LBL, its spectra there: its parameters, the template of
+    another star in the near infrared when the BERV of its spectra spans
+    less than BERV_MIN (or the one named), LBL, its rdb kept in the folder
+    of the star and added to the team's repository (koloa.rvstore: when you
+    keep yours there, or push)
+
+    :return: list of (path, the name of its dataset, its velocities)
+    """
+    name = INSTRUMENTS[inst]['label'] + (f' {group["key"]}' if group['key']
+                                         else '')
+    params = parameters(target, group, lbl_dir, teff, nproc, tellu)
+    span = berv_span(group, lbl_dir)
+    other = template
+    if other is None and span is not None and span < BERV_MIN and \
+            object_name(TEMPLATE_STAR) != group['obj']:
+        other = TEMPLATE_STAR
+        log(f'{name}: the BERV of its spectra spans {span:.1f} km/s, less '
+            f'than {BERV_MIN:g}: the template of {other}', 'warn')
+    if other:
+        step(f'{name}: the template of {other}')
+        mine = template_group(group, inst, other, root)
+        if mine is None:
+            raise RuntimeError(f'{other} has no spectra of {name} for a '
+                               f'template')
+        got = fetch(other, inst, mine, lbl_dir)
+        outcome(f'{got["n"]} spectra of {other}')
+        params['OBJECT_COMPARISON'] = [mine['obj']]
+    step(f'{name}: LBL')
+    start = _time.time()
+    rdb = run(params, python)
+    files = keep(rdb, target, inst, group, root)
+    try:
+        from koloa import rvstore
+        from koloa.gather import folder_name
+        rvstore.push(ident or dict(main=target), os.path.join(
+            root, folder_name(target)), [target], always=push)
+    except Exception as err:  # a help, not a need
+        log(f'koloa-rvs: {type(err).__name__}: {err}', 'warn')
+    outcome('; '.join(f'{label} {n}: {path}' for path, label, n in files)
+            + f' ({_time.time() - start:.0f} s)')
+    return files
+
+
 def lbl_star(target: str, instruments: Sequence[str], lbl_dir: str,
              root: str = 'archives', python: Optional[str] = None,
              nproc: Optional[int] = None, teff: Optional[float] = None,
@@ -1081,45 +1147,10 @@ def lbl_star(target: str, instruments: Sequence[str], lbl_dir: str,
                                                        error='no spectrum')
                         continue
                 if compute:
-                    params = parameters(target, group, lbl_dir, teff, nproc,
-                                        tellu)
-                    # the near infrared with too little BERV: the template
-                    #   of another star (one given, else TEMPLATE_STAR)
-                    span = berv_span(group, lbl_dir)
-                    other = template
-                    if other is None and span is not None and \
-                            span < BERV_MIN and object_name(
-                                TEMPLATE_STAR) != group['obj']:
-                        other = TEMPLATE_STAR
-                        log(f'{name}: the BERV of its spectra spans '
-                            f'{span:.1f} km/s, less than {BERV_MIN:g}: the '
-                            f'template of {other}', 'warn')
-                    if other:
-                        step(f'{name}: the template of {other}')
-                        mine = template_group(group, inst, other, root)
-                        if mine is None:
-                            raise RuntimeError(f'{other} has no spectra of '
-                                               f'{name} for a template')
-                        got = fetch(other, inst, mine, lbl_dir)
-                        outcome(f'{got["n"]} spectra of {other}')
-                        params['OBJECT_COMPARISON'] = [mine['obj']]
-                    step(f'{name}: LBL')
-                    start = _time.time()
-                    rdb = run(params, python)
-                    files = keep(rdb, target, inst, group, root)
-                    # the team's repository (koloa.rvstore), when you keep
-                    #   your velocities there
-                    try:
-                        from koloa import rvstore
-                        from koloa.gather import folder_name
-                        rvstore.push(ident, os.path.join(
-                            root, folder_name(target)), [target])
-                    except Exception as err:  # a help, not a need
-                        log(f'koloa-rvs: {type(err).__name__}: {err}',
-                            'warn')
-                    outcome('; '.join(f'{label_} {n}: {path}'
-                                      for path, label_, n in files)
-                            + f' ({_time.time() - start:.0f} s)')
+                    files = run_group(target, inst, group, lbl_dir, teff,
+                                      python, nproc=nproc, tellu=tellu,
+                                      template=template, root=root,
+                                      ident=ident)
                     out[inst][group['key']] = dict(files=files)
             except (RuntimeError, ValueError, OSError) as err:
                 log(f'{name}: {err}', 'warn')

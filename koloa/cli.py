@@ -26,6 +26,7 @@ Created on 2026-09-27
 @author: artigau
 """
 import argparse
+import json
 
 from koloa.analyze import analyze
 from koloa.data import RVData
@@ -249,6 +250,38 @@ def main(argv=None):
                              'into --lbl-dir, lbl-rapide run on them, the '
                              'rdb kept in ARCHIVES/<star>/lbl/; INST: HARPSN, '
                              'SOPHIE, SPIROU, NIRPS, ESPRESSO')
+    parser.add_argument('--lbl-pack', nargs='+', default=None,
+                        metavar='INST',
+                        help='a package of LBL for the stars named, to run '
+                             'elsewhere (koloa.lblbatch): the list of their '
+                             'spectra in the archives, their archives, '
+                             'koloa, and run_lbl.py that fetches them there, '
+                             'runs LBL, adds the rdb to koloa-rvs and runs '
+                             'koloa\'s batch on them; --fetch to carry the '
+                             'spectra in it; INST as for --lbl')
+    parser.add_argument('--fetch', action='store_true',
+                        help='with --lbl-pack: the spectra fetched here and '
+                             'carried in the package')
+    parser.add_argument('--out', default='.', metavar='DIR',
+                        help='with --lbl-pack: where the package is made')
+    parser.add_argument('--pack-name', default=None, metavar='NAME',
+                        help='with --lbl-pack: the name of the package')
+    parser.add_argument('--server-root', default=None, metavar='DIR',
+                        help='with --lbl-pack: where the package will be '
+                             'where it runs')
+    parser.add_argument('--server-lbl-dir', default='lbl_data',
+                        metavar='DIR',
+                        help='with --lbl-pack: where the spectra go where it '
+                             'runs (relative: in the package)')
+    parser.add_argument('--server-lbl-python', default='python',
+                        metavar='PYTHON',
+                        help='with --lbl-pack: the Python that runs LBL '
+                             'where it runs')
+    parser.add_argument('--no-push', action='store_true',
+                        help='with --lbl-pack: the rdb not added to koloa-rvs')
+    parser.add_argument('--no-analyse', action='store_true',
+                        help='with --lbl-pack: koloa\'s batch not run after '
+                             'LBL')
     parser.add_argument('--lbl-dir', default=None, metavar='DIR',
                         help='with --lbl: the folder of LBL\'s data (the '
                              'spectra, a few GB a star; the choice kept, '
@@ -308,6 +341,22 @@ def main(argv=None):
     if not args.filename and not (args.detailed and args.target):
         parser.error('give a file (or with --gather a star); --detailed '
                      'takes --target alone too')
+    if args.lbl_pack is not None:
+        from koloa import lblbatch
+        name = args.pack_name or ('lbl_' + '_'.join(
+            ''.join(ch for ch in one if ch.isalnum())
+            for one in args.filename[:3]))
+        made = lblbatch.pack(args.filename, [one.upper() for one in
+                                             args.lbl_pack], name,
+                             out=args.out, root=args.archives,
+                             server_root=args.server_root,
+                             lbl_dir=args.server_lbl_dir,
+                             lbl_python=args.server_lbl_python,
+                             nproc=args.nproc or 8, push=not args.no_push,
+                             analyse=not args.no_analyse, fetch=args.fetch)
+        print(json.dumps({key: made[key] for key in
+                          ('folder', 'tar', 'nstar', 'nspectra', 'mb')}))
+        return
     if args.lbl is not None:
         from koloa import lblrun
         lblrun.lbl_star(args.filename[0], [one.upper() for one in args.lbl],

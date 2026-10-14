@@ -149,6 +149,34 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
         if opts.get('fetch_only'):
             args.append('--fetch-only')
         return args
+    if action == 'lblpack':
+        from koloa import lblrun
+        stars = [one.strip() for one in str(opts.get('stars') or target
+                                            ).replace(',', '\n').split('\n')
+                 if one.strip()]
+        if not stars:
+            raise ValueError('a SIMBAD name, or a list of them')
+        insts = [key for key in lblrun.INSTRUMENTS
+                 if opts.get(f'lbl_{key}')]
+        if not insts:
+            raise ValueError('tick an instrument')
+        name = str(opts.get('name') or '').strip() or 'lbl_' + '_'.join(
+            ''.join(ch for ch in one if ch.isalnum()) for one in stars[:3])
+        args = stars + ['--lbl-pack'] + insts + [
+            '--pack-name', name, '--out', str(opts.get('out') or '.'),
+            '--archives', str(opts.get('root') or 'archives')]
+        for key, flag in (('server_root', '--server-root'),
+                          ('server_lbl_dir', '--server-lbl-dir'),
+                          ('server_lbl_python', '--server-lbl-python')):
+            if str(opts.get(key) or '').strip():
+                args += [flag, str(opts[key]).strip()]
+        nproc = _number(opts.get('nproc'), int)
+        if nproc:
+            args += ['--nproc', str(nproc)]
+        args += ['--no-push'] * (opts.get('push') is False) + [
+            '--no-analyse'] * (opts.get('analyse') is False) + [
+            '--fetch'] * bool(opts.get('fetch'))
+        return args
     if action == 'gather':
         if not target:
             raise ValueError('a SIMBAD name to gather the archives of')
@@ -2314,6 +2342,37 @@ def lbl_state(target: str = '', root: str = '', data: str = ''
                 instruments=out, running=running)
 
 
+def lbl_package(folder: str) -> Dict[str, Any]:
+    """what a package of LBL holds (koloa.lblbatch): its stars, their runs
+    and spectra, their size, its tar"""
+    from koloa import lblbatch, lblrun
+    folder = os.path.abspath(os.path.expanduser(folder))
+    path = os.path.join(folder, lblbatch.PLAN)
+    if not os.path.exists(path):
+        raise ValueError(f'no package of LBL in {folder}')
+    with open(path) as handle:
+        plan = json.load(handle)
+    rows = []
+    for star in plan['stars']:
+        for group in star['groups']:
+            about = lblrun.INSTRUMENTS[group['inst']]
+            rows.append(dict(star=star['name'], inst=about['label'],
+                             key=group['key'], n=len(group['spectra']),
+                             mb=round(len(group['spectra']) * about['size']),
+                             never=star['never']))
+        for inst, why in star.get('errors', {}).items():
+            rows.append(dict(star=star['name'], inst=inst, key='', n=0, mb=0,
+                             error=why, never=star['never']))
+    tar = folder + '.tar.gz'
+    return dict(folder=folder, folder_shown=_path_shown(folder),
+                tar=tar if os.path.exists(tar) else None,
+                tar_shown=_path_shown(tar) if os.path.exists(tar) else None,
+                fetched=bool(plan.get('fetched')), rows=rows,
+                nspectra=sum(row['n'] for row in rows),
+                mb=sum(row['mb'] for row in rows),
+                nstar=len(plan['stars']))
+
+
 def lbl_check(target: str, root: str = '') -> Dict[str, Any]:
     """the spectra the archives have of a star, for each instrument of
     LBL (the exposures koloa keeps from their CCFs), asked side by side"""
@@ -2866,8 +2925,12 @@ def _batch_archives(batch: Dict[str, Any], item: Dict[str, Any]):
     (gathered first unless on disk): the series, its sources, the star"""
     from koloa.gather import folder_name, gather, stale, update
     target = (item['star'] or {}).get('target') or ''
-    files = [dict(path=path) for path in item.get('files')
-             or ([item['path']] if item['path'] else [])]
+    # each file with the name of its dataset when the batch knows it (the
+    #   rdb of LBL: SOPHIE+ (LBL)), else the one it gives itself
+    paths = item.get('files') or ([item['path']] if item['path'] else [])
+    labels = list(item.get('labels') or []) + [''] * len(paths)
+    files = [dict(path=path, label=label)
+             for path, label in zip(paths, labels)]
     if not target:
         item['note'] = 'no star: the file alone'
         data, source, _ = series_of(files)
@@ -4479,6 +4542,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(share_state())
             if url.path == '/api/rvs':
                 return self._json(rvs_state())
+            if url.path == '/api/lblpackage':
+                return self._json(lbl_package(query.get('folder', '')))
             if url.path == '/api/lbl':
                 return self._json(lbl_state(query.get('target', ''),
                                             query.get('root', ''),
@@ -4590,6 +4655,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif body['action'] == 'archive':
                     from koloa.archive import CACHE
                     outputs = CACHE
+                elif body['action'] == 'lblpack':
+                    name = args[args.index('--pack-name') + 1]
+                    outputs = os.path.join(args[args.index('--out') + 1], name)
                 elif body['action'] == 'lbl':
                     # one LBL at a time: it takes the cores of the machine
                     from koloa.gather import folder_name

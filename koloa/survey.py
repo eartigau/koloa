@@ -946,6 +946,7 @@ def run_target(root: str, star: Dict[str, Any], rules: bool = True,
     files = [path if os.path.isabs(path) else os.path.join(root, path)
              for path in star.get('files') or []]
     item = dict(path=files[0] if files else '', files=files, name=name,
+                labels=list(star.get('labels') or []),
                 given=dict(name=name, sptype=star.get('sptype')),
                 status='waiting', qid=None, error=None, summary=None,
                 star=None, stage=None, note=None)

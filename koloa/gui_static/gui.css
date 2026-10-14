@@ -350,3 +350,6 @@ table.batch .planets { font-size: 0.68rem; line-height: 1.2; margin-top: 1px; wh
 .pgkey { display: inline-flex; align-items: center; gap: 6px; }
 .pgline { display: inline-block; width: 22px; height: 0; border-top: 2px dotted; }
 .pgline.solid { border-top-style: solid; }
+/* Batch LBL: the list of the stars */
+.lbform .lbstars { display: flex; flex-direction: column; gap: 4px; flex: 1 1 320px; }
+.lbform textarea { width: 100%; min-height: 7em; font-family: inherit; }

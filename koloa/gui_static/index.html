@@ -33,6 +33,7 @@
     <button type="button" class="tab" data-tab="batch" data-i18n="tab_batch">Batch FIP</button>
     <button type="button" class="tab" data-tab="survey" data-i18n="tab_survey">Survey</button>
     <button type="button" class="tab" data-tab="lbl" data-i18n="tab_lbl">LBL</button>
+    <button type="button" class="tab" data-tab="lblbatch" data-i18n="tab_lblbatch">Batch LBL</button>
   </nav>
 
   <main class="layout" id="tab-analysis">
@@ -290,10 +291,46 @@
       <div class="cmd"><pre id="cmd-lbl" class="codeblock"></pre><button class="copy" data-copy="cmd-lbl" type="button" data-i18n="copy">Copy</button></div>
       <div class="row"><button type="button" id="lbl-run" class="go" data-i18n="lbl_run">Fetch the spectra and run LBL</button>
         <button type="button" id="lbl-fetch" data-i18n="lbl_fetch">Fetch the spectra only</button>
+        <button type="button" id="lbl-pack" data-i18n="lbl_pack">Fetch the spectra and prepare a package</button>
+        <label><span data-i18n="lbl_out">package in</span> <input id="lbl-out" type="text" autocomplete="off" class="short" value="lbl_packages"></label>
         <span class="hint" id="lbl-runstate"></span></div>
     </section>
     <section class="card span-3" id="lbl-jobcard" hidden>
       <div id="lbl-job"></div>
+    </section>
+  </main>
+
+  <!-- LBL for many stars, run on a server (koloa.lblbatch): the list of
+       what will be fetched and the scripts, nothing fetched here -->
+  <main class="layout" id="tab-lblbatch" hidden>
+    <section class="card span-3">
+      <h2><span data-i18n="lb_title">LBL for many stars, on a server</span> <button type="button" class="info" data-help="lblbatch" aria-label="?">i</button></h2>
+      <p class="hint" data-i18n="lb_hint">A package to run on a server: the list of the spectra the archives have of each star and their size, their archives, koloa, and run_lbl.py, which fetches the spectra there, runs LBL, adds the velocities to the team's repository and runs koloa's batch on them. Nothing is fetched here but the list.</p>
+      <div class="row lbform">
+        <label class="lbstars"><span data-i18n="lb_stars">Stars (one a line)</span><textarea id="lb-stars" rows="6" autocomplete="off" placeholder="GJ 436&#10;Gl 408"></textarea></label>
+        <button type="button" id="lb-fromsurvey" class="small" data-i18n="lb_fromsurvey">the stars ticked in the Survey</button>
+      </div>
+      <div class="row checks" id="lb-insts"></div>
+      <div class="row lbform">
+        <label><span data-i18n="lb_out">package in</span> <input id="lb-out" type="text" autocomplete="off" class="short" value="lbl_packages"></label>
+        <label><span data-i18n="lb_name">its name</span> <input id="lb-name" type="text" autocomplete="off" class="short" placeholder="lbl_..."></label>
+      </div>
+      <div class="row lbform">
+        <label><span data-i18n="lb_sroot">on the server: the folder</span> <input id="lb-sroot" type="text" autocomplete="off" class="wide" placeholder="/scratch/me/lbl_..."></label>
+        <label><span data-i18n="lb_sdir">the spectra in</span> <input id="lb-sdir" type="text" autocomplete="off" class="short" value="lbl_data"></label>
+        <label><span data-i18n="lb_spython">the Python of LBL</span> <input id="lb-spython" type="text" autocomplete="off" class="wide" value="python"></label>
+        <label><span data-i18n="lbl_nproc">processes</span> <input id="lb-nproc" type="number" min="1" step="1" class="short" value="8"></label>
+      </div>
+      <div class="row checks">
+        <label><input type="checkbox" id="lb-push" checked> <span data-i18n="lb_push">add the velocities to the team’s repository (koloa-rvs)</span></label>
+        <label><input type="checkbox" id="lb-analyse" checked> <span data-i18n="lb_analyse">then koloa’s batch (the quick FIP of the joint sequences)</span></label>
+      </div>
+      <div class="cmd"><pre id="cmd-lblbatch" class="codeblock"></pre><button class="copy" data-copy="cmd-lblbatch" type="button" data-i18n="copy">Copy</button></div>
+      <div class="row"><button type="button" id="lb-run" class="go" data-i18n="lb_run">Prepare the package (the list, not the spectra)</button><span class="hint" id="lb-state"></span></div>
+    </section>
+    <section class="card span-3" id="lb-jobcard" hidden>
+      <div id="lb-job"></div>
+      <div id="lb-package"></div>
     </section>
   </main>
 

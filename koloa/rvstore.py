@@ -212,18 +212,20 @@ def pull(ident: Dict[str, Any], folder: str) -> int:
 
 
 def push(ident: Dict[str, Any], folder: str,
-         names: Sequence[str] = ()) -> int:
+         names: Sequence[str] = (), always: Optional[bool] = None) -> int:
     """
     The files of the folder of a star the repository does not have, or
     has otherwise, added to it in one commit, when you keep your
     velocities there; never for a star among those never to share
 
     :param names: more names of the star (the one typed)
+    :param always: True to write whatever your choice (a batch packed to
+                   do so), False never to, None as you chose
 
     :return: int, the files added or changed
     """
     from koloa.shared import never
-    if not settings().get('push'):
+    if not (settings().get('push') if always is None else always):
         return 0
     every = [ident.get('main') or ''] + list(ident.get('aliases') or []) + \
         list(names)

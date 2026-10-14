@@ -82,12 +82,51 @@ async function lblRun(fetchOnly) {
   } catch (err) { $('lbl-runstate').innerHTML = `<span class="bad">${esc(err.message)}</span>`; }
 }
 
+// a package of one star with its spectra (koloa --lbl-pack --fetch)
+async function lblPack() {
+  $('lbl-runstate').textContent = '';
+  const opts = lblOptions(false);
+  try {
+    const state = await api('/api/run', { action: 'lblpack', options: { stars: opts.target, root: opts.root, out: $('lbl-out').value.trim(),
+      server_lbl_python: opts.lbl_python, nproc: opts.nproc, fetch: true, ...Object.fromEntries([...lblTicked].map((key) => [`lbl_${key}`, true])) } });
+    keep(state);
+    lblJob();
+  } catch (err) { $('lbl-runstate').innerHTML = `<span class="bad">${esc(err.message)}</span>`; }
+}
+
+// a job of LBL drawn: its steps, the spectra as they come, its log
+function jobHtml(job, what) {
+  const running = job.status === 'running';
+  const steps = job.steps.map((st, i) => {
+    const last = i === job.steps.length - 1;
+    const icon = last && running ? '<span class="hourglass">⏳</span>' : last && job.status !== 'done'
+      ? '<span class="bad">✗</span>' : '<span class="ok">✓</span>';
+    return `<li><span class="icon">${icon}</span><span>${esc(st.name)}</span><span class="time">${clock(st.elapsed)}</span>`
+      + `${st.result ? `<span class="result">${esc(st.result)}</span>` : ''}</li>`;
+  }).join('');
+  const bars = Object.entries(job.rows || {}).filter(([, row]) => running && row.total).map(([, row]) => {
+    const pct = Math.round(100 * row.done / row.total);
+    return `<p><span class="pbar"><span style="width:${pct}%"></span></span><span class="ptext">${esc(t('lbl_spectra'))}: ${row.done} / ${row.total}</span></p>`;
+  }).join('');
+  return `<div class="job"><div class="job-head"><span class="what">${esc(what)}</span>`
+    + `<span class="status ${job.status}">${esc(t(job.status))}</span><span class="when">${clock(job.elapsed)}</span><span class="spacer"></span>`
+    + `${running ? `<button class="stop" type="button" data-stop="${job.id}">${esc(t('stop'))}</button>` : ''}</div>`
+    + `<pre class="codeblock">${esc(job.line)}</pre><ol class="steps">${steps}</ol>${bars}`
+    + `<details open><summary>${esc(t('log'))} (${job.lines.length})</summary><pre class="codeblock log">${esc(job.lines.slice(-200).join('\n'))}</pre></details></div>`;
+}
+
 // the run of LBL, the last one: its steps, the spectra as they come, its log
 function lblJob() {
-  const mine = [...jobs.values()].filter((job) => job.action === 'lbl');
+  const mine = [...jobs.values()].filter((job) => job.action === 'lbl' || (job.action === 'lblpack' && job.line.includes('--fetch')));
   const job = mine[mine.length - 1];
   $('lbl-jobcard').hidden = !job;
   if (!job) return;
+  if (job.action === 'lblpack') {
+    $('lbl-job').innerHTML = jobHtml(job, t('lb_job'));
+    const pre = $('lbl-job').querySelector('pre.log');
+    if (pre) pre.scrollTop = pre.scrollHeight;
+    return;
+  }
   const running = job.status === 'running';
   const steps = job.steps.map((st, i) => {
     const last = i === job.steps.length - 1;
@@ -133,6 +172,7 @@ function lblShow() {
 window.lblShow = lblShow;
 
 $('lbl-check').addEventListener('click', lblCheck);
+$('lbl-pack').addEventListener('click', lblPack);
 $('lbl-run').addEventListener('click', () => lblRun(false));
 $('lbl-fetch').addEventListener('click', () => lblRun(true));
 $('lbl-target').addEventListener('change', () => { lblHave = {}; lblLoad(); });
@@ -153,3 +193,87 @@ document.addEventListener('click', (e) => {
 setInterval(() => { if (!$('tab-lbl').hidden) lblJob(); }, 1500);
 jobDoneHooks.push((job) => { if (job.action === 'lbl') lblLoad(); });
 langHooks.push(() => { lblDraw(); lblJob(); });
+
+// -----------------------------------------------------------------------------
+// Batch LBL: a package for a server (koloa --lbl-pack): the list of what
+//   will be fetched, the scripts; nothing fetched here but the list
+// -----------------------------------------------------------------------------
+const lbTicked = new Set(['HARPSN']);
+let lbShown = null;   // the package drawn last (its folder)
+
+function lbOptions() {
+  const opts = { stars: $('lb-stars').value, root: $('root').value.trim(), out: $('lb-out').value.trim(), name: $('lb-name').value.trim(),
+    server_root: $('lb-sroot').value.trim(), server_lbl_dir: $('lb-sdir').value.trim(), server_lbl_python: $('lb-spython').value.trim(),
+    nproc: $('lb-nproc').value, push: $('lb-push').checked, analyse: $('lb-analyse').checked };
+  for (const key of lbTicked) opts[`lbl_${key}`] = true;
+  return opts;
+}
+
+async function lbCommand() {
+  try { $('cmd-lblbatch').textContent = (await api('/api/command', { action: 'lblpack', options: lbOptions() })).line; }
+  catch (err) { $('cmd-lblbatch').textContent = err.message; }
+}
+
+function lbInsts() {
+  const list = (lblNow && lblNow.instruments) || [];
+  $('lb-insts').innerHTML = list.map((one) => `<label><input type="checkbox" data-lbtick="${esc(one.key)}"${lbTicked.has(one.key) ? ' checked' : ''}> `
+    + `${esc(one.label)} <span class="hint">(${esc((TEXT[lang] || {})[`lbl_archive_${one.key}`] || one.archive)})</span></label>`).join('');
+}
+
+async function lbShow() {
+  if (!lblNow) await lblLoad();
+  lbInsts();
+  lbCommand();
+  lbJob();
+}
+window.lbShow = lbShow;
+
+async function lbRun() {
+  $('lb-state').textContent = '';
+  try {
+    keep(await api('/api/run', { action: 'lblpack', options: lbOptions() }));
+    lbShown = null;
+    lbJob();
+  } catch (err) { $('lb-state').innerHTML = `<span class="bad">${esc(err.message)}</span>`; }
+}
+
+// the package of the batch: its job, then what it holds
+async function lbJob() {
+  const mine = [...jobs.values()].filter((job) => job.action === 'lblpack' && !job.line.includes('--fetch'));
+  const job = mine[mine.length - 1];
+  $('lb-jobcard').hidden = !job;
+  if (!job) return;
+  $('lb-job').innerHTML = jobHtml(job, t('lb_job'));
+  const pre = $('lb-job').querySelector('pre.log');
+  if (pre) pre.scrollTop = pre.scrollHeight;
+  if (job.status !== 'done' || lbShown === job.outputs) return;
+  lbShown = job.outputs;
+  let res;
+  try { res = await api(`/api/lblpackage?${new URLSearchParams({ folder: job.outputs })}`); } catch (err) { $('lb-package').textContent = err.message; return; }
+  const rows = res.rows.map((row) => `<tr><td>${esc(row.star)}${row.never ? ` <span class="hint">(${esc(t('lb_never'))})</span>` : ''}</td>`
+    + `<td>${esc(row.inst)}</td><td>${esc(row.key || '-')}</td>`
+    + (row.error ? `<td colspan="2" class="bad">${esc(row.error)}</td>` : `<td class="num">${row.n}</td><td class="num">${row.mb}</td>`) + '</tr>').join('');
+  $('lb-package').innerHTML = `<table class="mini"><tr><th>${esc(t('lb_star'))}</th><th>${esc(t('lbl_inst'))}</th><th>${esc(t('lb_run_col'))}</th>`
+    + `<th>${esc(t('lb_spectra'))}</th><th>${esc(t('lb_mb'))}</th></tr>${rows}`
+    + `<tr><td colspan="3"><b>${esc(t('lb_total'))}</b></td><td class="num"><b>${res.nspectra}</b></td><td class="num"><b>${res.mb}</b></td></tr></table>`
+    + `<p class="hint">${esc(t('lb_tar'))}: <span class="mono">${esc(res.tar_shown || res.folder_shown)}</span></p>`;
+}
+
+$('lb-run').addEventListener('click', lbRun);
+$('lb-fromsurvey').addEventListener('click', () => {
+  const ticked = typeof svTicked !== 'undefined' ? [...svTicked] : [];
+  if (!ticked.length) { $('lb-state').textContent = t('lb_nosurvey'); return; }
+  $('lb-stars').value = ticked.join('\n');
+  lbCommand();
+});
+for (const id of ['lb-stars', 'lb-out', 'lb-name', 'lb-sroot', 'lb-sdir', 'lb-spython', 'lb-nproc', 'lb-push', 'lb-analyse']) {
+  $(id).addEventListener('change', lbCommand);
+}
+document.addEventListener('change', (e) => {
+  const box = e.target.closest('[data-lbtick]');
+  if (!box) return;
+  if (box.checked) lbTicked.add(box.dataset.lbtick); else lbTicked.delete(box.dataset.lbtick);
+  lbCommand();
+});
+setInterval(() => { if (!$('tab-lblbatch').hidden) lbJob(); }, 1500);
+langHooks.push(() => { if (!$('tab-lblbatch').hidden) { lbInsts(); lbShown = null; lbJob(); } });
