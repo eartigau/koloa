@@ -395,3 +395,60 @@ def test_the_figures_of_a_report_by_instrument():
     fig = kplot.phase(fit)
     assert len(fig.axes) == 2 and not fig.legends
     kplot.plt.close(fig)
+
+
+def test_the_periodograms_of_the_page(tmp_path):
+    """the periodograms of the page (not FIPs): a sinusoid with an offset
+    per dataset, the window function, each indicator; what lies far from
+    its dataset left out, each dataset with its jitter"""
+    import numpy as np
+    from koloa import gui, periodogram
+    from koloa.data import RVData
+    from koloa.gather import write_rv
+    rng = np.random.default_rng(3)
+    time = np.sort(rng.uniform(0.0, 600.0, 160))
+    inst = np.where(np.arange(160) % 2 == 0, 'A', 'B')
+    signal = 4.0 * np.sin(2 * np.pi * time / 13.7)
+    rv = signal + np.where(inst == 'A', 0.0, 250.0) + rng.normal(0, 1.0, 160)
+    err = np.ones(160)
+    freq = periodogram.frequency_grid(time, 1.1, 1200.0, 5)
+    # one dataset: the GLS itself; two: their offsets taken with the sine
+    one = inst == 'A'
+    assert np.allclose(periodogram.gls_offsets(time[one], rv[one], err[one],
+                                               inst[one], freq),
+                       periodogram.gls(time[one], rv[one], err[one], freq),
+                       atol=1e-9)
+    power = periodogram.gls_offsets(time, rv, err, inst, freq)
+    assert 1.0 / freq[np.argmax(power)] == pytest.approx(13.7, rel=0.01)
+    assert power.max() > 0.8 and power.min() >= 0.0
+    # a GLS of one offset would see the offset of the datasets, not the sine
+    plain = periodogram.gls(time, rv, err, freq)
+    assert plain.max() < power.max()
+    # wild points left out, a jitter for the dataset that scatters
+    wild = rv.copy()
+    wild[[3, 40]] += 5000.0
+    keep, sigma = gui._robust(wild, err, inst)
+    assert not keep[3] and not keep[40] and keep.sum() == 158
+    noisy = rv + np.where(inst == 'B', rng.normal(0, 6.0, 160), 0.0)
+    keep, sigma = gui._robust(noisy, err, inst)
+    # (its scatter holds the signal too: the noisier dataset weighs less)
+    assert np.median(sigma[inst == 'B']) > 1.5 * np.median(sigma[inst == 'A'])
+    # the page's: from a file with an indicator, its window, its aliases
+    fwhm = 3100.0 + 20.0 * np.sin(2 * np.pi * time / 41.0)
+    data = RVData(time, rv, err, inst=inst,
+                  indicators=dict(fwhm=(fwhm, np.full(160, 2.0))))
+    path = str(tmp_path / 'series.csv')
+    write_rv(data, path)
+    res = gui.periodograms([dict(path=path)])
+    keys = [one['key'] for one in res['series']]
+    assert keys == ['rv', 'window', 'fwhm']
+    period = np.array(res['period'])
+    assert period[0] < 1.0 < 365.25 < period[-1]
+    assert np.all(np.diff(period) > 0) and len(period) <= gui.PGRAM_SHOWN
+    best = {one['key']: period[int(np.argmax(one['power']))]
+            for one in res['series']}
+    assert best['rv'] == pytest.approx(13.7, rel=0.02)
+    assert best['fwhm'] == pytest.approx(41.0, rel=0.02)
+    assert set(res['aliases']) == {'1 day', '1 month', '1 year'}
+    assert res['nights'] <= 160
+    assert gui.periodograms([dict(path='')])['series'] == []

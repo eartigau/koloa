@@ -341,3 +341,10 @@ table.batch .planets { font-size: 0.68rem; line-height: 1.2; margin-top: 1px; wh
 .gchip.off { border-color: transparent; }
 .gbar { height: 5px; max-width: 340px; margin-top: 5px; background: rgba(200, 220, 255, 0.12); border-radius: 999px; overflow: hidden; }
 .gbar span { display: block; height: 100%; background: #6aa9ff; border-radius: 999px; transition: width 1s linear; }
+
+/* the periodograms: a tick per indicator, and what each dotted line is */
+.pgchecks { gap: 4px 14px; }
+.pgtick { font-size: 0.84rem; white-space: nowrap; }
+.pglegend { gap: 4px 16px; font-size: 0.8rem; color: var(--muted); }
+.pgkey { display: inline-flex; align-items: center; gap: 6px; }
+.pgline { display: inline-block; width: 22px; height: 0; border-top: 2px dotted; }

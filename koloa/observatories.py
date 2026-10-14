@@ -330,8 +330,10 @@ def neid(star: Dict[str, Any], folder: str, refresh: bool = False,
          ) -> Tuple[List[Tuple[RVData, Dict[str, Any]]], str]:
     """
     The velocities of NEID (WIYN, Kitt Peak) of a star: the table of the
-    archive of NExScI, its public rows; its two resolutions apart. Its
-    pipeline is told how the star moves: no perspective acceleration
+    archive of NExScI, its public rows, not those its pipeline rejected or
+    flagged (two of Barnard's star, 105 m/s from the others); its two
+    resolutions apart. Its pipeline is told how the star moves: no
+    perspective acceleration
 
     :param star: dict, ra, dec [deg, J2000], pmra, pmdec [mas/yr], and
                  have (the spectrographs files are given of, for eso())
@@ -340,7 +342,8 @@ def neid(star: Dict[str, Any], folder: str, refresh: bool = False,
     """
     rows = _tap(NEID_TAP, (
         "select object, ccfjdsum, ccfrvmod*1000.0 as rv, dvrms*1000.0 as "
-        "err, obsmode, swversion, rejected, qrad, qdecd from neidl2 where "
+        "err, obsmode, swversion, rejected, flagged, qrad, qdecd from neidl2 "
+        "where "
         f"contains(point('icrs', qrad, qdecd), circle('icrs', "
         f"{float(star['ra']):.6f}, {float(star['dec']):.6f}, "
         f"{_reach(star):.5f}))=1"), 'NEID archive')
@@ -348,7 +351,9 @@ def neid(star: Dict[str, Any], folder: str, refresh: bool = False,
     keep = (_pointed([_num(row['qrad']) for row in rows],
                      [_num(row['qdecd']) for row in rows], rjd, star)
             & np.array([str(row.get('rejected', '0')).strip() in ('0', '')
-                        for row in rows])) if rows else np.zeros(0, bool)
+                        and str(row.get('flagged', '0')).strip()
+                        in ('0', '') for row in rows])
+            ) if rows else np.zeros(0, bool)
     mode = np.array([str(row.get('obsmode') or '').strip().lower()
                      for row in rows])
     parts = []

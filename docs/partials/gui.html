@@ -236,6 +236,18 @@ koloanui</pre>
       <p>Click the periodogram, or type a period in Fold at P, to fold anywhere: the fold snaps to the dip of the
       FIP within a peak's width. Recompute the FIP after changing what is plotted; <b>Remember the result</b>
       keeps all of it.</p>
+      <p>Under the FIP, the <b>periodograms</b> of the same series (not FIPs: the power of a sinusoid, each night
+      its mean, an offset per dataset): the velocities, the window function of their dates, and each activity
+      indicator the series has, the width, contrast and bisector of the CCF, the S index, H&alpha;, the calcium
+      triplet..., one tick each. They are not outlier-aware: a point far from its dataset is left out first, and
+      each dataset has its jitter. Dotted lines: a day, a synodic month and a year, the numbered peaks of the quick
+      FIP, the known planets and the candidates of TESS. A peak of the velocities that is also in the window or in
+      an indicator is a warning.</p>
+      <figure class="lecture-figure">
+        <img class="shot" src="figures/gui/periodograms.png" alt="The periodograms of GJ 436: its velocities, their window function and three activity indicators">
+        <figcaption>GJ 436 (public data): its velocities, where its planet GJ 436 b is dotted in red, their window
+        function, and three of its indicators ticked.</figcaption>
+      </figure>
     </section>
 
     <section class="view gui-panel" id="gui-panel-folds" data-group="gui" data-title="The folds">

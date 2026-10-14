@@ -351,6 +351,56 @@ def influence(jack: Dict[str, np.ndarray], freq: np.ndarray, period: float
 # =============================================================================
 # Window, aliases, peaks
 # =============================================================================
+def gls_offsets(time: np.ndarray, value: np.ndarray, err: np.ndarray,
+                inst: np.ndarray, freq: np.ndarray, chunk: int = 2000
+                ) -> np.ndarray:
+    """
+    The generalised Lomb-Scargle periodogram of a series of several
+    instruments: a sinusoid fitted with an offset per instrument, the
+    power the fraction of the chi2 of the offsets alone it takes away (the
+    GLS itself for one instrument)
+
+    :param time: np.ndarray, the time [days]
+    :param value: np.ndarray, the values
+    :param err: np.ndarray, the error bars
+    :param inst: np.ndarray, the instrument of each value
+    :param freq: np.ndarray, the frequencies [1/day]
+    :param chunk: int, the frequencies done at once (memory)
+
+    :return: np.ndarray, the power (0 to 1)
+    """
+    time, value = np.asarray(time, float), np.asarray(value, float)
+    weight = 1.0 / np.asarray(err, float) ** 2
+    groups = [np.asarray(inst) == name for name in np.unique(inst)]
+    # the offsets alone: each instrument about its weighted mean
+    resid = value.copy()
+    for sel in groups:
+        resid[sel] -= np.sum(weight[sel] * value[sel]) / np.sum(weight[sel])
+    chi0 = float(np.sum(weight * resid ** 2))
+    power = np.zeros(len(freq))
+    if chi0 <= 0 or len(time) < 4:
+        return power
+    tt = time - float(np.mean(time))
+    wres = weight * resid
+    for start in range(0, len(freq), chunk):
+        arg = 2.0 * np.pi * np.outer(tt, freq[start:start + chunk])
+        cos, sin = np.cos(arg), np.sin(arg)
+        # the sinusoid about the offsets: each instrument's own mean out
+        for sel in groups:
+            wsum = np.sum(weight[sel])
+            cos[sel] -= (weight[sel] @ cos[sel]) / wsum
+            sin[sel] -= (weight[sel] @ sin[sel]) / wsum
+        cc = weight @ (cos * cos)
+        ss = weight @ (sin * sin)
+        cs = weight @ (cos * sin)
+        yc, ys = wres @ cos, wres @ sin
+        det = cc * ss - cs ** 2
+        with np.errstate(divide='ignore', invalid='ignore'):
+            gain = (ss * yc ** 2 - 2.0 * cs * yc * ys + cc * ys ** 2) / det
+        power[start:start + chunk] = np.where(det > 0, gain / chi0, 0.0)
+    return np.clip(power, 0.0, 1.0)
+
+
 def window(time: np.ndarray, freq: np.ndarray) -> np.ndarray:
     """
     The spectral window of the sampling, |sum exp(2 pi i f t)|^2 / n^2

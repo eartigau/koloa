@@ -233,6 +233,8 @@ let daceAuto = true;
 // the star of the page (its radius and effective temperature, for the
 //   equilibrium temperature of a planet)
 let starNow = {};
+// what the resolver said of the star (its planets, its TOIs)
+let starIdent = {};
 // the equilibrium temperature of a planet: Teff sqrt(R* / 2a) (1 - A)^(1/4),
 //   the heat spread over the planet, a from the period and the mass of the
 //   star of the card; for a Bond albedo of 0 and of 0.3
@@ -361,6 +363,8 @@ async function resolveStar(refresh) {
     const carm = id.carmenes ? `${esc(id.carmenes.carmenes_id)}, ${esc(id.carmenes.nobs)} ${esc(t('points'))}` : esc(t('not_in'));
     setMass(id.star);
     starNow = id.star || {};
+    starIdent = id;
+    drawPeriodograms();
     const star = id.star || {};
     const typeTile = `${esc(star.sptype || id.sptype || '-')}` + (star.mass ? ` \u00b7 ${star.mass.toFixed(2)} \u00b1 ${(star.mass_err || 0).toFixed(2)} M\u2609` : '');
     box.innerHTML = '<div class="stats-grid">'
@@ -394,7 +398,8 @@ async function plotVelocities() {
     //   to leave out are unticked (it can take minutes)
     if (await drawVelocities(res, auto ? [t('arch_auto')] : [])) {
       if (kept().length === 1) startQuick(); else quickPrompt();
-    }
+      loadPeriodograms();
+    } else { pgram = null; drawPeriodograms(); }
   } catch (err) {
     note.innerHTML = `<span class="bad">${esc(err.message)}</span>`;
   }
@@ -421,6 +426,7 @@ async function refreshVelocities() {
     if (mine !== rvAgain) return;
     await drawVelocities(res, lastRes.extra);
     if (keep && view) { view.x = keep.x; view.y = keep.y; applyView(); }
+    loadPeriodograms();
   } catch (err) { /* the plot as it was */ }
 }
 
@@ -862,6 +868,119 @@ function styleExcluded() {
 // -----------------------------------------------------------------------------
 // the quick look: a FIP of what is shown, made when it is plotted
 // -----------------------------------------------------------------------------
+// =============================================================================
+// The periodograms (not FIPs) of the series shown: the velocities, the
+//   window function, each activity indicator (a tick each); dotted: a day,
+//   a synodic month and a year, the peaks of the quick FIP, the known
+//   planets and the candidates of TESS
+// =============================================================================
+let pgram = null;          // the periodograms of the series shown
+let pgAgain = 0;           // the last asked (an older answer is dropped)
+const pgOff = new Set();   // the indicators unticked
+let pgFip = null;          // the quick FIP drawn last (its numbered peaks)
+const PG_NAMES = { fwhm: 'CCF FWHM', bis: 'CCF bisector span', contrast: 'CCF contrast', rhk: "log R'HK", smw: 'S index',
+  halpha: 'H\u03b1', dlw: 'dLW (CARMENES)', ccf_fwhm: 'CCF FWHM (CARMENES)', ccf_contrast: 'CCF contrast (CARMENES)',
+  ccf_bis: 'CCF bisector span (CARMENES)',
+  cai: 'Ca II IRT', cai_8498: 'Ca II 8498', cai_8542: 'Ca II 8542', cai_8698: 'Ca II 8698', nad1: 'Na D1', nad2: 'Na D2' };
+const PG_NAMES_FR = { fwhm: 'FWHM de la CCF', bis: 'bissecteur de la CCF', contrast: 'contraste de la CCF', smw: 'indice S',
+  ccf_fwhm: 'FWHM de la CCF (CARMENES)', ccf_contrast: 'contraste de la CCF (CARMENES)', ccf_bis: 'bissecteur de la CCF (CARMENES)',
+  cai: 'triplet du Ca II' };
+const pgName = (one) => (one.key === 'rv' ? t('pg_rv') : one.key === 'window' ? t('pg_window')
+  : ((lang === 'fr' && PG_NAMES_FR[one.key]) || PG_NAMES[one.key] || one.key));
+async function loadPeriodograms() {
+  const mine = ++pgAgain;
+  $('pgcard').classList.add('on');
+  $('pgnote').innerHTML = `<span class="spin"></span> ${esc(t('loading'))}`;
+  try {
+    const res = await api(`/api/periodograms?${rvQuery()}`);
+    if (mine !== pgAgain) return;
+    pgram = res;
+  } catch (err) {
+    if (mine === pgAgain) { pgram = null; $('pgnote').textContent = err.message; }
+    return;
+  }
+  drawPeriodograms();
+}
+function drawPeriodograms() {
+  const div = $('pgplot');
+  if (!pgram || !pgram.series || !pgram.series.length) {
+    $('pgchecks').innerHTML = ''; $('pgchecks').dataset.sign = ''; $('pglegend').innerHTML = '';
+    div.classList.remove('on');
+    if (window.Plotly) Plotly.purge(div);
+    if (!pgram) { $('pgnote').textContent = ''; $('pgcard').classList.remove('on'); }
+    return;
+  }
+  // the card with the series: shown once it has periodograms
+  $('pgcard').classList.add('on');
+  div.classList.add('on');
+  // the ticks of the indicators: written again only when they change (a
+  //   tick keeps its focus)
+  const inds = pgram.series.filter((one) => !['rv', 'window'].includes(one.key));
+  const sign = `${lang}|${inds.map((one) => `${one.key}:${one.n}`).join(',')}`;
+  const box = $('pgchecks');
+  if (box.dataset.sign !== sign) {
+    box.dataset.sign = sign;
+    box.innerHTML = inds.length ? `<span class="hint">${esc(t('pg_indicators'))}</span> ` + inds.map((one) =>
+      `<label class="pgtick"><input type="checkbox" data-pg="${esc(one.key)}"${pgOff.has(one.key) ? '' : ' checked'}> ${esc(pgName(one))} `
+      + `<span class="hint">(${one.n})</span></label>`).join('') : `<span class="hint">${esc(t('pg_none'))}</span>`;
+  }
+  const shown = pgram.series.filter((one) => ['rv', 'window'].includes(one.key) || !pgOff.has(one.key));
+  const nrow = shown.length, row = 118, frame = 126;
+  const height = frame + row * nrow;
+  div.style.height = `${height}px`;
+  // a gap of 26 pixels between two rows, whatever their number; the
+  //   labels of the lines above the plot, a line of them each
+  const px = 1 / (height - frame), gap = 26 * px;
+  const axis = { gridcolor: 'rgba(200,220,255,0.10)', zerolinecolor: 'rgba(200,220,255,0.25)', color: '#7a8597' };
+  const traces = [], notes = [], lines = [];
+  const layout = { paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(4,8,16,0.35)', height, showlegend: false,
+    font: { family: 'Space Grotesk, sans-serif', color: '#e8eef8' }, margin: { ...PLOT_MARGIN, t: 78, b: 48 },
+    xaxis: { ...axis, type: 'log', title: t('period_axis'), anchor: `y${nrow > 1 ? nrow : ''}` } };
+  const colours = { rv: '#62c2ff', window: '#a8b4ca' };
+  shown.forEach((one, it) => {
+    const ax = it ? `y${it + 1}` : 'y';
+    const top = 1 - it / nrow, bottom = 1 - (it + 1) / nrow + gap;
+    layout[it ? `yaxis${it + 1}` : 'yaxis'] = { ...axis, domain: [bottom, top], rangemode: 'tozero', nticks: 3, tickfont: { size: 9 } };
+    traces.push({ x: pgram.period, y: one.power, xaxis: 'x', yaxis: ax, type: 'scattergl', mode: 'lines', name: pgName(one),
+      line: { color: colours[one.key] || '#3ddc97', width: 1 }, hovertemplate: `${esc(pgName(one))}<br>%{x:.4f} d<br>%{y:.3f}<extra></extra>` });
+    notes.push({ xref: 'paper', yref: 'paper', x: 0.005, y: top + 2 * px, xanchor: 'left', yanchor: 'bottom', showarrow: false,
+      text: `<b>${esc(pgName(one))}</b>` + (one.key === 'window' ? '' : ` <span style="color:#7a8597">(${one.n})</span>`), font: { size: 11, color: '#e8eef8' } });
+  });
+  // the dotted lines, over the whole height
+  const pmin = pgram.period[0], pmax = pgram.period[pgram.period.length - 1];
+  const inside = (p) => p && p >= pmin && p <= pmax;
+  // each kind of line its height of label (no two on one another), the
+  //   last drawn on top: the candidates, the peaks of the FIP, the planets
+  const vline = (p, colour, label, level, width) => {
+    lines.push({ type: 'line', xref: 'x', yref: 'paper', x0: p, x1: p, y0: 0, y1: 1, line: { color: colour, width: width || 1, dash: 'dot' } });
+    if (label) notes.push({ x: Math.log10(p), y: 1 + (22 + 14 * level) * px, xref: 'x', yref: 'paper', text: esc(label), showarrow: false,
+      yanchor: 'bottom', font: { size: 10, color: colour } });
+  };
+  const words = { '1 day': t('pg_day'), '1 month': t('pg_month'), '1 year': t('pg_year') };
+  Object.entries(pgram.aliases || {}).forEach(([name, p]) => { if (inside(p)) vline(p, '#7a8597', words[name] || name, 0); });
+  const tois = (starIdent.tois || []).filter((ti) => inside(+ti.P));
+  tois.forEach((ti) => vline(+ti.P, '#f0b429', `TOI-${ti.toi}`, 3));
+  const peaks = pgFip && pgFip.peak_list ? pgFip.peak_list.filter((pk) => pk.named) : [];
+  peaks.forEach((pk) => { if (inside(pk.period)) vline(pk.period, '#6aa9ff', `#${pk.id}`, 1); });
+  const planets = (starIdent.planets || []).filter((pl) => inside(+pl.P));
+  planets.forEach((pl) => vline(+pl.P, '#e66767', pl.name, 2, 1.6));
+  // what each colour is, in words
+  const key = (colour, text) => `<span class="pgkey"><span class="pgline" style="border-color:${colour}"></span>${esc(text)}</span>`;
+  $('pglegend').innerHTML = key('#7a8597', t('pg_aliases')) + (peaks.length ? key('#6aa9ff', t('pg_fip')) : '')
+    + (planets.length ? key('#e66767', t('pg_planets')) : '') + (tois.length ? key('#f0b429', t('pg_tois')) : '');
+  layout.shapes = lines; layout.annotations = notes;
+  Plotly.newPlot(div, traces, layout, { responsive: true, displaylogo: false });
+  const rv = pgram.series.find((one) => one.key === 'rv');
+  $('pgnote').textContent = fill(t('pg_note'), { n: pgram.nights, span: Math.round(pgram.span), left: rv ? rv.left || 0 : 0 })
+    + ((pgram.notes || []).length ? ` ${pgram.notes.filter((n) => /left out/.test(n)).join(' \u00b7 ')}` : '');
+}
+document.addEventListener('change', (e) => {
+  const box = e.target.closest('[data-pg]');
+  if (!box) return;
+  if (box.checked) pgOff.delete(box.dataset.pg); else pgOff.add(box.dataset.pg);
+  drawPeriodograms();
+});
+
 let quick = null;   // the quick FIP: its id, state, result, and what it was of
 let pview = null;   // the periods shown, and their domain
 
@@ -879,6 +998,7 @@ function quickPrompt() {
   if (quick && quick.status === 'running') api('/api/quickstop', { id: quick.id }).catch(() => {});
   clearTicks();
   quick = null;
+  pgFip = null;
   pview = null;
   foldShown = null; foldShownObj = null;
   $('fipcard').classList.add('on');
@@ -994,6 +1114,8 @@ function instColour(name) {
 }
 
 function drawFip(r, each) {
+  pgFip = r;
+  setTimeout(drawPeriodograms, 0);
   each = each || [];
   const div = $('fipplot');
   div.classList.add('on');
@@ -2035,6 +2157,7 @@ function resetPage() {
   $('ident').innerHTML = '';
   $('targetsrc').textContent = '';
   starNow = {};
+  starIdent = {};
   daceSeen.clear();
   rulesMode = 'on'; rulesAuto = true;
   $('rvnote').textContent = '';
@@ -2054,6 +2177,7 @@ function resetPage() {
   vizierSources();
   view = null;
   quick = null;
+  pgFip = null;
   pview = null;
   lastRV = null;
   lastRes = null;
@@ -2625,7 +2749,7 @@ document.addEventListener('click', async (e) => {
   $('detailed-options').innerHTML = renderOptions('detailed');
   renderBatchFiles();
   aperoState();
-  langHooks.push(aperoState, showCwd, renderJobs, renderFiles, checkArchives, renderRemembered, dateAxis, renderBatchFiles, renderBatch,
+  langHooks.push(drawPeriodograms, aperoState, showCwd, renderJobs, renderFiles, checkArchives, renderRemembered, dateAxis, renderBatchFiles, renderBatch,
     () => { if (quick && quick.each) drawEach(quick.each); });
   loadRemembered();
   jobDoneHooks.push(async (job) => {

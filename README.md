@@ -284,7 +284,12 @@ sliders on both axes, and under them a quick FIP of exactly what is shown
 (outlier-aware, the period alone and the period or any of its aliases
 overplotted, no GP, in the two passes of the report, about a minute), the
 window (a day, a synodic month, a year) dotted and the known planets
-dashed; its PDF button writes both, as they are shown.
+dashed; its PDF button writes both, as they are shown. Under the FIP, the
+periodograms of the same series (not FIPs; `koloa.periodogram.gls_offsets`,
+a sinusoid with an offset per dataset): the velocities, their window
+function and each activity indicator the series has, a tick each, with a
+day, a month, a year, the peaks of the FIP, the known planets and the
+candidates of TESS dotted.
 
 The report's card has an Analysis script button: a kit (a .tar.gz) to run
 the analysis yourself, offline, and change it. Its `analysis.py` calls

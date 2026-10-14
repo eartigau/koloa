@@ -974,6 +974,124 @@ RULE_KEYS = ('status', 'n', 'used', 'better', 'same', 'by', 'extra',
              'left', 'nights')
 
 
+#: the periodograms of the page: the shortest period [days] (below a day,
+#: for the line of a day and its aliases), the points
+#: per peak width, the most frequencies computed, and the most shown (the
+#: highest of each bin of log period: no peak lost)
+PGRAM_PMIN, PGRAM_OVERSAMPLE, PGRAM_MAXFREQ, PGRAM_SHOWN = 0.8, 5, 60000, 5000
+#: the fewest values an indicator needs for its periodogram
+PGRAM_MIN_POINTS = 8
+#: a value this many robust sigma from the median of its instrument is
+#: left out of the periodograms (they are not outlier-aware, as a FIP is)
+PGRAM_CLIP = 5.0
+
+
+def _robust(value: np.ndarray, err: np.ndarray, inst: np.ndarray
+            ) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    The values of a series a periodogram takes, and their errors: each
+    instrument without what lies more than PGRAM_CLIP robust sigma from
+    its median, and its scatter beyond its error bars (a jitter) added to
+    them, so that neither a few wild points nor the most precise
+    instrument make the periodogram alone
+
+    :return: tuple, the values kept (bool) and the errors
+    """
+    keep = np.isfinite(value) & np.isfinite(err) & (err > 0)
+    out = np.array(err, float)
+    for name in np.unique(inst):
+        sel = keep & (inst == name)
+        if np.sum(sel) < 3:
+            continue
+        dev = value[sel] - np.median(value[sel])
+        sigma = 1.4826 * np.median(np.abs(dev))
+        if sigma > 0:
+            far = np.abs(dev) > PGRAM_CLIP * sigma
+            idx = np.where(sel)[0]
+            keep[idx[far]] = False
+            sel = keep & (inst == name)
+        jitter = np.sqrt(max(0.0, sigma ** 2 - np.median(err[sel]) ** 2))
+        out[sel] = np.hypot(err[sel], jitter)
+    return keep, out
+
+
+def periodograms(files: Any = '', target: str = '', root: str = '',
+                 dace: bool = False, carmenes: bool = False,
+                 vizier: bool = False, exclude: Any = '', include: Any = '',
+                 rules: Any = True) -> Dict[str, Any]:
+    """
+    The periodograms of the series used (not FIPs), each night its mean:
+    the velocities (a sinusoid with an offset per instrument:
+    koloa.periodogram.gls_offsets), the window function of their dates,
+    and each activity indicator the series has (each instrument its own
+    offset), on one grid of periods, from PGRAM_PMIN to twice the span.
+    They are not outlier-aware: what lies far from its instrument is
+    left out first, and each instrument has its jitter (_robust)
+
+    :return: dict, period (the periods shown, increasing), series (key,
+             n, power: the velocities 'rv', the window 'window', then each
+             indicator), aliases (day, month, year [days]), notes
+    """
+    from koloa import periodogram as kpg
+    whole, used, source, notes, rows, default = chosen_series(
+        files, target, root, dace, carmenes, vizier, exclude, include, rules)
+    if used is None or used.n < 4:
+        return dict(period=[], series=[], aliases={}, notes=notes)
+    data = used.binned()
+    span = float(np.ptp(data.time))
+    if span <= 0:
+        return dict(period=[], series=[], aliases={}, notes=notes)
+    pmax = max(2.0 * span, 3.0 * PGRAM_PMIN)
+    over = PGRAM_OVERSAMPLE
+    freq = kpg.frequency_grid(data.time, PGRAM_PMIN, pmax, over)
+    while len(freq) > PGRAM_MAXFREQ and over > 1:
+        over -= 1
+        freq = kpg.frequency_grid(data.time, PGRAM_PMIN, pmax, over)
+    keep, err = _robust(data.rv, data.err, data.inst)
+    out = [dict(key='rv', n=int(np.sum(keep)), left=int(np.sum(~keep)),
+                power=kpg.gls_offsets(data.time[keep], data.rv[keep],
+                                      err[keep], data.inst[keep], freq)),
+           dict(key='window', n=int(data.n),
+                power=kpg.window(data.time, freq))]
+    for name, (val, sval) in data.indicators.items():
+        val, sval = np.asarray(val, float), np.asarray(sval, float)
+        # DACE says 'none' with -99999 and an error of -99
+        good = np.isfinite(val) & (val > -9999.0)
+        if np.sum(good) < PGRAM_MIN_POINTS:
+            continue
+        err = np.where(np.isfinite(sval) & (sval > 0), sval, np.nan)
+        fill = np.nanmedian(err[good]) if np.any(np.isfinite(err[good])) \
+            else 1.0
+        err = np.where(np.isfinite(err), err, fill)
+        kept, err = _robust(np.where(good, val, np.nan), err, data.inst)
+        if np.sum(kept) < PGRAM_MIN_POINTS:
+            continue
+        out.append(dict(key=str(name), n=int(np.sum(kept)),
+                        left=int(np.sum(good & ~kept)),
+                        instruments=sorted({str(inst) for inst
+                                            in data.inst[kept]}),
+                        power=kpg.gls_offsets(data.time[kept], val[kept],
+                                              err[kept], data.inst[kept],
+                                              freq)))
+    # shown: the highest of each bin of log period
+    period = 1.0 / freq[::-1]
+    edges = np.linspace(np.log10(period[0]), np.log10(period[-1]),
+                        PGRAM_SHOWN + 1)
+    which = np.clip(np.digitize(np.log10(period), edges) - 1, 0,
+                    PGRAM_SHOWN - 1)
+    bins = np.unique(which)
+    for one in out:
+        power = one['power'][::-1]
+        top = np.full(PGRAM_SHOWN, -1.0)
+        np.maximum.at(top, which, power)
+        one['power'] = [round(float(val), 5) for val in top[bins]]
+    centre = 10 ** (0.5 * (edges[bins] + edges[bins + 1]))
+    return dict(period=[round(float(val), 6) for val in centre], series=out,
+                aliases={'1 day': kpg.SIDEREAL_DAY,
+                         '1 month': kpg.SYNODIC_MONTH, '1 year': kpg.YEAR},
+                notes=notes, nights=int(data.n), span=span)
+
+
 def velocities(files: Any = '', target: str = '', root: str = '',
                dace: bool = False, carmenes: bool = False,
                vizier: bool = False, exclude: Any = '', include: Any = '',
@@ -4144,6 +4262,14 @@ class Handler(BaseHTTPRequestHandler):
                 state['rows'] = archive_rows(query.get('target', ''),
                                              query.get('root', ''))
                 return self._json(state)
+            if url.path == '/api/periodograms':
+                files = (json.loads(query['files']) if query.get('files')
+                         else query.get('file', ''))
+                return self._json(periodograms(
+                    files, query.get('target', ''), query.get('root', ''),
+                    bool(query.get('dace')), bool(query.get('carmenes')),
+                    bool(query.get('vizier')), query.get('exclude', ''),
+                    query.get('include', ''), query.get('rules', 'on')))
             if url.path == '/api/rv':
                 files = (json.loads(query['files']) if query.get('files')
                          else query.get('file', ''))
