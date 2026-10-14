@@ -93,8 +93,8 @@ from koloa.paths import cache
 # Define variables
 # =============================================================================
 #: the services
-ESO_CAT = 'http://archive.eso.org/tap_cat/sync'
-ESO_OBS = 'http://archive.eso.org/tap_obs/sync'
+ESO_CAT = 'https://archive.eso.org/tap_cat/sync'
+ESO_OBS = 'https://archive.eso.org/tap_obs/sync'
 ESO_FILE = 'https://dataportal.eso.org/dataPortal/file/'
 NEID_TAP = 'https://neid.ipac.caltech.edu/TAP/sync'
 SOPHIE_URL = 'http://atlas.obs-hp.fr/sophie/sophie.cgi'
