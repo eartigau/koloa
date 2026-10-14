@@ -11,6 +11,7 @@ function lblOptions(fetchOnly) {
   const opts = { target: $('lbl-target').value.trim(), root: $('root').value.trim(),
     lbl_dir: $('lbl-data').value.trim(), lbl_python: $('lbl-python').value.trim(),
     nproc: $('lbl-nproc').value, teff: $('lbl-teff').value, tellu: $('lbl-tellu').checked,
+    template: $('lbl-template').value.trim(),
     fetch_only: !!fetchOnly };
   for (const key of lblTicked) opts[`lbl_${key}`] = true;
   return opts;
@@ -36,8 +37,9 @@ function lblDraw() {
     const have = lblHave[one.key];
     const inArchive = !have ? '<span class="hint">?</span>' : have.error ? `<span class="bad">${esc(have.error)}</span>`
       : `${have.n} <span class="hint">(~${have.mb} MB)</span>`;
-    const result = one.rdb ? `${one.npoints} ${esc(t('points'))} <span class="hint">(${esc(one.made)})</span> `
-      + `<button type="button" class="small" data-lbluse="${esc(one.key)}">${esc(t('lbl_use'))}</button>` : '<span class="hint">-</span>';
+    const result = (one.files || []).map((file) => `${esc(file.label)}: ${file.npoints} ${esc(t('points'))} `
+      + `<span class="hint">(${esc(file.made)})</span> <button type="button" class="small" data-lbluse="${esc(file.path)}">${esc(t('lbl_use'))}</button>`)
+      .join('<br>') || '<span class="hint">-</span>';
     return `<tr><td><label><input type="checkbox" data-lbltick="${esc(one.key)}"${lblTicked.has(one.key) ? ' checked' : ''}> ${esc(one.label)}</label></td>`
       + `<td class="hint">${esc((TEXT[lang] || {})[`lbl_archive_${one.key}`] || one.archive)}</td><td class="num">${inArchive}</td><td class="num">${one.there || '-'}</td><td>${result}</td></tr>`;
   }).join('');
@@ -110,11 +112,11 @@ function lblJob() {
 // the rdb of LBL given to the analysis: a file of the star, its dataset named
 //   so that koloa knows its spectrograph (HARPS-N (LBL) and the CCFs of the
 //   TNG are two releases of the same spectra)
-function lblUse(key) {
-  const one = lblNow && lblNow.instruments.find((inst) => inst.key === key);
-  if (!one || !one.rdb) return;
+function lblUse(path) {
+  const one = lblNow && lblNow.instruments.flatMap((inst) => inst.files || []).find((file) => file.path === path);
+  if (!one) return;
   fileRows = fileRows.filter((row) => row.path.trim());
-  if (!fileRows.some((row) => row.path === one.rdb)) fileRows.push({ path: one.rdb, label: one.dataset });
+  if (!fileRows.some((row) => row.path === one.path)) fileRows.push({ path: one.path, label: one.label });
   renderFiles();
   if (!$('target').value.trim()) $('target').value = $('lbl-target').value.trim();
   showTab('analysis');
@@ -136,7 +138,7 @@ $('lbl-fetch').addEventListener('click', () => lblRun(true));
 $('lbl-target').addEventListener('change', () => { lblHave = {}; lblLoad(); });
 $('lbl-target').addEventListener('keydown', (e) => { if (e.key === 'Enter') { lblHave = {}; lblLoad(); lblCheck(); } });
 for (const id of ['lbl-data', 'lbl-python', 'lbl-nproc']) $(id).addEventListener('change', lblSave);
-for (const id of ['lbl-teff', 'lbl-tellu']) $(id).addEventListener('change', lblCommand);
+for (const id of ['lbl-teff', 'lbl-tellu', 'lbl-template']) $(id).addEventListener('change', lblCommand);
 document.addEventListener('change', (e) => {
   const box = e.target.closest('[data-lbltick]');
   if (!box) return;

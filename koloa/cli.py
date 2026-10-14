@@ -242,7 +242,8 @@ def main(argv=None):
                              'of a file, from the public spectra of the '
                              'archives (koloa.lblrun): the spectra fetched '
                              'into --lbl-dir, lbl-rapide run on them, the '
-                             'rdb kept in ARCHIVES/<star>/lbl/; INST: HARPSN')
+                             'rdb kept in ARCHIVES/<star>/lbl/; INST: HARPSN, '
+                             'SOPHIE, SPIROU, NIRPS, ESPRESSO')
     parser.add_argument('--lbl-dir', default=None, metavar='DIR',
                         help='with --lbl: the folder of LBL\'s data (the '
                              'spectra, a few GB a star; the choice kept, '
@@ -261,6 +262,11 @@ def main(argv=None):
                              '(koloa\'s guess otherwise)')
     parser.add_argument('--no-tellu', action='store_true',
                         help='with --lbl: no cleaning of the telluric lines')
+    parser.add_argument('--template', default=None, metavar='STAR',
+                        help='with --lbl: the star whose template LBL uses '
+                             '(its spectra fetched too); by default the '
+                             'star\'s own, but in the near infrared that of '
+                             'GJ 699 when its BERV spans less than 10 km/s')
     parser.add_argument('--no-fetch', action='store_true',
                         help='with --lbl: the spectra already there only')
     parser.add_argument('--fetch-only', action='store_true',
@@ -296,7 +302,8 @@ def main(argv=None):
                         python=args.lbl_python, nproc=args.nproc,
                         teff=args.teff,
                         tellu=False if args.no_tellu else None,
-                        get=not args.no_fetch, compute=not args.fetch_only)
+                        get=not args.no_fetch, compute=not args.fetch_only,
+                        template=args.template)
         return
     if args.gather is not None:
         from koloa.gather import gather

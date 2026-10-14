@@ -174,19 +174,32 @@ on. Every archive is asked at once, not one after the other: the slowest
 sets the time.
 
 LBL can be run on the public spectra of the archives too (`koloa.lblrun`,
-the LBL tab of the GUI): `koloa "GJ 436" --lbl HARPSN` fetches the espdr
-S2D_A of HARPS-N of the star from the archive of the TNG (about 10 MB
-each; only the exposures koloa keeps from their CCFs, so not those of a
-companion), runs lbl-rapide on them (the telluric lines cleaned, a template
-and a mask made from the star's own spectra, the gradient of temperature
-nearest its Teff projected out) with a Python of its own (an environment
-called lbl-rapide by default; `--lbl-python`), and keeps its rdb as
-`archives/GJ_436/lbl/GJ_436_HARPSN_lbl.rdb`, to be given as a file named
-`HARPS-N (LBL)`. The spectra go in `--lbl-dir` (a few GB a star); those
-already there are neither fetched nor computed again. Gl 408, 51 spectra:
-2 min 43 s to fetch, 5 min 31 s for LBL the first time (its models
-fetched too), a median error of 0.72 m/s against 1.10 m/s for the CCFs of
-the same spectra.
+the LBL tab of the GUI): `koloa "GJ 436" --lbl HARPSN SOPHIE SPIROU NIRPS
+ESPRESSO` fetches the star's spectra and runs lbl-rapide on them with a
+Python of its own (an environment called lbl-rapide by default;
+`--lbl-python`), each rdb kept as `archives/GJ_436/lbl/GJ_436_<inst>_lbl.rdb`,
+a file per dataset koloa knows, to be given as a file. The spectra: the
+espdr S2D_A of HARPS-N at the TNG (of the exposures koloa keeps from their
+CCFs), the e2ds of SOPHIE at the OHP (HR and HE apart; SOPHIE and SOPHIE+
+two datasets), APERO's t.fits of SPIRou at the CADC (a reduction LBL does
+not read left out), the S2D of NIRPS at ESO divided by ESO's model of the
+telluric lines (HE and HA apart), and the S2D_A of ESPRESSO at ESO
+(ESPRESSO18 and ESPRESSO19 two datasets), each file of ESO's tars fetched
+alone by Range requests; another target pointed at nearby (the companion
+of a binary, named as another star of a catalogue the star is in) is
+left out. In the near infrared, a star whose
+spectra span less than 10 km/s of BERV uses the template of GJ 699
+(`--template` names another): its own would keep the residuals of the
+telluric lines. The spectra go in `--lbl-dir` (a few GB a star); those
+already there are neither fetched nor computed again.
+
+| | spectra | fetched | LBL | median error | rms | the CCFs of the same spectra |
+|---|---|---|---|---|---|---|
+| HARPS-N, Gl 408 | 51 | 2 min 43 s | 5 min 31 s (models fetched) | 0.72 m/s | 2.16 m/s | 1.10 m/s, 2.66 m/s |
+| SOPHIE+, Gl 687 | 76 | 1 min (88 with SOPHIE) | 2 min 34 s | 1.40 m/s | 5.90 m/s | 1.45 m/s, 6.23 m/s |
+| ESPRESSO19, GJ 1002 | 57 | 9 min (3.6 GB) | 3 min 55 s | 0.38 m/s | 2.08 m/s | 0.60 m/s, 2.27 m/s (DACE) |
+| SPIRou, TOI-1452 | 210 | 11 min (3.7 GB) | 42 s (template of GJ 699) | 7.0 m/s | 11.2 m/s | 13.8 m/s on 18 of them |
+| NIRPS, GJ 699 | 70 | 6 min (1.7 GB) | 2 min 10 s | 1.66 m/s | 3.5 m/s (a line out) | |
 
 The archives of a star often hold the same spectra more than once
 (HARPS through the ESO pipeline on DACE, through SERVAL on VizieR, in a

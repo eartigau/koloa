@@ -214,7 +214,8 @@ def _part(label: str, key: str, reference: str, time: Any, rv: Any,
           err: Any, names: Optional[Sequence[str]] = None,
           name: Optional[str] = None, perspective: bool = True,
           defer: bool = False, said: str = '', fwhm: Any = None,
-          contrast: Any = None, bis: Any = None
+          contrast: Any = None, bis: Any = None,
+          ids: Optional[Sequence[str]] = None
           ) -> Optional[Tuple[RVData, Dict[str, Any]]]:
     """
     A dataset of an archive: its exposures with a velocity and an error,
@@ -226,9 +227,11 @@ def _part(label: str, key: str, reference: str, time: Any, rv: Any,
     :param fwhm: the widths of the CCFs [km/s], contrast [%] and bis (their
                  bisector spans [km/s]), or None: the indicators of the
                  dataset (koloa.tng.ccf_indicators)
+    :param ids: what names each exposure in its archive, or None: those
+                kept, in the order of the velocities (files)
 
     :return: (RVData, dict: key, label, reference, n, left, perspective,
-             defer), or None when nothing is left
+             defer, and files with ids), or None when nothing is left
     """
     time, rv, err = (np.asarray(val, float) for val in (time, rv, err))
     good = np.isfinite(time + rv + err) & (err > 0)
@@ -260,9 +263,12 @@ def _part(label: str, key: str, reference: str, time: Any, rv: Any,
     data = RVData(time[good][order], rv[good][order], err[good][order],
                   inst=np.full(int(np.sum(good)), label), name=name,
                   indicators=more)
-    return data, dict(key=key, label=label, reference=reference,
-                      n=int(data.n), left='; '.join(left),
-                      perspective=bool(perspective), defer=bool(defer))
+    about = dict(key=key, label=label, reference=reference, n=int(data.n),
+                 left='; '.join(left), perspective=bool(perspective),
+                 defer=bool(defer))
+    if ids is not None:
+        about['files'] = [str(ids[it]) for it in np.where(good)[0][order]]
+    return data, about
 
 
 def _most(values: Sequence[Any]) -> Any:
@@ -436,6 +442,7 @@ def sophie(star: Dict[str, Any], folder: str, refresh: bool = False,
                     [row['objname'] for row, ok in zip(kept, sel) if ok],
                     name, said=(f'{other} with another mask than {mask}'
                                 if other else ''),
+                    ids=[row['seq'] for row, ok in zip(kept, sel) if ok],
                     **{key: [_num(row.get(col)) for row, ok
                              in zip(kept, sel) if ok]
                        for key, col in (('fwhm', 'fwhm'), ('bis', 'span'),

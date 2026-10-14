@@ -144,6 +144,8 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
             args += ['--teff', f'{teff:g}']
         if opts.get('tellu') is False:
             args.append('--no-tellu')
+        if str(opts.get('template') or '').strip():
+            args += ['--template', str(opts['template']).strip()]
         if opts.get('fetch_only'):
             args.append('--fetch-only')
         return args
@@ -2272,40 +2274,37 @@ def lbl_state(target: str = '', root: str = '', data: str = ''
     """
     The tab of LBL: your choices (the Python of LBL, the folder of its
     data, its processes), whether that Python runs LBL, and for each
-    instrument the spectra of the star there and the rdb kept
+    instrument the spectra of the star there and the rdb kept (a file per
+    dataset)
 
     :return: dict, python, data, nproc, check (ok, version, where, error),
-             instruments (key, label, dataset, archive, size, there, rdb,
-             npoints, made), running (the id of the LBL running)
+             instruments (key, label, archive, size, there, files: path,
+             label, npoints, made), running (the id of the LBL running)
     """
     from koloa import lblrun
-    from koloa.gather import folder_name
     mine = lblrun.settings()
     python = lblrun.find_python()
     if python not in _LBL_PYTHON:
         _LBL_PYTHON[python] = lblrun.check_python(python)
     data = data or mine.get('data') or 'lbl_data'
     root = root or 'archives'
+    files = lblrun.kept(target, root) if target else []
     out = []
     for key, about in lblrun.INSTRUMENTS.items():
-        one = dict(key=key, label=about['label'], dataset=about['dataset'],
-                   archive=about['archive'], size=about['size'], there=0,
-                   rdb='', npoints=0, made='')
+        there = 0
         if target:
-            science = os.path.join(
-                os.path.expanduser(data), f'{about["lbl"]}_{about["source"]}',
-                'science', lblrun.object_name(target))
-            if os.path.isdir(science):
-                one['there'] = len([name for name in os.listdir(science)
-                                    if name.endswith('.fits')])
-            name = folder_name(target)
-            rdb = os.path.join(root, name, 'lbl', f'{name}_{key}_lbl.rdb')
-            if os.path.exists(rdb):
-                with open(rdb) as handle:
-                    one['npoints'] = max(0, sum(1 for _ in handle) - 2)
-                one.update(rdb=os.path.abspath(rdb), made=time.strftime(
-                    '%Y-%m-%d %H:%M', time.localtime(os.path.getmtime(rdb))))
-        out.append(one)
+            obj = lblrun.object_name(target)
+            for cls in about['classes']:
+                for tail in about['keys']:
+                    science = os.path.join(os.path.expanduser(data), cls,
+                                           'science', obj + tail)
+                    if os.path.isdir(science):
+                        there += len([name for name in os.listdir(science)
+                                      if name.endswith('.fits')])
+        out.append(dict(key=key, label=about['label'],
+                        archive=about['archive'], size=about['size'],
+                        there=there, files=[one for one in files
+                                            if one['inst'] == key]))
     running = next((job.id for job in JOBS.values() if job.action == 'lbl'
                     and job.returncode is None), None)
     return dict(python=python, data=data,
@@ -2317,18 +2316,23 @@ def lbl_state(target: str = '', root: str = '', data: str = ''
 
 def lbl_check(target: str, root: str = '') -> Dict[str, Any]:
     """the spectra the archives have of a star, for each instrument of
-    LBL (the exposures koloa keeps from their CCFs)"""
+    LBL (the exposures koloa keeps from their CCFs), asked side by side"""
     from koloa import lblrun
     if not str(target).strip():
         raise ValueError('a SIMBAD name')
-    out = {}
-    for key, about in lblrun.INSTRUMENTS.items():
+    ident = lblrun._ident(target)
+
+    def one(key):
         try:
-            names = lblrun.harpsn_spectra(target, root or 'archives')
-            out[key] = dict(n=len(names), mb=round(len(names) * about['size']))
+            runs = lblrun.groups(target, key, root or 'archives', ident)
+            num = sum(len(group['spectra']) for group in runs)
+            return key, dict(n=num, mb=round(
+                num * lblrun.INSTRUMENTS[key]['size']))
         except (RuntimeError, ValueError, OSError) as err:
-            out[key] = dict(n=0, mb=0, error=str(err))
-    return out
+            return key, dict(n=0, mb=0, error=str(err))
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=len(lblrun.INSTRUMENTS)) as pool:
+        return dict(pool.map(one, lblrun.INSTRUMENTS))
 
 
 def lbl_save(body: Dict[str, Any]) -> Dict[str, Any]:
