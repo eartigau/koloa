@@ -590,6 +590,12 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
             data, note['note'] = None, f'VizieR could not be asked ({err})'
         keep(data, note)
         row(survey['key'], *_state(note))
+    # the archives of the observatories, beside the papers: the archive of
+    #   the TNG takes 20 s to list the files of a star, the papers a minute
+    beside = ThreadPoolExecutor(max_workers=1)
+    later = beside.submit(_archives, ident, folder,
+                          [key for key in ARCHIVES if key in asked], refresh,
+                          have)
     # the papers of the star: their VizieR catalogues, their tables of it
     if papers and ident.get('main'):
         row('papers', 'asking')
@@ -647,8 +653,8 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
                             instruments={}, file=None, note=words))
         row('papers', *papers_state(notes, len(codes)))
     # the archives of the observatories: the velocities of their pipelines
-    notes += _archives(ident, folder, [key for key in ARCHIVES
-                                       if key in asked], refresh, have)
+    notes += later.result()
+    beside.shutdown()
     with open(index, 'w') as handle:
         json.dump(notes, handle, indent=1)
     with open(before, 'w') as handle:
@@ -663,29 +669,31 @@ def _archives(ident: Dict[str, Any], folder: str, keys: Sequence[str],
     The velocities of the pipelines, from the archives of the
     observatories asked (ARCHIVES): each reduction a dataset of its own,
     kept whole as a CSV of the folder (two reductions of the same spectra
-    are two releases: koloa.datasets chooses, spectrum by spectrum)
+    are two releases: koloa.datasets chooses, spectrum by spectrum). The
+    archives are asked side by side
 
-    :return: list of dict, the notes (as fetch: kind is archive)
+    :return: list of dict, the notes (as fetch: kind is archive), in the
+             order of the keys
     """
-    notes = []
     mine = {family(name) for name in have} - {''}
-    for key in keys:
+    # how the star moves: an archive is searched by where it was
+    from koloa.secular import star_astrometry
+    astro = ((ident.get('astrometry') or star_astrometry(ident) or {})
+             if ident.get('ra') is not None else {})
+
+    def one(key: str) -> List[Dict[str, Any]]:
+        """the notes of one archive"""
+        notes: List[Dict[str, Any]] = []
         where = ARCHIVES[key]
         empty = dict(kind='archive', key=key, source=key, reference=where,
                      where=where, catalogue='', n=0, instruments={},
                      file=None, note='')
         if DEFERS.get(key) in mine:
-            notes.append(dict(empty, note=f'not asked: a file of '
-                                          f'{DEFERS[key]} is given'))
-            continue
+            return [dict(empty, note=f'not asked: a file of {DEFERS[key]} '
+                                     f'is given')]
         if ident.get('ra') is None:
-            notes.append(dict(empty, note='no position of the star'))
-            continue
+            return [dict(empty, note='no position of the star')]
         row(key, 'asking')
-        start = len(notes)
-        # how the star moves: an archive is searched by where it was
-        from koloa.secular import star_astrometry
-        astro = ident.get('astrometry') or star_astrometry(ident) or {}
         star = dict(ra=ident['ra'], dec=ident['dec'],
                     pmra=astro.get('pmra'), pmdec=astro.get('pmdec'),
                     have=sorted(mine))
@@ -700,10 +708,9 @@ def _archives(ident: Dict[str, Any], folder: str, keys: Sequence[str],
                 parts, words = observatories.SOURCES[key](
                     star, folder, refresh, ident.get('main'))
         except RuntimeError as err:
-            notes.append(dict(empty, note=str(err)))
             log(f'published, {where}: {err}', 'warn')
             row(key, 'failed', str(err))
-            continue
+            return [dict(empty, note=str(err))]
         if not parts:
             notes.append(dict(empty, note=words))
             log(f'published, {where}: {words}', 'info')
@@ -727,8 +734,15 @@ def _archives(ident: Dict[str, Any], folder: str, keys: Sequence[str],
             _write(data, os.path.join(folder, note['file']))
             notes.append(note)
             log(f'published, {note["reference"]}: {note["n"]} kept', 'value')
-        row(key, *archive_state(notes[start:]))
-    return notes
+        row(key, *archive_state(notes))
+        return notes
+    # the archives side by side (each its own files), their notes in order
+    out: List[Dict[str, Any]] = []
+    if keys:
+        with ThreadPoolExecutor(max_workers=len(keys)) as pool:
+            for part in pool.map(one, keys):
+                out += part
+    return out
 
 
 def _counts(notes: Sequence[Dict[str, Any]]) -> str:

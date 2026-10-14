@@ -134,7 +134,8 @@ def _columns(payload) -> Dict[str, list]:
 
 def fetch(target: str, path: str, api_key: Any = None,
           source: str = 'standard', limit: int = 20000,
-          timeout: float = 120.0, refresh: bool = False) -> str:
+          timeout: float = 45.0, refresh: bool = False,
+          tries: int = 3) -> str:
     """
     The radial velocities of a target from DACE, written to a CSV file
 
@@ -149,8 +150,15 @@ def fetch(target: str, path: str, api_key: Any = None,
     :param source: str, standard (the pipeline velocities, POSTDRS_A) or
                    telluric (the pipeline's telluric-corrected ones)
     :param limit: int, the most rows asked for
-    :param timeout: float, the longest wait for DACE [s]
+    :param timeout: float, the longest DACE may stay silent [s]: it
+                    starts to answer in 9 s for the longest series (tau
+                    Ceti), in under a second for most, but a question
+                    stalls now and then (78 s for Gl 408 on 2026-10-14,
+                    when the same one, asked again, took 0.4 s)
     :param refresh: bool, ask DACE even when the file exists
+    :param tries: int, how many times it is asked when it stays silent
+                  or the connection fails (not when it answers that it
+                  does not know the target)
 
     :return: str, the CSV file
     """
@@ -173,21 +181,30 @@ def fetch(target: str, path: str, api_key: Any = None,
     log(f'asking DACE for the velocities of {target}'
         + (f' (with the key of {origin})' if key else ' (public data)'),
         'info')
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            payload = json.loads(response.read())
-    except urllib.error.HTTPError as err:
-        # DACE answers: it does not know the target under this name (404),
-        #   which is not a network that filters it
-        if err.code == 404:
-            raise RuntimeError(f'DACE does not know {target}') from err
-        raise RuntimeError(f'DACE could not be reached ({err}); some '
-                           f'networks are filtered: fetch from another '
-                           f'one, or give the CSV file') from err
-    except (urllib.error.URLError, TimeoutError) as err:
-        raise RuntimeError(f'DACE could not be reached ({err}); some '
-                           f'networks are filtered: fetch from another '
-                           f'one, or give the CSV file') from err
+    for attempt in range(max(1, int(tries))):
+        try:
+            with urllib.request.urlopen(request,
+                                        timeout=timeout) as response:
+                payload = json.loads(response.read())
+            break
+        except urllib.error.HTTPError as err:
+            # DACE answers: it does not know the target under this name
+            #   (404), which is not a network that filters it
+            if err.code == 404:
+                raise RuntimeError(f'DACE does not know {target}') from err
+            raise RuntimeError(f'DACE could not be reached ({err}); some '
+                               f'networks are filtered: fetch from another '
+                               f'one, or give the CSV file') from err
+        except (urllib.error.URLError, TimeoutError, OSError) as err:
+            # silent, or the connection failed: once more, a stalled
+            #   question is rarely stalled twice
+            if attempt + 1 < max(1, int(tries)):
+                log(f'DACE did not answer for {target} ({err}); asked '
+                    f'again', 'warn')
+                continue
+            raise RuntimeError(f'DACE could not be reached ({err}); some '
+                               f'networks are filtered: fetch from another '
+                               f'one, or give the CSV file') from err
     columns = _columns(payload)
     nrow = max((len(val) for val in columns.values()), default=0)
     if nrow == 0:

@@ -11,6 +11,7 @@ Created on 2026-09-29
 import csv
 
 import numpy as np
+import pytest
 
 from koloa import dace
 
@@ -67,3 +68,45 @@ def test_split_sequences_keeps_every_point_in_short_visits():
     # the short visits untouched, the long one in three chunks, in order
     assert list(sizes) == [3, 8, 8, 7, 2]
     assert np.all(np.diff(out) >= 0)
+
+
+def test_a_silent_dace_asked_again(tmp_path, monkeypatch):
+    """a question DACE leaves unanswered is asked again (it stalls now and
+    then, and answers at once the second time); one it answers that it
+    does not know the target is not; and three silences are said"""
+    import io
+    import json
+    import urllib.error
+
+    from koloa import dace
+    payload = json.dumps({'parameters': [
+        {'variableName': 'rjd', 'doubleValues': [1.0, 2.0]},
+        {'variableName': 'rv', 'doubleValues': [3.0, 4.0],
+         'minErrorValues': [0.5, 0.6]}]}).encode()
+    calls = []
+
+    def answer(script):
+        def urlopen(request, timeout):
+            calls.append(timeout)
+            what = script[len(calls) - 1]
+            if isinstance(what, Exception):
+                raise what
+            return io.BytesIO(what)
+        return urlopen
+    monkeypatch.setattr(dace.urllib.request, 'urlopen',
+                        answer([TimeoutError('timed out'), payload]))
+    path = dace.fetch('GJ1', str(tmp_path / 'a.csv'), api_key=False)
+    assert len(calls) == 2 and calls[0] == 45.0
+    assert open(path).readline().strip() == 'rjd,rv,rv_err'
+    calls.clear()
+    missing = urllib.error.HTTPError('u', 404, 'Not Found', {}, None)
+    monkeypatch.setattr(dace.urllib.request, 'urlopen', answer([missing]))
+    with pytest.raises(RuntimeError, match='DACE does not know GJ2'):
+        dace.fetch('GJ2', str(tmp_path / 'b.csv'), api_key=False)
+    assert len(calls) == 1
+    calls.clear()
+    monkeypatch.setattr(dace.urllib.request, 'urlopen',
+                        answer([TimeoutError('timed out')] * 3))
+    with pytest.raises(RuntimeError, match='DACE could not be reached'):
+        dace.fetch('GJ3', str(tmp_path / 'c.csv'), api_key=False)
+    assert len(calls) == 3

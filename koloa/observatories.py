@@ -125,9 +125,10 @@ MAX_AGE = 30.0
 # Define functions
 # =============================================================================
 def _http(url: str, data: Optional[Dict[str, Any]] = None,
-          where: str = 'archive', timeout: float = 180.0,
+          where: str = 'archive', timeout: float = 60.0,
           tries: int = 2) -> bytes:
-    """a page of an archive, asked again once when it stumbles"""
+    """a page of an archive, asked again once when it stumbles (stays
+    silent for timeout seconds, or the connection fails)"""
     body = urllib.parse.urlencode(data).encode() if data else None
     for attempt in range(tries):
         try:
