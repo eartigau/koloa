@@ -2213,9 +2213,10 @@ def forget() -> Dict[str, Any]:
     """
     A new target: the server forgets what the page did, as a new session
     would (its runs that ended, its quick looks, the copy of the NASA
-    Exoplanet Archive read into memory, read again from disk when asked);
-    a run still running is kept (a process of its own: stopping it is the
-    page's Stop), and nothing on disk is touched
+    Exoplanet Archive read into memory, read again from disk when asked,
+    the light curves of TESS, Kepler, K2 and CoRoT read and what MAST
+    said of them); a run still running is kept (a process of its own:
+    stopping it is the page's Stop), and nothing on disk is touched
 
     :return: dict, the runs kept
     """
@@ -2233,6 +2234,8 @@ def forget() -> Dict[str, Any]:
         _QUICK_DATA.pop(qid, None)
     karchive._TABLES = None
     karchive._EU = None
+    for kept in (TESS_LC, TESS_WHY, SPACE_LC, SPACE_HAVE):
+        kept.clear()
     return dict(kept=[job.id for job in JOBS.values()])
 
 
@@ -2568,7 +2571,8 @@ def batch_fip(paths: List[str], opts: Dict[str, Any],
               archives: bool = False, regather: bool = False,
               root: str = '', rules: bool = True,
               targets: Optional[List[Dict[str, Any]]] = None,
-              report: Optional[Dict[str, Any]] = None
+              report: Optional[Dict[str, Any]] = None,
+              sources: Optional[Dict[str, Any]] = None
               ) -> Dict[str, Any]:
     """
     The quick FIP of many files, one after the other, in a thread, the
@@ -2597,6 +2601,10 @@ def batch_fip(paths: List[str], opts: Dict[str, Any],
                    a candidate (_batch_report): fip (the FIP below which a
                    peak counts) and folder (where the reports go, a folder
                    per star)
+    :param sources: dict or None, the archives asked when a star is
+                    gathered (a survey's ticks): dace, carmenes (bool) and
+                    vizier (the keys of koloa.published.SOURCES asked);
+                    None for those a gather asks
 
     :return: dict, the state of the batch (batch_state)
     """
@@ -2631,7 +2639,8 @@ def batch_fip(paths: List[str], opts: Dict[str, Any],
                         end=None, cancel=False, trend=trend_order(opts),
                         archives=bool(archives), regather=bool(regather),
                         rules=bool(rules), root=root or 'archives',
-                        report=report or None, items=items)
+                        report=report or None, items=items,
+                        sources=sources or None)
     threading.Thread(target=_run_batch, args=(bid,), daemon=True).start()
     return batch_state(bid)
 
@@ -2718,6 +2727,9 @@ def _batch_archives(batch: Dict[str, Any], item: Dict[str, Any]):
     #   with it, and asks for nothing (gather False)
     #   Every archive a gather of the star asks, the same ones: a folder
     #   of before koloa read some of them has those added
+    #   (or those ticked, a survey's)
+    asking = batch.get('sources') or {}
+    vizier = asking.get('vizier')
     if batch.get('gather', True):
         from koloa.survey import file_spectrographs
         have = file_spectrographs(dict(files=[one['path'] for one in files]))
@@ -2726,12 +2738,15 @@ def _batch_archives(batch: Dict[str, Any], item: Dict[str, Any]):
         try:
             if fresh:
                 item['stage'] = 'gather'
-                gather(target, batch['root'], dace=True, carmenes=True,
-                       tess=False, vizier=True, refresh=batch['regather'],
+                gather(target, batch['root'],
+                       dace=asking.get('dace', True) is not False,
+                       carmenes=asking.get('carmenes', True) is not False,
+                       tess=False, vizier=vizier is None or bool(vizier),
+                       vizier_sources=vizier, refresh=batch['regather'],
                        have=have)
-            elif stale(folder):
+            elif stale(folder, vizier):
                 item['stage'] = 'gather'
-                update(folder, have)
+                update(folder, have, vizier)
         except Exception as err:  # the file alone, and why
             item['note'] = f'archives not gathered ({type(err).__name__}: ' \
                 f'{err})'

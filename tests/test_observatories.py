@@ -450,3 +450,8 @@ def test_the_archives_of_a_sample(tmp_path, monkeypatch):
     survey.check_star(other, str(tmp_path / 'arch'), dace=False,
                       carmenes=False, vizier=False)
     assert other['archives']['surveys'] == []
+    # the sources ticked alone (a survey's ticks): the others not looked at
+    other = dict(star)
+    survey.check_star(other, str(tmp_path / 'arch'), dace=False,
+                      carmenes=False, sources=['neid', 'teklu25', 'papers'])
+    assert other['archives']['surveys'] == ['neid']

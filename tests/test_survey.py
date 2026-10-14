@@ -462,13 +462,20 @@ def test_the_survey_tab_of_the_page(tmp_path, monkeypatch):
     asked = {}
 
     def batch_fip(paths, opts, archives, regather, root, rules, targets=None,
-                  report=None):
-        asked.update(targets=targets, root=root, rules=rules, report=report)
+                  report=None, sources=None):
+        asked.update(targets=targets, root=root, rules=rules, report=report,
+                     sources=sources)
         return dict(id='b1')
     monkeypatch.setattr(gui, 'batch_fip', batch_fip)
     assert gui_survey.route('/api/survey/run', dict(
         id=sid, names=['GJ 876'], root='arch', rules=False)) == dict(id='b1')
     assert asked['targets'][0]['name'] == 'GJ 876' and not asked['rules']
+    # the sources ticked go with it (none said: what a gather asks)
+    assert asked['sources'] == dict(dace=True, carmenes=True, vizier=None)
+    gui_survey.route('/api/survey/run', dict(
+        id=sid, names=['GJ 876'], dace=False, sources=['neid']))
+    assert asked['sources'] == dict(dace=False, carmenes=True,
+                                    vizier=['neid'])
     # its published rotation goes with the star; no report unless asked
     assert asked['targets'][0]['rotation'][0]['period'] == 82.8
     assert asked['report'] is None
@@ -747,3 +754,51 @@ def test_the_stars_at_once_on_two_thirds_of_the_free_cores(monkeypatch):
     assert survey.cores()['jobs'] == 1 and survey.cores()['free'] == 1
     monkeypatch.setattr(os, 'getloadavg', unknown)
     assert survey.cores()['load'] is None and survey.cores()['free'] == 8
+
+
+def test_the_sources_ticked_gathered(tmp_path, monkeypatch):
+    """a sample packed with some sources ticked: each star gathered with
+    those alone (DACE and CARMENES DR1 too, or not); a folder of before
+    brought up to date with the archives of the observatories ticked; the
+    page's ticks read, an unknown source refused"""
+    from koloa import gather as kg
+    from koloa import gui_survey
+    stars = _batch(tmp_path, monkeypatch)
+    asked = []
+
+    def gather(target, root, **kwargs):
+        asked.append((target, kwargs))
+        raise RuntimeError('not here')
+    monkeypatch.setattr(kg, 'gather', gather)
+    survey.pack(stars, 'some', out=str(tmp_path / 'out'),
+                root=str(tmp_path / 'arch'), gather=True, tar=False,
+                dace=False, carmenes=True, sources=['teklu25', 'tng'])
+    # the stars without archives here (GJ 2 has them)
+    assert sorted(name for name, _ in asked) == ['GJ 1', 'GJ 3']
+    for _, kwargs in asked:
+        assert kwargs['dace'] is False and kwargs['carmenes'] is True
+        assert kwargs['vizier'] is True
+        assert kwargs['vizier_sources'] == ['teklu25', 'tng']
+    # none of them ticked: VizieR not asked
+    asked.clear()
+    survey.pack(stars, 'none', out=str(tmp_path / 'out'),
+                root=str(tmp_path / 'arch'), gather=True, tar=False,
+                sources=[])
+    assert all(kwargs['vizier'] is False for _, kwargs in asked)
+    # a folder that read the archives ticked is not stale; one that did not
+    folder = tmp_path / 'arch' / 'GJ_2'
+    (folder / 'target.json').write_text(json.dumps(dict(astrometry={})))
+    (folder / 'rv' / 'published').mkdir(parents=True)
+    (folder / 'rv' / 'published' / 'sources.json').write_text(
+        json.dumps(['teklu25', 'tng']))
+    (folder / 'target.json').write_text(json.dumps(
+        dict(astrometry=dict(pmra=1.0))))
+    assert not kg.stale(str(folder), ['teklu25', 'tng'])
+    assert kg.stale(str(folder), ['tng', 'neid'])
+    assert kg.stale(str(folder))
+    # the page's ticks
+    assert gui_survey._asked(dict(dace=False, sources=['tng', 'papers'])) \
+        == dict(dace=False, carmenes=True, vizier=['papers', 'tng'])
+    assert gui_survey._asked({})['vizier'] is None
+    with pytest.raises(ValueError, match='hires'):
+        gui_survey._asked(dict(sources=['hires']))

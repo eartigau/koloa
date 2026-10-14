@@ -370,7 +370,8 @@ def ident_of(star: Dict[str, Any]) -> Dict[str, Any]:
 def check_star(star: Dict[str, Any], root: str = 'archives',
                dace: bool = True, api_key: Any = None,
                refresh: bool = False, carmenes: bool = True,
-               vizier: bool = True) -> Dict[str, Any]:
+               vizier: bool = True,
+               sources: Optional[Sequence[str]] = None) -> Dict[str, Any]:
     """
     What the archives have of one star of a sample, without gathering
     them: CARMENES DR1 and the surveys on VizieR by its position in their
@@ -383,7 +384,12 @@ def check_star(star: Dict[str, Any], root: str = 'archives',
     :param api_key: str, None or False: a DACE API key (koloa.dace)
     :param refresh: bool, ask DACE even when its answer is on disk
     :param carmenes: bool, look the star up in CARMENES DR1
-    :param vizier: bool, and in the lists of the surveys on VizieR
+    :param vizier: bool, and in the lists of the surveys on VizieR, and
+                   in the archives of the observatories
+    :param sources: the surveys and archives looked at (keys of
+                    koloa.published.SOURCES), None for all of them (the
+                    papers, ESO and the CFHT are not cross-matched: they
+                    are asked when the star is gathered)
 
     :return: dict, set as star['archives'] too: dace (n, its instruments,
              or None; error when it could not be asked), carmenes (its
@@ -408,6 +414,8 @@ def check_star(star: Dict[str, Any], root: str = 'archives',
     except (OSError, ValueError) as err:
         out['carmenes_error'] = str(err)
     for survey in kpub.SURVEYS if vizier else ():
+        if sources is not None and survey['key'] not in sources:
+            continue
         try:
             if kpub.nearest_star(kpub.survey_stars(survey), star['ra'],
                                  star['dec']):
@@ -422,6 +430,8 @@ def check_star(star: Dict[str, Any], root: str = 'archives',
         place = dict(ra=star['ra'], dec=star['dec'],
                      pmra=gaia.get('pmra'), pmdec=gaia.get('pmdec'))
         for key in CHECKED_ARCHIVES:
+            if sources is not None and key not in sources:
+                continue
             try:
                 if observatories.has(key, place):
                     out['surveys'].append(key)
@@ -595,7 +605,8 @@ def check(stars: Sequence[Dict[str, Any]], root: str = 'archives',
           dace: bool = True, api_key: Any = None, refresh: bool = False,
           workers: int = WORKERS,
           progress: Optional[Callable[[int, int], None]] = None,
-          carmenes: bool = True, vizier: bool = True
+          carmenes: bool = True, vizier: bool = True,
+          sources: Optional[Sequence[str]] = None
           ) -> List[Dict[str, Any]]:
     """
     What the archives have of each star of a sample (check_star), a few
@@ -603,21 +614,27 @@ def check(stars: Sequence[Dict[str, Any]], root: str = 'archives',
 
     :param progress: callable or None, told (done, total) after each star
     :param carmenes: bool, CARMENES DR1 among them
-    :param vizier: bool, and the surveys on VizieR
+    :param vizier: bool, and the surveys on VizieR and the archives of
+                   the observatories
+    :param sources: those of them looked at (check_star), None for all
 
     :return: list of dict, the stars, each with its 'archives'
     """
+    def asked(key):
+        return vizier and (sources is None or key in sources)
     from koloa import published as kpub
     from koloa.gather import carmenes_objects
     # the lists, once, before the stars are asked side by side
     try:
         if carmenes:
             carmenes_objects()
-        for survey in kpub.SURVEYS if vizier else ():
-            kpub.survey_stars(survey)
-        if vizier:
-            from koloa import observatories, tng
+        for survey in kpub.SURVEYS:
+            if asked(survey['key']):
+                kpub.survey_stars(survey)
+        from koloa import observatories, tng
+        if asked('tng'):
             tng.pointings()
+        if asked('neid'):
             observatories.neid_pointings()
     except (OSError, ValueError, RuntimeError) as err:
         log(f'survey: a list could not be fetched ({err})', 'warn')
@@ -629,7 +646,8 @@ def check(stars: Sequence[Dict[str, Any]], root: str = 'archives',
     done = [0]
 
     def one(star):
-        check_star(star, root, dace, api_key, refresh, carmenes, vizier)
+        check_star(star, root, dace, api_key, refresh, carmenes, vizier,
+                   sources)
         done[0] += 1
         if progress is not None:
             progress(done[0], len(stars))
@@ -2372,7 +2390,9 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
          api_key: Any = None, tar: bool = True,
          progress: Optional[Callable[[int, int, str], None]] = None,
          workers: int = 3, report: bool = False,
-         report_fip: float = REPORT_FIP) -> Dict[str, Any]:
+         report_fip: float = REPORT_FIP, dace: bool = True,
+         carmenes: bool = True,
+         sources: Optional[Sequence[str]] = None) -> Dict[str, Any]:
     """
     A batch folder, and its .tar.gz: everything the batch of some stars
     needs, to run it here or on another machine (see the module)
@@ -2402,6 +2422,12 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
     :param report: bool, the REPORT of the script: the detailed report of
                    each star with a candidate
     :param report_fip: float, its REPORT_FIP
+    :param dace: bool, the archives gathered include DACE
+    :param carmenes: bool, and CARMENES DR1
+    :param sources: the surveys, papers and archives of the observatories
+                    asked (keys of koloa.published.SOURCES: gather's
+                    vizier_sources), None for all but ESO and the CFHT,
+                    an empty list for none of them
 
     :return: dict, folder, tar (None without), n (stars), files, size (of
              the tar [bytes]), and missing (the stars with nothing: no
@@ -2430,8 +2456,9 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
 
     def fetch(star):
         try:
-            gather_star(star['name'], root, dace=True, carmenes=True,
-                        tess=tess, vizier=True, refresh=refresh,
+            gather_star(star['name'], root, dace=dace, carmenes=carmenes,
+                        tess=tess, vizier=sources is None or bool(sources),
+                        vizier_sources=sources, refresh=refresh,
                         api_key=api_key, have=file_spectrographs(star))
         except Exception as err:  # the star with what there is
             log(f'pack: the archives of {star["name"]} not gathered '
@@ -2449,7 +2476,8 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
             archive.tables()
             carmenes_objects()
             for one in kpub.SURVEYS:
-                kpub.survey_stars(one)
+                if sources is None or one['key'] in sources:
+                    kpub.survey_stars(one)
         except Exception as err:  # each star asks again, and says
             log(f'pack: a table could not be fetched first ({err})', 'warn')
         with ThreadPoolExecutor(max_workers=max(1, int(workers))) as pool:
@@ -2462,8 +2490,8 @@ def pack(stars: Sequence[Dict[str, Any]], name: str, out: str = '.',
         def late(star):
             here = os.path.join(root, _folder(star['name']))
             try:
-                if star not in todo and stale(here):
-                    update(here, file_spectrographs(star))
+                if star not in todo and stale(here, sources):
+                    update(here, file_spectrographs(star), sources)
             except Exception as err:  # the star with what there is
                 log(f'pack: the archives of {star["name"]} not brought up '
                     f'to date ({type(err).__name__}: {err})', 'warn')

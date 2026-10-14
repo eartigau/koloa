@@ -37,6 +37,7 @@ import configparser
 import csv
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -226,15 +227,21 @@ def fetch(target: str, path: str, api_key: Any = None,
 def names(ident: Dict[str, Any], target: str) -> List[str]:
     """the names DACE may know a star by: its catalogue names without
     spaces (HD69830, GJ687, HIP86162...), then as SIMBAD writes them"""
+    def bare(name):
+        """a name without SIMBAD's marks (NAME, * of a star, ** of a
+        double, V* of a variable) and without spaces: * alf PsA C is
+        alfPsAC"""
+        return re.sub(r'^(NAME|\*\*|\*|V\*)\s+', '', name.strip()).replace(
+            ' ', '')
     out = []
     for key in ('hd', 'gj', 'hip', 'main'):
         if ident.get(key):
-            out.append(ident[key].replace('NAME ', '').replace(' ', ''))
-    out.append(target.replace(' ', ''))
+            out.append(bare(ident[key]))
+    out.append(bare(target))
     for alias in ident.get('aliases', []):
         if alias.split()[0] in ('GJ', 'Gl', 'HD', 'HIP', 'TOI', 'K2',
                                 'Kepler', 'LHS', 'Wolf', 'Ross'):
-            out.append(alias.replace(' ', ''))
+            out.append(bare(alias))
     return list(dict.fromkeys(name for name in out if name))
 
 

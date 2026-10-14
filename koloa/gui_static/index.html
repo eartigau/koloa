@@ -152,7 +152,8 @@
 
     <!-- the periodograms (not FIPs) of the series, its window, its indicators -->
     <section class="card bleed" id="pgcard">
-      <h2><span data-i18n="pg_title">Periodograms</span> <button type="button" class="info" data-help="periodograms" aria-label="?">i</button></h2>
+      <h2><span data-i18n="pg_title">Periodograms</span> <button type="button" class="info" data-help="periodograms" aria-label="?">i</button>
+        <button type="button" class="small pgtall" id="pgtall" data-i18n="pg_tall" aria-pressed="false">expand vertically</button></h2>
       <div class="row pgchecks" id="pgchecks"></div>
       <div class="row pglegend" id="pglegend"></div>
       <div id="pgplot" class="plot"></div>
@@ -267,12 +268,28 @@
     <section class="card span-3" id="sv-card" hidden>
       <div class="row">
         <button type="button" id="sv-check" class="go" data-i18n="sv_check">Cross-match with the archives</button>
-        <span data-i18n="sv_check_with">with</span>
-        <label><input type="checkbox" id="sv-dace" checked> DACE</label>
-        <label><input type="checkbox" id="sv-carmenes" checked> CARMENES DR1</label>
-        <label><input type="checkbox" id="sv-vizier" checked> <span data-i18n="sv_check_vizier">the surveys on VizieR</span></label>
         <span class="hint" data-i18n="sv_check_hint">of the stars ticked (of all when none is)</span>
         <span class="hint" id="sv-checkstatus"></span>
+      </div>
+      <!-- the sources: those ticked are cross-matched, and gathered by the
+           batch and the pack -->
+      <div class="row checks svsources" id="sv-sources">
+        <span class="hint" data-i18n="sv_sources">The sources (the cross-match, the batch and the pack):</span>
+        <label><input type="checkbox" id="sv-dace" checked> DACE</label>
+        <label><input type="checkbox" id="sv-carmenes" checked> CARMENES DR1</label>
+        <label><input type="checkbox" data-svsrc="teklu25" checked> Keck HIRES (Teklu+ 2025)</label>
+        <label><input type="checkbox" data-svsrc="cls21" checked> HIRES, APF, Lick (CLS, Rosenthal+ 2021)</label>
+        <label><input type="checkbox" data-svsrc="talor19" checked> Keck HIRES (Tal-Or+ 2019)</label>
+        <label><input type="checkbox" data-svsrc="fischer14" checked> Lick Hamilton (Fischer+ 2014)</label>
+        <label><input type="checkbox" data-svsrc="rvbank20" checked> HARPS, SERVAL (Trifonov+ 2020)</label>
+        <label><input type="checkbox" data-svsrc="papers" checked> <span data-i18n="vz_papers">the star’s papers</span>*</label>
+        <label><input type="checkbox" data-svsrc="tng" checked> <span data-i18n="vz_tng">HARPS-N (TNG archive)</span></label>
+        <label><input type="checkbox" data-svsrc="eso"> <span data-i18n="vz_eso">HARPS, ESPRESSO, NIRPS (ESO archive, as DACE)</span>*</label>
+        <label><input type="checkbox" data-svsrc="neid" checked> <span data-i18n="vz_neid">NEID (NExScI archive)</span></label>
+        <label><input type="checkbox" data-svsrc="sophie" checked> <span data-i18n="vz_sophie">SOPHIE (OHP archive)</span></label>
+        <label><input type="checkbox" data-svsrc="elodie" checked> <span data-i18n="vz_elodie">ELODIE (OHP archive)</span></label>
+        <label><input type="checkbox" data-svsrc="cfht"> <span data-i18n="vz_cfht">SPIRou (CFHT archive, slow)</span>*</label>
+        <span class="hint" data-i18n="sv_sources_later">* asked when a star is gathered, not cross-matched</span>
       </div>
       <div id="sv-overview"></div>
       <p class="hint svlabel" data-i18n="sv_folders">Your files (LBL...), in the folders:</p>

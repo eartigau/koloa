@@ -235,3 +235,37 @@ def test_the_page_with_the_published_velocities(tmp_path):
                for note in res['notes'])
     assert gui.command('gather', dict(target='GJ 436', vizier=False))[-1] \
         == '--no-vizier'
+
+
+def test_the_surveys_papers_and_archives_asked_at_once(tmp_path, monkeypatch):
+    """each survey, the papers and the archives of the observatories are
+    asked at once (each waits here for all the others), and kept in the
+    usual order: the surveys, then the papers, then the archives"""
+    import threading
+    monkeypatch.setattr(published, 'CACHE', str(tmp_path / 'cache'))
+    keys = [survey['key'] for survey in published.SURVEYS
+            if survey['key'] not in published.OPTIONAL]
+    meeting = threading.Barrier(len(keys) + 2, timeout=20)
+
+    def survey(item, ra, dec, timeout=60.0):
+        meeting.wait()
+        return None, 'not in the survey'
+
+    def bibcodes(main, timeout=60.0):
+        meeting.wait()
+        return []
+
+    def archives(ident, folder, asked, refresh=False, have=()):
+        meeting.wait()
+        return [dict(kind='archive', key=key, reference=key, catalogue='',
+                     n=0, instruments={}, file=None, note='nothing')
+                for key in asked]
+    monkeypatch.setattr(published, 'survey_velocities', survey)
+    monkeypatch.setattr(published, 'star_bibcodes', bibcodes)
+    monkeypatch.setattr(published, '_archives', archives)
+    notes = published.fetch(dict(main='GJ 1', aliases=[], ra=1.0, dec=2.0),
+                            str(tmp_path / 'pub'))
+    kinds = [note['kind'] for note in notes]
+    assert kinds == sorted(kinds, key=['survey', 'paper', 'archive'].index)
+    assert [note['key'] for note in notes if note['kind'] == 'survey'] == keys
+    assert {note['kind'] for note in notes} == {'survey', 'archive'}

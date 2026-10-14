@@ -9,6 +9,12 @@
 // the files: one row each (its path, and its instrument when the file
 //   does not say), as many as wanted
 let fileRows = [{ path: '', label: '' }];
+// the page's generation, one more at each New target: an answer the server
+//   gives to a question asked before is dropped, not drawn
+let pageGen = 0;
+// the styles the analysis tab opens with (the plots' heights, the
+//   sliders'), put back by New target
+const OPENING_STYLES = new Map([...document.querySelectorAll('#tab-analysis [id]')].map((el) => [el.id, el.getAttribute('style')]));
 function renderFiles() {
   $('filelist').innerHTML = fileRows.map((row, i) => `<div class="filerow">
       <input type="text" class="fpath" data-row="${i}" value="${esc(row.path)}" autocomplete="off">
@@ -109,7 +115,7 @@ function checkArchives() {
   diskTimer = setTimeout(async () => {
     const target = $('target').value.trim();
     const btn = $('run-gather');
-    if (!target) { onDisk = null; $('ondisk').textContent = ''; btn.textContent = t('run_gather'); return; }
+    if (!target) { onDisk = null; $('ondisk').textContent = ''; drawArchiveRows([]); btn.textContent = t('run_gather'); return; }
     try {
       onDisk = await api(`/api/archives?${new URLSearchParams({ target, root: $('root').value.trim() })}`);
     } catch (err) { onDisk = null; }
@@ -289,9 +295,10 @@ function tile(label, value, wide) {
 //   name (lbl_<OBJECT>_<TEMPLATE>.rdb), in APERO's names, as SIMBAD knows it
 async function starFromFile(path) {
   if (!path || !path.trim() || $('target').value.trim()) return;
+  const gen = pageGen;
   let res;
   try { res = await api(`/api/star_of_file?${new URLSearchParams({ path: path.trim() })}`); } catch (err) { return; }
-  if (!res.target || $('target').value.trim()) return;
+  if (gen !== pageGen || !res.target || $('target').value.trim()) return;
   $('target').value = res.target;
   const from = res.source === 'OBJECT column' ? `OBJECT ${res.raw}` : `${t('file_name')} ${res.raw}`;
   $('targetsrc').textContent = res.apero
@@ -308,8 +315,10 @@ async function resolveStar(refresh) {
   if (!name) return;
   const box = $('ident');
   box.innerHTML = `<p class="hint"><span class="spin"></span> ${esc(t('resolving'))}</p>`;
+  const gen = pageGen;
   try {
     const id = await api(`/api/resolve?${new URLSearchParams({ name, root: $('root').value.trim(), refresh: refresh === true ? '1' : '' })}`);
+    if (gen !== pageGen) return;
     const pos = id.ra != null ? `${id.ra.toFixed(5)}, ${id.dec.toFixed(5)}` : '-';
     const others = [id.gj, id.hd, id.hip].filter(Boolean).map(esc).join(', ') || '-';
     // each period of the literature: a tick that makes it the SHO's
@@ -378,7 +387,7 @@ async function resolveStar(refresh) {
       + tile(t('carmenes'), carm) + '</div>'
       + `<p class="hint">${esc(where)} <button type="button" class="small" id="refresh-star">${esc(t('refresh_star'))}</button></p>`;
   } catch (err) {
-    box.innerHTML = `<p class="hint bad">${esc(err.message)}</p>`;
+    if (gen === pageGen) box.innerHTML = `<p class="hint bad">${esc(err.message)}</p>`;
   }
 }
 
@@ -388,12 +397,15 @@ async function resolveStar(refresh) {
 async function plotVelocities() {
   const note = $('rvnote');
   note.innerHTML = `<span class="spin"></span> ${esc(t('loading'))}`;
+  const gen = pageGen;
   const auto = !filesNow().length && archivesByDefault(await diskState());
+  if (gen !== pageGen) return;
   // plotted anew: the rules of now (not those of a result recalled)
   if (rulesMode === 'legacy') rulesMode = 'on';
   rulesAuto = true;
   try {
     const res = await api(`/api/rv?${rvQuery()}`);
+    if (gen !== pageGen) return;
     // the quick FIP on its own for one instrument; for several, once those
     //   to leave out are unticked (it can take minutes)
     if (await drawVelocities(res, auto ? [t('arch_auto')] : [])) {
@@ -401,7 +413,7 @@ async function plotVelocities() {
       loadPeriodograms();
     } else { pgram = null; drawPeriodograms(); }
   } catch (err) {
-    note.innerHTML = `<span class="bad">${esc(err.message)}</span>`;
+    if (gen === pageGen) note.innerHTML = `<span class="bad">${esc(err.message)}</span>`;
   }
 }
 
@@ -425,6 +437,7 @@ async function refreshVelocities() {
     const res = await api(`/api/rv?${rvQuery()}`);
     if (mine !== rvAgain) return;
     await drawVelocities(res, lastRes.extra);
+    if (mine !== rvAgain) return;
     if (keep && view) { view.x = keep.x; view.y = keep.y; applyView(); }
     loadPeriodograms();
   } catch (err) { /* the plot as it was */ }
@@ -432,6 +445,7 @@ async function refreshVelocities() {
 
 // the velocities by instrument (from /api/rv, or a result recalled)
 async function drawVelocities(res, extra) {
+  const gen = pageGen;
   const note = $('rvnote');
   note.textContent = (extra || []).concat(res.notes || []).join(' · ');
   const div = $('rvplot');
@@ -523,10 +537,14 @@ async function drawVelocities(res, extra) {
       xaxis2: { ...axis, overlaying: 'x', matches: 'x', side: 'top', showgrid: false, zeroline: false,
         tickmode: 'array', tickvals: [], ticktext: [], ticks: 'outside', ticklen: 4 },
     }, { responsive: true, displaylogo: false });
+    // a New target while it was drawn: not drawn
+    const gone = () => { if (gen === pageGen) return false; Plotly.purge(div); div.classList.remove('js-plotly-plot', 'on'); return true; };
+    if (gone()) return false;
     div.removeAllListeners && div.removeAllListeners('plotly_relayout');
     // a legend of several rows (many instruments, a solution added): the
     //   dates of the top axis under it, after every redraw
     await roomForLegend(div);
+    if (gone()) return false;
     div.removeAllListeners && div.removeAllListeners('plotly_afterplot');
     div.on('plotly_afterplot', () => setTimeout(() => roomForLegend(div), 0));
     div.on('plotly_relayout', fromZoom);
@@ -877,6 +895,16 @@ function styleExcluded() {
 let pgram = null;          // the periodograms of the series shown
 let pgAgain = 0;           // the last asked (an older answer is dropped)
 const pgOff = new Set();   // the indicators unticked
+// the indicators seen: a new one is ticked, but for the velocities of parts
+//   of the spectrum (vrad_914nm...: as many as the orders), offered unticked
+const pgSeen = new Set();
+const PG_UNTICKED = /^vrad_\d+(\.\d+)?nm$/i;
+// the height the periodograms share, whatever their number (fewer, each
+//   taller), down to a least height each; doubled when stretched
+const PG_HEIGHT = 720, PG_LEAST = 72;
+let pgTall = false;
+try { pgTall = localStorage.getItem('koloa-pgtall') === '1'; } catch (err) { /* no storage */ }
+$('pgtall').dataset.i18n = pgTall ? 'pg_short' : 'pg_tall';
 let pgFip = null;          // the quick FIP drawn last (its numbered peaks)
 const PG_NAMES = { fwhm: 'CCF FWHM', bis: 'CCF bisector span', contrast: 'CCF contrast', rhk: "log R'HK", smw: 'S index',
   halpha: 'H\u03b1', dlw: 'dLW (CARMENES)', ccf_fwhm: 'CCF FWHM (CARMENES)', ccf_contrast: 'CCF contrast (CARMENES)',
@@ -919,6 +947,11 @@ function drawPeriodograms() {
   // the ticks of the indicators: written again only when they change (a
   //   tick keeps its focus)
   const inds = pgram.series.filter((one) => !['rv', 'window'].includes(one.key));
+  inds.forEach((one) => {
+    if (pgSeen.has(one.key)) return;
+    pgSeen.add(one.key);
+    if (PG_UNTICKED.test(one.key)) pgOff.add(one.key);
+  });
   const sign = `${lang}|${inds.map((one) => `${one.key}:${one.n}`).join(',')}`;
   const box = $('pgchecks');
   if (box.dataset.sign !== sign) {
@@ -928,8 +961,13 @@ function drawPeriodograms() {
       + `<span class="hint">(${one.n})</span></label>`).join('') : `<span class="hint">${esc(t('pg_none'))}</span>`;
   }
   const shown = pgram.series.filter((one) => ['rv', 'window'].includes(one.key) || !pgOff.has(one.key));
-  const nrow = shown.length, row = 118, frame = 126;
+  const stretch = pgTall ? 2 : 1;
+  const nrow = shown.length, frame = 126;
+  const row = Math.max(PG_LEAST * stretch, Math.round(PG_HEIGHT * stretch / nrow));
   const height = frame + row * nrow;
+  $('pgtall').dataset.i18n = pgTall ? 'pg_short' : 'pg_tall';
+  $('pgtall').textContent = t($('pgtall').dataset.i18n);
+  $('pgtall').setAttribute('aria-pressed', pgTall ? 'true' : 'false');
   div.style.height = `${height}px`;
   // a gap of 26 pixels between two rows, whatever their number; the
   //   labels of the lines above the plot, a line of them each
@@ -1013,6 +1051,11 @@ function pgZoom() {
   const full = !pview || !pview.p || !(pview.p[0] > pview.dom[0] * 1.0001 || pview.p[1] < pview.dom[1] * 0.9999);
   Plotly.relayout(div, full ? { 'xaxis.autorange': true } : { 'xaxis.range': [Math.log10(pview.p[0]), Math.log10(pview.p[1])] });
 }
+$('pgtall').addEventListener('click', () => {
+  pgTall = !pgTall;
+  try { localStorage.setItem('koloa-pgtall', pgTall ? '1' : '0'); } catch (err) { /* no storage */ }
+  drawPeriodograms();
+});
 document.addEventListener('change', (e) => {
   const box = e.target.closest('[data-pg]');
   if (!box) return;
@@ -1059,12 +1102,16 @@ async function startQuick() {
   $('remember').disabled = true;
   $('remstate').textContent = '';
   $('fipstatus').innerHTML = `<p class="hint"><span class="spin"></span> ${esc(t('quick_noise'))}</p>`;
+  const gen = pageGen;
   try {
     const opts = shownOptions();
-    quick = { ...(await api('/api/quickfip', { options: opts })), of: JSON.stringify(opts) };
+    const job = await api('/api/quickfip', { options: opts });
+    // a New target meanwhile: the run stopped, not followed
+    if (gen !== pageGen) { api('/api/quickstop', { id: job.id }).catch(() => {}); return; }
+    quick = { ...job, of: JSON.stringify(opts) };
     pollQuick(quick.id);
   } catch (err) {
-    $('fipstatus').innerHTML = `<p class="hint bad">${esc(err.message)}</p>`;
+    if (gen === pageGen) $('fipstatus').innerHTML = `<p class="hint bad">${esc(err.message)}</p>`;
   }
 }
 
@@ -1571,11 +1618,13 @@ function renderFoldButtons() {
 async function forceFold(period, snap, known, transit) {
   if (!quick || !quick.result || !(period > 0 || known || transit)) return;
   $('foldnote').innerHTML = `<span class="spin"></span> ${esc(t('folding'))}`;
+  const gen = pageGen;
   try {
     const last = lastStage();
     const res = await api('/api/fold', { quick: quick.id, period, snap: !!snap, kind: foldModel, options: shownOptions(),
       known: known || '', transit: transit || '', minus: ticked.map(tickModel).filter(Boolean), minus_tag: tickKey(ticked),
       snapq: last && last.job.id ? last.job.id : '' });
+    if (gen !== pageGen) return;
     const folds = quick.result.folds = quick.result.folds || [];
     const old = folds.findIndex((x) => x.id === res.fold.id);
     if (old >= 0) folds[old] = res.fold; else folds.push(res.fold);
@@ -1583,7 +1632,7 @@ async function forceFold(period, snap, known, transit) {
     renderFoldButtons();
     showFold(res.fold.id);
   } catch (err) {
-    $('foldnote').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
+    if (gen === pageGen) $('foldnote').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
   }
 }
 
@@ -1593,15 +1642,17 @@ async function keplerOf(base) {
   if (keplerBusy === base.id) return;
   keplerBusy = base.id;
   $('foldnote').innerHTML = `<span class="spin"></span> ${esc(t('fitting_kepler'))}`;
+  const gen = pageGen;
   try {
     const res = await api('/api/fold', { quick: quick.id, id: base.transit ? undefined : base.id, kind: 'kepler', options: shownOptions(),
       transit: base.transit ? base.transit.name : '', ...minusOf(base.id) });
+    if (gen !== pageGen) return;
     base.kepler = res.fold.kepler;
     if (foldShown === base.id || foldShown === null) showFold(base.id);
   } catch (err) {
-    $('foldnote').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
+    if (gen === pageGen) $('foldnote').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
   } finally {
-    keplerBusy = null;
+    if (gen === pageGen) keplerBusy = null;
   }
 }
 
@@ -1661,15 +1712,17 @@ async function refitFold(id, kind) {
   if (!base || !quick) return;
   const want = tickKey(othersOf(id));
   if ((base.minus_tag || '') === want && (kind !== 'kepler' || base.kepler)) return;
+  const gen = pageGen;
   try {
     const res = await api('/api/fold', { quick: quick.id, id: +id, kind: kind === 'kepler' ? 'kepler' : 'sine', options: shownOptions(), ...minusOf(id) });
+    if (gen !== pageGen) return;
     const folds = quick.result.folds;
     const at = folds.findIndex((x) => x.id === +id);
     res.fold.minus_tag = want;
     if (at >= 0) folds[at] = res.fold;
   } catch (err) {
     base.minus_tag = want;   // not asked again and again
-    $('foldnote').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
+    if (gen === pageGen) $('foldnote').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
   }
 }
 // each ticked signal fitted without the others (one pass, in the order ticked)
@@ -1689,11 +1742,13 @@ async function toggleTick(id) {
   else ticked.push({ id, kind: foldModel === 'kepler' ? 'kepler' : 'sine' });
   renderFoldButtons();
   $('stagestatus').innerHTML = `<p class="hint"><span class="spin"></span> ${esc(t('tick_fitting'))}</p>`;
+  const gen = pageGen;
   try {
     await refitTicked();
+    if (gen !== pageGen) return;
     updateStages();
   } finally {
-    tickBusy = false;
+    if (gen === pageGen) tickBusy = false;
   }
   if (foldShown !== null && foldById(foldShown)) showFold(foldShown);
   else if ($('foldoverlay').checked) redrawSeries();
@@ -1710,8 +1765,13 @@ function updateStages() {
     if (models.some((m) => !m)) continue;
     const st = { key, ids: list.map((tk) => tk.id), label: list.map((tk) => plainLabel(foldById(tk.id))).join(' + '), job: null, error: null };
     stages.set(key, st);
+    const gen = pageGen;
     api('/api/quickfip', { options: { ...shownOptions(), subtract: models, stage: true } })
-      .then((job) => { st.job = job; pollStage(st); })
+      .then((job) => {
+        // a New target meanwhile: the run stopped, not followed
+        if (gen !== pageGen) { api('/api/quickstop', { id: job.id }).catch(() => {}); return; }
+        st.job = job; pollStage(st);
+      })
       .catch((err) => { st.error = err.message; drawStages(); });
   }
   drawStages();
@@ -2218,14 +2278,35 @@ function resetPage() {
   $('tsbuttons').innerHTML = ''; $('tsnote').textContent = ''; tsShown = null; tsOf = null;
   if (window.Plotly) Plotly.purge($('tsplot'));
   $('tsplot').classList.remove('on');
-  $('fipeach').innerHTML = ''; $('fipstatus').innerHTML = '';
-  $('fipstale').textContent = ''; $('remstate').textContent = ''; $('remember').disabled = true;
+  $('fipeach').innerHTML = ''; $('fipstale').textContent = '';
+  $('fipstatus').innerHTML = ''; $('remstate').textContent = ''; $('remember').disabled = true;
+  $('tsmissions').innerHTML = '';
+  // the periodograms: their curves, their ticks and the indicators unticked
+  pgram = null; pgFip = null; pgOff.clear(); pgSeen.clear();
+  $('pgchecks').innerHTML = ''; $('pgchecks').dataset.sign = ''; $('pglegend').innerHTML = ''; $('pgnote').textContent = '';
+  $('pgcard').classList.remove('on');
+  // every plot of the tab, whichever it is, and every style as it opened
+  if (window.Plotly) document.querySelectorAll('#tab-analysis .js-plotly-plot').forEach((el) => { Plotly.purge(el); el.classList.remove('js-plotly-plot'); });
+  document.querySelectorAll('#tab-analysis .plot').forEach((el) => el.classList.remove('on'));
+  document.querySelectorAll('#tab-analysis [id]').forEach((el) => {
+    const style = OPENING_STYLES.get(el.id);
+    if (style == null) el.removeAttribute('style'); else el.setAttribute('style', style);
+  });
+  $('rangetext').textContent = '';
+  // the answers on their way: dropped when they come
+  pageGen += 1; rvAgain += 1; pgAgain += 1;
+  clearTimeout(modelTimer);
   syncMirrors();
   vizierSources();
   view = null;
   quick = null;
-  pgFip = null;
   pview = null;
+  varTarget = ''; varTries = 0; euTarget = null; euTries = 0;
+  daceAuto = true;
+  seriesAligned = false;
+  tsMission = 'auto'; tsLast = null;
+  keplerBusy = null; tickBusy = false;
+  fipNotes = [];
   lastRV = null;
   lastRes = null;
   rvRight = PLOT_MARGIN.r;

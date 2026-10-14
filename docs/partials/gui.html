@@ -198,8 +198,9 @@ koloanui</pre>
         <figcaption>The card: the archives, the sources of VizieR, and the command line it runs (copy it for a
         script). Under the button, a row for each archive says what it gave (found, nothing, unreachable, not
         asked) and follows it while the archives are gathered, with the files of an archive counted as they come;
-        the papers of the star are one row. Gathered once, the archives are read from disk; Refresh asks
-        again.</figcaption>
+        the papers of the star are one row. They are all asked at once, not one after the other: the slowest
+        sets the time (often the tables of the star's papers). Gathered once, the archives are read from disk;
+        Refresh asks again.</figcaption>
       </figure>
       <figure class="lecture-figure">
         <img class="shot" src="figures/gui/runs.png" alt="A run of the GUI with its steps and its log">
@@ -244,8 +245,9 @@ koloanui</pre>
       outlier-aware: the nights the quick FIP holds for outliers are left out of them, as of the series, and
       each dataset has its jitter. Dotted lines: the false-alarm levels, approximate, a day, a synodic month and
       a year, the numbered peaks of the quick FIP, the known planets and the candidates of TESS. Zooming on the
-      FIP zooms on them too. A peak of the velocities that is also in the window or in an indicator is a
-      warning.</p>
+      FIP zooms on them too. They share one height, whatever their number (fewer, each taller), and
+      Expand vertically doubles it; the velocities of parts of the spectrum (vrad_914nm...) are offered
+      unticked. A peak of the velocities that is also in the window or in an indicator is a warning.</p>
       <figure class="lecture-figure">
         <img class="shot" src="figures/gui/periodograms.png" alt="The periodograms of GJ 436: its velocities, their window function and three activity indicators">
         <figcaption>GJ 436 (public data): its velocities, where its planet GJ 436 b is dotted in red, their window
@@ -440,6 +442,9 @@ koloanui</pre>
       </figure>
       <!--AUTO:gui_survey--><!--/AUTO-->
       <ul>
+        <li><b>The sources</b>, one tick each, are those of the cross-match, of the batch and of the pack alike
+        (a star is gathered with those ticked alone): DACE, CARMENES DR1, each survey on VizieR, the star's
+        papers and each archive of an observatory, ESO and the CFHT unticked as for one star.</li>
         <li><b>Cross-match with the archives</b> tells which stars have velocities, without gathering them:
         CARMENES DR1 and the surveys on VizieR by the star's position in their lists, the archives of the
         observatories that a gather of one star asks (HARPS-N at the TNG and NEID from the lists of where they

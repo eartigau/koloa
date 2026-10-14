@@ -172,11 +172,19 @@ async function svFollow() {
   } catch (err) { svTimer = setTimeout(svFollow, 4000); }
 }
 
+// the sources ticked: DACE, CARMENES DR1, and those of VizieR and of the
+//   archives of the observatories (koloa.published.SOURCES), the same for
+//   the cross-match, the batch and the pack
+function svSources() {
+  return { dace: $('sv-dace').checked, carmenes: $('sv-carmenes').checked,
+    sources: [...document.querySelectorAll('[data-svsrc]')].filter((el) => el.checked).map((el) => el.dataset.svsrc) };
+}
+
 async function svCheck() {
   if (!survey) return;
   try {
-    const now = await api('/api/survey/check', { id: survey.id, root: $('root').value.trim(), dace: $('sv-dace').checked,
-      carmenes: $('sv-carmenes').checked, vizier: $('sv-vizier').checked, names: svTicked.size ? [...svTicked] : null });
+    const now = await api('/api/survey/check', { id: survey.id, root: $('root').value.trim(), ...svSources(),
+      names: svTicked.size ? [...svTicked] : null });
     survey.check = now.check;
     svCheckStatus();
     svFollow();
@@ -210,7 +218,7 @@ async function svRun() {
   if (!survey || !svTicked.size) { $('sv-runstatus').textContent = t('sv_none_ticked'); return; }
   try {
     batch = await api('/api/survey/run', { id: survey.id, names: [...svTicked], root: $('root').value.trim(), rules: $('sv-rules').checked,
-      report: $('sv-report').checked, report_fip: $('sv-reportfip').value, options: readOptions('detailed') });
+      report: $('sv-report').checked, report_fip: $('sv-reportfip').value, options: readOptions('detailed'), ...svSources() });
     $('batcharchives').checked = true;
     showTab('batch');
     pollBatch(batch.id);
@@ -223,7 +231,7 @@ async function svPack() {
     const now = await api('/api/survey/pack', { id: survey.id, names: [...svTicked], name: $('sv-name').value, out: $('sv-out').value,
       root: $('root').value.trim(), server_root: $('sv-root').value, jobs: $('sv-jobs').value, rules: $('sv-rules').checked,
       gather: $('sv-gather').checked, tess: $('sv-tess').checked, report: $('sv-report').checked, report_fip: $('sv-reportfip').value,
-      options: readOptions('detailed') });
+      options: readOptions('detailed'), ...svSources() });
     survey.pack = now.pack;
     svPackStatus();
     svFollow();

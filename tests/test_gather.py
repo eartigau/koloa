@@ -147,3 +147,59 @@ def test_what_an_archive_gave_in_words():
         '2 sectors, 150 points (s13 SPOC, s66 QLP)')
     assert _told(dict(status='none', message='not in DR1')) == (
         'nothing: not in DR1')
+
+
+def test_the_archives_asked_all_at_once(tmp_path, monkeypatch):
+    """DACE, CARMENES, VizieR and the archives of the observatories, TESS,
+    the other missions and SIMBAD's variability are asked at once: each
+    waits here for all the others, which it would wait for in vain were
+    they asked one after the other; the velocities merged in the usual
+    order, DACE first"""
+    import threading
+
+    from koloa import archive, published, secular, stars
+    meeting = threading.Barrier(6, timeout=20)
+    met = []
+
+    def wait(what, value):
+        meeting.wait()
+        met.append(what)
+        return value
+
+    def dace_rv(ident, target, folder, api_key=None, refresh=False):
+        os.makedirs(folder, exist_ok=True)
+        data = _series(1).select(np.arange(30) < 12)
+        kg.write_rv(data, os.path.join(folder, 'HARPS15.csv'))
+        return wait('dace', data)
+
+    def carmenes_rv(star, target, folder, refresh=False):
+        data = _series(2)
+        return RVData(data.time, data.rv, data.err,
+                      inst=np.array(['CARMENES'] * data.n), name='star')
+    monkeypatch.setattr(archive, 'resolve', lambda name: dict(
+        main='GJ 1', aliases=[], ra=1.0, dec=2.0, tic='TIC 1'))
+    monkeypatch.setattr(stars, 'stellar', lambda ident: {})
+    monkeypatch.setattr(secular, 'star_astrometry', lambda ident: None)
+    monkeypatch.setattr(secular, 'star_perspective', lambda info: None)
+    monkeypatch.setattr(kg, 'variability',
+                        lambda main: wait('variability', ['BY*']))
+    monkeypatch.setattr(kg, 'dace_rv', dace_rv)
+    monkeypatch.setattr(kg, 'carmenes_star', lambda ra, dec: wait(
+        'carmenes', dict(carmenes_id='J00000+000')))
+    monkeypatch.setattr(kg, 'carmenes_rv', carmenes_rv)
+    monkeypatch.setattr(published, 'fetch', lambda *a, **k: wait(
+        'published', []))
+    monkeypatch.setattr(kg, 'tess_photometry', lambda *a, **k: wait(
+        'tess', dict(tic='TIC 1', sectors=[])))
+    monkeypatch.setattr(kg, 'space_photometry', lambda *a, **k: wait(
+        'space', {}))
+    manifest = kg.gather('GJ 1', root=str(tmp_path), api_key=False)
+    assert sorted(met) == ['carmenes', 'dace', 'published', 'space', 'tess',
+                           'variability']
+    arch = manifest['archives']
+    assert arch['dace']['status'] == 'ok' and arch['carmenes']['status'] == 'ok'
+    assert arch['published']['status'] == 'none'
+    assert arch['tess']['status'] == 'none'
+    assert manifest['rv']['instruments'] == ['HARPS15', 'CARMENES']
+    with open(os.path.join(manifest['folder'], 'target.json')) as handle:
+        assert json.load(handle)['variability'] == ['BY*']

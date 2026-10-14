@@ -303,8 +303,12 @@ def test_each_instrument_has_its_own_quick_fip(tmp_path, monkeypatch):
     assert fold['K_err'] < 0.6 and abs(fold['K'] - 8.0) < 4 * fold['K_err']
     pdf = gui.quicklook_pdf(opts, qid=state['id'])
     assert pdf[:4] == b'%PDF'
+    gui.TESS_LC['some star'] = {}
+    gui.SPACE_HAVE['some star'] = {}
     gui.forget()
     assert state['id'] not in gui.QUICKS
+    # as a GUI just opened: no light curve of the session either
+    assert not gui.TESS_LC and not gui.SPACE_HAVE
 
 
 def test_a_result_remembered_and_recalled(tmp_path, monkeypatch):

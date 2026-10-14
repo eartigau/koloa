@@ -65,6 +65,7 @@ import re
 import time as _time
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -216,7 +217,9 @@ def dace_rv(ident: Dict[str, Any], target: str, folder: str,
     """
     from koloa.dace import fetch, names, rvdata
     for name in names(ident, target):
-        path = os.path.join(folder, f'raw_{name}.csv')
+        # a name as a file's: nothing a disk or a shell could take for
+        #   something else (a * of SIMBAD's, say)
+        path = os.path.join(folder, f'raw_{folder_name(name)}.csv')
         try:
             fetch(name, path, api_key=api_key, refresh=refresh)
         except RuntimeError as err:
@@ -402,7 +405,7 @@ def gather(target: str, root: str = '.', dace: bool = True,
     """
     Everything public about a star, in root/<target> (see the module)
 
-    Each archive is asked in turn; one that fails is reported in the
+    The archives are asked all at once; one that fails is reported in the
     manifest and the others go on.
 
     :param target: str, a name SIMBAD knows (GJ 436, Ross 905, TOI-700...)
@@ -446,11 +449,6 @@ def gather(target: str, root: str = '.', dace: bool = True,
             + (f', {ident["sptype"]}' if ident.get('sptype') else '')
             + (f', {info["star"]["mass"]:.2f} Msun (rough)'
                if info['star'].get('mass') else ''))
-    try:
-        info['variability'] = variability(ident['main'])
-    except Exception as err:  # SIMBAD's TAP is a help, not a need
-        info['variability'] = []
-        log(f'SIMBAD variability: {err}', 'warn')
     # how the star moves (Gaia DR3): an archive of an observatory is
     #   searched by where it was, and the velocities of a pipeline hold
     #   its perspective acceleration, taken out when the series is read
@@ -468,7 +466,6 @@ def gather(target: str, root: str = '.', dace: bool = True,
     manifest: Dict[str, Any] = dict(
         target=target, simbad=ident['main'], folder=os.path.abspath(folder),
         created=_time.strftime('%Y-%m-%d %H:%M:%S'), archives={})
-    series = []
 
     def attempt(key, func):
         """one archive, its failure reported and not raised"""
@@ -480,8 +477,17 @@ def gather(target: str, root: str = '.', dace: bool = True,
             manifest['archives'][key] = dict(status=status, message=text)
             log(f'{key}: {text}', 'warn')
             return None
-    if dace:
-        step('DACE')
+
+    def ask_variability():
+        """the variability of the star (SIMBAD): a help, not a need"""
+        try:
+            info['variability'] = variability(ident['main'])
+        except Exception as err:
+            info['variability'] = []
+            log(f'SIMBAD variability: {err}', 'warn')
+
+    def ask_dace():
+        """the velocities of DACE"""
         row('dace', 'asking')
         ddir = os.path.join(rvdir, 'dace')
         data = attempt('dace', lambda: dace_rv(ident, target, ddir,
@@ -495,20 +501,22 @@ def gather(target: str, root: str = '.', dace: bool = True,
                 _summary(data, files, folder),
                 key=(f'the key of {origin}: may hold data that are not '
                      f'public' if origin else 'none: public data only'))
-            series.append(data)
         elif 'dace' not in manifest['archives']:
             manifest['archives']['dace'] = dict(
                 status='none', message='DACE has no public velocities under '
                 'the names of the star')
-        outcome(_told(manifest['archives']['dace']))
+        log(f'DACE: {_told(manifest["archives"]["dace"])}', 'value')
         row('dace', *state_of(manifest['archives']['dace']))
-    if carmenes:
-        step('CARMENES DR1')
+        return data
+
+    def ask_carmenes():
+        """the velocities of CARMENES DR1"""
         row('carmenes', 'asking')
         cdir = os.path.join(rvdir, 'carmenes')
         star = (attempt('carmenes', lambda: carmenes_star(ident['ra'],
                                                           ident['dec']))
                 if ident.get('ra') is not None else None)
+        data = None
         if star is not None:
             info['carmenes'] = star
             data = attempt('carmenes', lambda: carmenes_rv(star, target, cdir,
@@ -518,15 +526,18 @@ def gather(target: str, root: str = '.', dace: bool = True,
                     _summary(data, [os.path.join(cdir, 'raw.csv'),
                                     os.path.join(cdir, 'CARMENES.csv')],
                              folder), karmn=star['carmenes_id'])
-                series.append(data)
         if 'carmenes' not in manifest['archives']:
             manifest['archives']['carmenes'] = dict(
                 status='none', message='not in CARMENES DR1, or no '
                 'velocity corrected for the nightly zero points')
-        outcome(_told(manifest['archives']['carmenes']))
+        log(f'CARMENES DR1: {_told(manifest["archives"]["carmenes"])}',
+            'value')
         row('carmenes', *state_of(manifest['archives']['carmenes']))
-    if vizier:
-        step('VizieR')
+        return data
+
+    def ask_published():
+        """the velocities of the surveys and papers on VizieR, and of the
+        archives of the observatories (koloa.published)"""
         from koloa.published import fetch as published_fetch
         pdir = os.path.join(rvdir, 'published')
         notes = attempt('published', lambda: published_fetch(
@@ -538,13 +549,15 @@ def gather(target: str, root: str = '.', dace: bool = True,
             nsurv = sum(note['kind'] == 'survey' for note in kept)
             narch = sum(note['kind'] == 'archive' for note in kept)
             npap = len(kept) - nsurv - narch
-            outcome((_told(manifest['archives']['published'])
-                     + (f'; from {nsurv} survey{"s" * (nsurv != 1)}, '
-                        f'{npap} paper{"s" * (npap != 1)} and {narch} '
-                        f'reduction{"s" * (narch != 1)} of the archive of '
-                        f'an observatory' if kept else '')))
-    if tess:
-        step('TESS')
+            log('VizieR and the archives of the observatories: '
+                + _told(manifest['archives']['published'])
+                + (f'; from {nsurv} survey{"s" * (nsurv != 1)}, '
+                   f'{npap} paper{"s" * (npap != 1)} and {narch} '
+                   f'reduction{"s" * (narch != 1)} of the archive of '
+                   f'an observatory' if kept else ''), 'value')
+
+    def ask_tess():
+        """the light curves of TESS"""
         row('tess', 'asking')
         lcs = attempt('tess', lambda: tess_photometry(ident, target, photdir,
                                                       refresh=refresh))
@@ -560,10 +573,12 @@ def gather(target: str, root: str = '.', dace: bool = True,
                 status='none', tic=lcs['tic'],
                 message='no light curve at MAST'))
         if 'tess' in manifest['archives']:
-            outcome(_told(manifest['archives']['tess']))
+            log(f'TESS: {_told(manifest["archives"]["tess"])}', 'value')
             row('tess', *state_of(manifest['archives']['tess']))
-        # the other space missions, where the star lay in their fields
-        step('Kepler, K2, CoRoT')
+
+    def ask_space():
+        """the light curves of the other space missions, where the star
+        lay in their fields"""
         row('space', 'asking')
         space = attempt('space', lambda: space_photometry(
             ident, target, photdir, refresh=refresh))
@@ -586,8 +601,51 @@ def gather(target: str, root: str = '.', dace: bool = True,
                     lc['label'].split()[-1] for lc in sectors)
                     + f' ({sum(len(lc["time"]) for lc in sectors)} points)')
         if space is not None:
-            outcome('; '.join(told) or 'the star is in none of their fields')
+            log('Kepler, K2, CoRoT: ' + ('; '.join(told) or 'the star is in '
+                                         'none of their fields'), 'value')
         row('space', *space_state(manifest['archives']))
+
+    # the archives all at once, not one after the other (DACE can take a
+    #   minute, the papers too, the archive of the TNG half of one): each
+    #   writes its own files and its own entry of the manifest
+    asks = dict(variability=ask_variability)
+    for key, wanted, func in (('dace', dace, ask_dace),
+                              ('carmenes', carmenes, ask_carmenes),
+                              ('published', vizier, ask_published),
+                              ('tess', tess, ask_tess),
+                              ('space', tess, ask_space)):
+        if wanted:
+            asks[key] = func
+    names = dict(dace='DACE', carmenes='CARMENES DR1',
+                 published='VizieR and the archives of the observatories',
+                 tess='TESS', space='Kepler, K2, CoRoT')
+    step(', '.join(names[key] for key in asks if key in names)
+         + ', side by side')
+    with ThreadPoolExecutor(max_workers=len(asks)) as pool:
+        jobs = {key: pool.submit(func) for key, func in asks.items()}
+        found = {key: job.result() for key, job in jobs.items()}
+    # the velocities in the same order as ever: DACE, then CARMENES
+    series = [found[key] for key in ('dace', 'carmenes')
+              if found.get(key) is not None]
+    # what each gave, in one line (the table of the GUI says more)
+    told = []
+    for key in ('dace', 'carmenes', 'published', 'tess', 'kepler', 'k2',
+                'corot'):
+        entry = manifest['archives'].get(key)
+        if not entry or key in ('kepler', 'k2', 'corot') \
+                and entry.get('status') != 'ok':
+            continue
+        sectors = entry.get('sectors') or []
+        if entry.get('status') != 'ok':
+            what = 'nothing'
+        elif 'sectors' in entry:
+            what = f'{len(sectors)} sector{"s" * (len(sectors) != 1)}'
+        else:
+            what = f'{int(entry.get("npoints") or 0)} points'
+        told.append(dict(names, published='VizieR and the observatories',
+                         kepler='Kepler', k2='K2', corot='CoRoT')[key]
+                    + f': {what}')
+    outcome('; '.join(told))
     if series:
         both = merge(series, name=target)
         write_rv(both, os.path.join(rvdir, 'all_rv.csv'))
@@ -675,12 +733,21 @@ def _published(notes: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
                  'of the observatories'))
 
 
-def stale(folder: str) -> bool:
-    """whether the folder of a gathered star is of before koloa kept the
-    astrometry of the star with it, or read the archives of the
-    observatories (koloa.published.ARCHIVES): update() brings it up to
-    date"""
+def _wanted(sources: Optional[Sequence[str]] = None) -> List[str]:
+    """the archives of the observatories a folder should have read: those
+    of the sources asked, or all but those asked only when named"""
     from koloa.published import ARCHIVES, OPTIONAL
+    return [key for key in ARCHIVES if (key not in OPTIONAL
+                                        if sources is None
+                                        else key in sources)]
+
+
+def stale(folder: str, sources: Optional[Sequence[str]] = None) -> bool:
+    """whether the folder of a gathered star is of before koloa kept the
+    astrometry of the star with it, or did not read the archives of the
+    observatories asked (koloa.published.ARCHIVES; sources: those of the
+    sources asked, None for all but ESO and the CFHT): update() brings it
+    up to date"""
     target = os.path.join(folder, 'target.json')
     if not os.path.exists(target):
         return False
@@ -691,10 +758,11 @@ def stale(folder: str) -> bool:
     if not os.path.exists(asked):
         return False
     with open(asked) as handle:
-        return not set(ARCHIVES) - set(OPTIONAL) <= set(json.load(handle))
+        return not set(_wanted(sources)) <= set(json.load(handle))
 
 
-def update(folder: str, have: Sequence[str] = ()) -> bool:
+def update(folder: str, have: Sequence[str] = (),
+           sources: Optional[Sequence[str]] = None) -> bool:
     """
     Bring the folder of a star gathered earlier up to date, with nothing
     asked again of what it has: the astrometry of the star (target.json),
@@ -703,14 +771,16 @@ def update(folder: str, have: Sequence[str] = ()) -> bool:
 
     :param folder: str, the folder of the star
     :param have: the spectrographs you have files of (see gather)
+    :param sources: the sources asked (see gather's vizier_sources): the
+                    archives of the observatories among them, None for all
+                    but ESO and the CFHT
 
     :return: bool, whether anything was added
     """
-    from koloa.published import ARCHIVES, OPTIONAL
     from koloa.published import fetch as published_fetch
     from koloa.secular import star_astrometry, star_perspective
-    usual = [key for key in ARCHIVES if key not in OPTIONAL]
-    if not stale(folder):
+    usual = _wanted(sources)
+    if not stale(folder, sources):
         return False
     target, mfile = (os.path.join(folder, name)
                      for name in ('target.json', 'manifest.json'))

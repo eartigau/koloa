@@ -98,23 +98,48 @@ def sample(body: Dict[str, Any]) -> Dict[str, Any]:
     return state(sid)
 
 
+def _sources(body: Dict[str, Any]) -> Optional[List[str]]:
+    """the surveys, papers and archives of the observatories ticked (keys
+    of koloa.published.SOURCES), None when the page does not say (all but
+    ESO and the CFHT)"""
+    from koloa import published as kpub
+    asked = body.get('sources')
+    if asked is None:
+        return None
+    unknown = [key for key in asked if key not in kpub.SOURCES]
+    if unknown:
+        raise ValueError(f'no source {unknown}')
+    return [key for key in kpub.SOURCES if key in asked]
+
+
+def _asked(body: Dict[str, Any]) -> Dict[str, Any]:
+    """what is asked of the archives of each star: dace, carmenes, and the
+    sources ticked (vizier)"""
+    return dict(dace=body.get('dace', True) is not False,
+                carmenes=body.get('carmenes', True) is not False,
+                vizier=_sources(body))
+
+
 def check(body: Dict[str, Any]) -> Dict[str, Any]:
     """what the archives have of the stars of a sample (those named, or
-    all), in a thread: DACE, CARMENES DR1, the surveys on VizieR"""
+    all), in a thread: DACE, CARMENES DR1, the surveys on VizieR and the
+    archives of the observatories, those ticked"""
     job = SURVEYS[body['id']]
     if (job['check'] or {}).get('status') == 'running':
         raise ValueError('the archives of this sample are being checked')
     stars = _picked(job, body.get('names'))
     root = str(body.get('root') or 'archives')
+    asked = _asked(body)
     job['check'] = dict(status='running', done=0, total=len(stars),
                         error=None, start=time.time())
 
     def work():
         try:
-            survey.check(stars, root, dace=body.get('dace', True)
-                         is not False,
-                         carmenes=body.get('carmenes', True) is not False,
-                         vizier=body.get('vizier', True) is not False,
+            survey.check(stars, root, dace=asked['dace'],
+                         carmenes=asked['carmenes'],
+                         vizier=(body.get('vizier', True) is not False
+                                 and asked['vizier'] != []),
+                         sources=asked['vizier'],
                          progress=lambda done, total: job['check'].update(
                              done=done))
             job['check']['status'] = 'done'
@@ -172,7 +197,8 @@ def run(body: Dict[str, Any]) -> Dict[str, Any]:
                          report=(dict(fip=_number(body.get('report_fip'),
                                                   survey.REPORT_FIP),
                                       folder='reports')
-                                 if body.get('report') else None))
+                                 if body.get('report') else None),
+                         sources=_asked(body))
 
 
 def pack(body: Dict[str, Any]) -> Dict[str, Any]:
@@ -187,6 +213,7 @@ def pack(body: Dict[str, Any]) -> Dict[str, Any]:
     name = str(body.get('name') or '').strip()
     if not name:
         raise ValueError('a name for the batch')
+    asked = _asked(body)
     job['pack'] = dict(status='running', done=0, total=len(stars), star='',
                        error=None, result=None, start=time.time())
 
@@ -207,7 +234,8 @@ def pack(body: Dict[str, Any]) -> Dict[str, Any]:
                 report=bool(body.get('report')),
                 report_fip=_number(body.get('report_fip'),
                                    survey.REPORT_FIP),
-                progress=told)
+                dace=asked['dace'], carmenes=asked['carmenes'],
+                sources=asked['vizier'], progress=told)
             # as the page shows them: from the folder koloa runs in
             made.update(folder_shown=gui._path_shown(made['folder']),
                         tar_shown=(gui._path_shown(made['tar'])

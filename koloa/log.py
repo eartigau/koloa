@@ -14,6 +14,7 @@ Created on 2026-09-27
 """
 import os
 import sys
+import threading
 import warnings
 from datetime import datetime
 from typing import Optional
@@ -32,6 +33,11 @@ _LOG_RESET = '\033[0m'
 #: set to False to silence koloa (the tests do)
 VERBOSE = True
 
+#: one line at a time: the archives of a star are asked side by side, and
+#   two lines said at once must not run into each other (the GUI reads
+#   them one by one)
+_SAYING = threading.Lock()
+
 
 class KoloaWarning(UserWarning):
     """A warning that koloa wants the user to actually read"""
@@ -40,6 +46,13 @@ class KoloaWarning(UserWarning):
 # =============================================================================
 # Define functions
 # =============================================================================
+def _say(line: str):
+    """one whole line to the console, never cut by another thread's"""
+    with _SAYING:
+        sys.stdout.write(line + '\n')
+        sys.stdout.flush()
+
+
 def _timestamp() -> str:
     """
     The current instant as 'YYMMDD HH:MM:SS.SS'
@@ -62,9 +75,9 @@ def log(message: str, level: str = 'info'):
     color = _LOG_COLORS.get(level, _LOG_COLORS['info'])
     # colours only when a human is reading
     if sys.stdout.isatty():
-        print(f'{color}{_timestamp()} | {message}{_LOG_RESET}', flush=True)
+        _say(f'{color}{_timestamp()} | {message}{_LOG_RESET}')
     else:
-        print(f'{_timestamp()} | {message}', flush=True)
+        _say(f'{_timestamp()} | {message}')
 
 
 def step(name: str):
@@ -106,9 +119,9 @@ def row(key: str, state: str, text: str = '', done: Optional[int] = None,
     if os.environ.get('KOLOA_PROGRESS', '') != 'gui':
         return
     text = ' '.join(str(text).split())
-    print(f'{_timestamp()} | row: {key} | {state} | '
+    _say(f'{_timestamp()} | row: {key} | {state} | '
           f'{"" if done is None else int(done)} | '
-          f'{"" if total is None else int(total)} | {text}', flush=True)
+          f'{"" if total is None else int(total)} | {text}')
 
 
 def loud_warning(message: str):

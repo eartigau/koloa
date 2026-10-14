@@ -570,34 +570,17 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
             + (f' ({note["n"]} kept)' if note['n'] else ''),
             'value' if note['n'] else 'info')
 
-    # the surveys, by the position of the star
-    for survey in SURVEYS:
-        if survey['key'] not in asked:
-            continue
-        note = dict(kind='survey', key=survey['key'],
-                    reference=survey['reference'],
-                    catalogue=survey['catalogue'], n=0, instruments={},
-                    file=None, note='')
-        if ident.get('ra') is None:
-            note['note'] = 'no position of the star'
-            notes.append(note)
-            continue
-        row(survey['key'], 'asking')
+    def ask_survey(survey):
+        """a survey's velocities of the star, by its position"""
         try:
-            data, note['note'] = survey_velocities(survey, ident['ra'],
-                                                   ident['dec'], timeout)
+            return survey_velocities(survey, ident['ra'], ident['dec'],
+                                     timeout)
         except (OSError, ValueError, ElementTree.ParseError) as err:
-            data, note['note'] = None, f'VizieR could not be asked ({err})'
-        keep(data, note)
-        row(survey['key'], *_state(note))
-    # the archives of the observatories, beside the papers: the archive of
-    #   the TNG takes 20 s to list the files of a star, the papers a minute
-    beside = ThreadPoolExecutor(max_workers=1)
-    later = beside.submit(_archives, ident, folder,
-                          [key for key in ARCHIVES if key in asked], refresh,
-                          have)
-    # the papers of the star: their VizieR catalogues, their tables of it
-    if papers and ident.get('main'):
+            return None, f'VizieR could not be asked ({err})'
+
+    def ask_papers():
+        """the papers of the star: their VizieR catalogues, their tables of
+        it; what they gave, not kept yet"""
         row('papers', 'asking')
         try:
             codes = star_bibcodes(ident['main'], timeout)
@@ -640,21 +623,58 @@ def fetch(ident: Dict[str, Any], folder: str, refresh: bool = False,
                 # a table koloa does not read (a date that is not of an
                 #   observation, say): left out, not the others
                 return None, f'a table not read ({type(err).__name__}: {err})'
-        with ThreadPoolExecutor(max_workers=max(1, workers // 2)) as pool:
-            answers = list(pool.map(look, found))
-        for (code, cat, title), (data, words) in zip(found, answers):
-            if data is None:
+        # every table at once (up to twice the workers): the slowest one
+        #   sets the time (Gl 408: 19 s for its fourteen, 34 s four at a
+        #   time)
+        with ThreadPoolExecutor(max_workers=max(1, min(len(found),
+                                                       2 * workers))) as pool:
+            return found, list(pool.map(look, found)), len(codes)
+
+    # everything at once: the archives of the observatories (the archive
+    #   of the TNG takes 20 s to list the files of a star), the surveys (a
+    #   few seconds each) and the papers (a minute); kept in this order
+    #   when they are back, the surveys first, so that a spectrum two
+    #   sources have is said to be in the second
+    surveys = [survey for survey in SURVEYS if survey['key'] in asked]
+    with ThreadPoolExecutor(max_workers=len(surveys) + 2) as pool:
+        later = pool.submit(_archives, ident, folder,
+                            [key for key in ARCHIVES if key in asked],
+                            refresh, have)
+        lit = (pool.submit(ask_papers) if papers and ident.get('main')
+               else None)
+        asking = []
+        for survey in surveys:
+            if ident.get('ra') is not None:
+                row(survey['key'], 'asking')
+            asking.append((survey, pool.submit(ask_survey, survey)
+                           if ident.get('ra') is not None else None))
+        for survey, job in asking:
+            note = dict(kind='survey', key=survey['key'],
+                        reference=survey['reference'],
+                        catalogue=survey['catalogue'], n=0, instruments={},
+                        file=None, note='')
+            if job is None:
+                note['note'] = 'no position of the star'
+                notes.append(note)
                 continue
-            # each paper's instruments its own (their own offsets)
-            data = _tidy(data, title)
-            key = re.sub(r'[^A-Za-z0-9]+', '_', cat).strip('_')
-            keep(data, dict(kind='paper', key=key, reference=title,
-                            bibcode=code, catalogue=cat, n=0,
-                            instruments={}, file=None, note=words))
-        row('papers', *papers_state(notes, len(codes)))
-    # the archives of the observatories: the velocities of their pipelines
-    notes += later.result()
-    beside.shutdown()
+            data, note['note'] = job.result()
+            keep(data, note)
+            row(survey['key'], *_state(note))
+        if lit is not None:
+            found, answers, ncodes = lit.result()
+            for (code, cat, title), (data, words) in zip(found, answers):
+                if data is None:
+                    continue
+                # each paper's instruments its own (their own offsets)
+                data = _tidy(data, title)
+                key = re.sub(r'[^A-Za-z0-9]+', '_', cat).strip('_')
+                keep(data, dict(kind='paper', key=key, reference=title,
+                                bibcode=code, catalogue=cat, n=0,
+                                instruments={}, file=None, note=words))
+            row('papers', *papers_state(notes, ncodes))
+        # the archives of the observatories: the velocities of their
+        #   pipelines
+        notes += later.result()
     with open(index, 'w') as handle:
         json.dump(notes, handle, indent=1)
     with open(before, 'w') as handle:

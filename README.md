@@ -222,12 +222,17 @@ lists, and that of CARMENES DR1), a button that cross-matches them with
 the archives and says which have velocities, spectrograph by
 spectrograph (a tick shows only those with some data), your folders of
 LBL files matched to them by name, and the batch of those ticked: run in
-the page, or packed for another machine. From Python:
+the page, or packed for another machine. The sources (DACE, CARMENES DR1,
+each survey on VizieR, the papers, each archive of an observatory) have a
+tick each, the same for the cross-match, the batch and the pack. From
+Python:
 
 ```python
 from koloa import survey
 stars = survey.sample(sptype=('M0', 'M9'), dmax=15.0)        # SIMBAD
-survey.check(stars, 'archives')            # DACE, CARMENES DR1, surveys
+survey.check(stars, 'archives')            # DACE, CARMENES DR1, surveys,
+                                           # archives of observatories
+# or some of them: sources=['teklu25', 'tng', 'neid'] (koloa.published.SOURCES)
 survey.match_files(stars, ['/data/nirps/lbl', '/data/spirou/lbl'])
 ticked = [star for star in stars if survey.has_data(star)]
 made = survey.pack(ticked, 'm_dwarfs_15pc', root='archives',

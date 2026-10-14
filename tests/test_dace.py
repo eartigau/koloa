@@ -110,3 +110,14 @@ def test_a_silent_dace_asked_again(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match='DACE could not be reached'):
         dace.fetch('GJ3', str(tmp_path / 'c.csv'), api_key=False)
     assert len(calls) == 3
+
+
+def test_the_names_dace_is_asked():
+    """the catalogue names first, without spaces; SIMBAD's marks of a star
+    (*, **, V*, NAME) left out: a name that is also a file's"""
+    ident = dict(main='* alf PsA C', hd=None, gj=None, hip=None,
+                 aliases=['** ABC 1', 'V* EV Lac', 'GJ 879'])
+    assert dace.names(ident, '* alf PsA C') == ['alfPsAC', 'GJ879']
+    assert dace.names(dict(main="NAME Barnard's Star", gj='GJ 699',
+                           hip='HIP 87937', aliases=[]), 'GJ 699') == [
+        'GJ699', 'HIP87937', "Barnard'sStar"]
