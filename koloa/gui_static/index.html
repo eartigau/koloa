@@ -193,6 +193,12 @@
         <label><span data-i18n="share_never">never for</span> <input id="share-never" type="text" autocomplete="off" class="wide" placeholder="names, comma-separated"></label>
         <span class="hint" id="share-state"></span>
       </div>
+      <!-- the team's private repository of velocities (koloa.rvstore) -->
+      <div class="row checks share" id="rvsrow">
+        <label><input type="checkbox" id="rvs-push"> <span data-i18n="rvs_push">keep my velocities in the team’s repository (koloa-rvs)</span></label>
+        <button type="button" class="info" data-help="rvs" aria-label="?">i</button>
+        <span class="hint" id="rvs-state"></span>
+      </div>
       <div class="cmd"><pre id="cmd-gather" class="codeblock"></pre><button class="copy" data-copy="cmd-gather" type="button" data-i18n="copy">Copy</button></div>
       <div class="row"><button id="run-gather" class="go" type="button" data-i18n="run_gather">Gather</button><span id="ondisk" class="hint"></span></div>
       <div id="gathertable"></div>

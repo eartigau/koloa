@@ -463,6 +463,13 @@ def gather(target: str, root: str = '.', dace: bool = True,
         log(f'perspective acceleration: {info["perspective"]["value"]:.3f} '
             f'm/s/yr ({info["perspective"]["source"]})', 'value')
     ident = dict(ident, astrometry=info['astrometry'])
+    # what the team's repository has of the star (koloa.rvstore) and the
+    #   folder does not: copied first, read back as if fetched here
+    from koloa import rvstore
+    try:
+        rvstore.pull(ident, folder)
+    except Exception as err:  # a help, not a need
+        log(f'koloa-rvs: {type(err).__name__}: {err}', 'warn')
     manifest: Dict[str, Any] = dict(
         target=target, simbad=ident['main'], folder=os.path.abspath(folder),
         created=_time.strftime('%Y-%m-%d %H:%M:%S'), archives={})
@@ -655,6 +662,12 @@ def gather(target: str, root: str = '.', dace: bool = True,
         json.dump(info, handle, indent=1, default=str)
     with open(os.path.join(folder, 'manifest.json'), 'w') as handle:
         json.dump(manifest, handle, indent=1, default=str)
+    # and what was gathered, to the team's repository (when you keep your
+    #   velocities there)
+    try:
+        rvstore.push(ident, folder, [target])
+    except Exception as err:  # a help, not a need
+        log(f'koloa-rvs: {type(err).__name__}: {err}', 'warn')
     for key, val in manifest['archives'].items():
         if val['status'] == 'ok':
             what = (', '.join(f'{name} {num}' for name, num

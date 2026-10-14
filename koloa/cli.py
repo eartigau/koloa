@@ -237,6 +237,11 @@ def main(argv=None):
     parser.add_argument('--periods', nargs='+', type=float, default=None,
                         help='more periods to test (detailed analysis: '
                              'candidates the archive does not list) [d]')
+    parser.add_argument('--rvs-push', default=None, metavar='ROOT',
+                        help='every star gathered in ROOT, its velocities '
+                             'added to the team\'s private repository '
+                             '(koloa-rvs; koloa.rvstore): those you keep '
+                             'there, never those of the names never to share')
     parser.add_argument('--lbl', nargs='+', default=None, metavar='INST',
                         help='the LBL velocities of the star named instead '
                              'of a file, from the public spectra of the '
@@ -291,6 +296,15 @@ def main(argv=None):
         refresh_lists()
         if not args.filename:
             return
+    if args.rvs_push is not None:
+        from koloa import rvstore
+        if not rvstore.settings().get('push'):
+            parser.error('you do not keep your velocities in koloa-rvs: '
+                         'tick the box of the GUI, or set push in '
+                         f'{rvstore.SETTINGS}')
+        for name, num in rvstore.push_all(args.rvs_push):
+            print(f'{name}: {num} files')
+        return
     if not args.filename and not (args.detailed and args.target):
         parser.error('give a file (or with --gather a star); --detailed '
                      'takes --target alone too')

@@ -2330,6 +2330,7 @@ function newTarget() {
   api('/api/forget', {}).catch(() => {});
   // your choice of sharing is not of the target: read back as it is kept
   loadShare();
+  loadRvs();
   history.replaceState(null, '', location.pathname);
   updateCommands();
   checkArchives();
@@ -2898,6 +2899,24 @@ async function saveShare() {
   shareNote();
 }
 $('share-on').addEventListener('change', saveShare);
+
+// the team's private repository of velocities: read when it can be, written
+//   when you keep yours there (and can)
+let rvsNow = null;
+function rvsNote() {
+  if (!rvsNow) { $('rvs-state').textContent = ''; return; }
+  $('rvs-state').textContent = !rvsNow.read ? t('rvs_none') : rvsNow.push && rvsNow.write ? t('rvs_both')
+    : rvsNow.push ? t('rvs_readonly') : t('rvs_read');
+}
+async function loadRvs() {
+  try { rvsNow = await api('/api/rvs'); } catch (err) { rvsNow = null; }
+  if (rvsNow) $('rvs-push').checked = !!rvsNow.push;
+  rvsNote();
+}
+$('rvs-push').addEventListener('change', async () => {
+  try { rvsNow = await api('/api/rvs', { push: $('rvs-push').checked }); } catch (err) { $('rvs-state').textContent = err.message; return; }
+  rvsNote();
+});
 $('share-never').addEventListener('change', saveShare);
 
 (async () => {
@@ -2905,7 +2924,8 @@ $('share-never').addEventListener('change', saveShare);
   renderBatchFiles();
   aperoState();
   loadShare();
-  langHooks.push(drawPeriodograms, aperoState, showCwd, renderJobs, renderFiles, checkArchives, renderRemembered, dateAxis, renderBatchFiles, renderBatch, shareNote,
+  loadRvs();
+  langHooks.push(drawPeriodograms, aperoState, showCwd, renderJobs, renderFiles, checkArchives, renderRemembered, dateAxis, renderBatchFiles, renderBatch, shareNote, rvsNote,
     () => { if (quick && quick.each) drawEach(quick.each); });
   loadRemembered();
   jobDoneHooks.push(async (job) => {

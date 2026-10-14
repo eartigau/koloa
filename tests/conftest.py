@@ -75,6 +75,11 @@ def no_shared_velocities(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(lblrun, 'SETTINGS', os.path.join(
         os.environ['KOLOA_CONFIG'], 'lbl.json'))
     monkeypatch.setattr(gui, '_LBL_PYTHON', {})
+    # nor is the team's repository of velocities read or written
+    from koloa import rvstore
+    monkeypatch.setattr(rvstore, 'SETTINGS', os.path.join(
+        os.environ['KOLOA_CONFIG'], 'rvs.json'))
+    monkeypatch.setattr(rvstore, '_ACCESS', dict(read=False, write=False))
 
 
 @pytest.fixture(autouse=True)

@@ -1107,6 +1107,16 @@ def lbl_star(target: str, instruments: Sequence[str], lbl_dir: str,
                     start = _time.time()
                     rdb = run(params, python)
                     files = keep(rdb, target, inst, group, root)
+                    # the team's repository (koloa.rvstore), when you keep
+                    #   your velocities there
+                    try:
+                        from koloa import rvstore
+                        from koloa.gather import folder_name
+                        rvstore.push(ident, os.path.join(
+                            root, folder_name(target)), [target])
+                    except Exception as err:  # a help, not a need
+                        log(f'koloa-rvs: {type(err).__name__}: {err}',
+                            'warn')
                     outcome('; '.join(f'{label_} {n}: {path}'
                                       for path, label_, n in files)
                             + f' ({_time.time() - start:.0f} s)')

@@ -2349,6 +2349,21 @@ def lbl_save(body: Dict[str, Any]) -> Dict[str, Any]:
     return lbl_state(str(body.get('target') or ''), str(body.get('root') or ''))
 
 
+def rvs_state() -> Dict[str, Any]:
+    """the team's private repository of velocities (koloa.rvstore): your
+    choice of adding yours, and whether it can be read and written here"""
+    from koloa import rvstore
+    return dict(push=bool(rvstore.settings().get('push')),
+                repo=rvstore.REPO, **rvstore.access())
+
+
+def rvs_save(body: Dict[str, Any]) -> Dict[str, Any]:
+    """your choice of adding your velocities to the repository, kept"""
+    from koloa import rvstore
+    rvstore.save_settings(bool(body.get('push')))
+    return rvs_state()
+
+
 def share_state() -> Dict[str, Any]:
     """
     Whether you share the HARPS-N velocities koloa fetches (koloa.shared):
@@ -4462,6 +4477,8 @@ class Handler(BaseHTTPRequestHandler):
                                        eu=encyclopaedia_fetched()))
             if url.path == '/api/share':
                 return self._json(share_state())
+            if url.path == '/api/rvs':
+                return self._json(rvs_state())
             if url.path == '/api/lbl':
                 return self._json(lbl_state(query.get('target', ''),
                                             query.get('root', ''),
@@ -4640,6 +4657,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(forget())
             if path == '/api/share':
                 return self._json(share_save(body))
+            if path == '/api/rvs':
+                return self._json(rvs_save(body))
             if path == '/api/lbl/check':
                 return self._json(lbl_check(body.get('target', ''),
                                             body.get('root', '')))
