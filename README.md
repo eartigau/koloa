@@ -48,6 +48,7 @@ exactly. That is what makes the outlier-aware FIP affordable.
 | `koloa.kit` | the analysis kit of a star (the GUI's Analysis script): a commented script of the analysis calling koloa's routines, its settings from the page, with the velocities, the archives and the star (YAML) in one .tar.gz that runs offline |
 | `koloa.tng` | the velocities of the pipeline of HARPS-N from the archive of its telescope (the TNG, at the IA2): a star found by where the telescope was pointed (`pointings`, `near`, `files`), the headers of its public CCF files read and kept in a table (`exposures`, with a tqdm bar), and its two reductions (3.7 and espdr) as two datasets of the same spectra (`series`, `velocities`); a source of `koloa.published` |
 | `koloa.shared` | the velocities of HARPS-N that koloa's users fetched, shared in a repository (koloa-harpsn): the table of a star read before the archive (`rows`, `index`), and a star asked to be added after its files were fetched (`request`: only when you share, with `gh auth login`, never for the names you keep apart) |
+| `koloa.lblrun` | LBL velocities from the public spectra of the archives: the spectra of a star fetched (HARPS-N: the espdr S2D_A of the TNG, of the exposures `koloa.tng` keeps), and lbl-rapide (the faster branch of LBL) run on them with a Python of its own, in a process of its own; the rdb kept in the folder of the star (`lbl_star`; `koloa "GJ 436" --lbl HARPSN`, the LBL tab of the GUI) |
 | `koloa.observatories` | the velocities of the pipelines of the other spectrographs, from the archives of their observatories, each asked with no account: HARPS (the catalogue of its velocities), ESPRESSO and NIRPS at ESO (`eso`), NEID at NExScI (`neid`), SOPHIE and ELODIE at the OHP (`sophie`, `elodie`; the errors of ELODIE from Perrier et al. 2003), SPIRou at the CFHT (`cfht`, the CCF of APERO at the CADC); each dataset says whether it still holds the perspective acceleration and whether it defers to a file of the same spectrograph; sources of `koloa.published` |
 | `koloa.published` | the velocities published for one star on VizieR: the surveys (Keck HIRES to 2023, Teklu et al. 2025, and Tal-Or et al. 2019; the California Legacy Survey's HIRES, APF and Lick Hamilton, Rosenthal et al. 2021; the Lick Hamilton of Fischer et al. 2014; HARPS by SERVAL, Trifonov et al. 2020), the star found by its position in their lists of stars (kept on this machine), then the tables of the papers SIMBAD lists for it; each source its own offset, a spectrum published twice kept once |
 | `koloa.gpcheck` | the signals against a GP of the activity (its prior the rotation period of the archive): the likelihood each adds, periodograms whitened by the GP with false-alarm levels from simulations of its noise, and the whole series with the GP |
@@ -171,6 +172,21 @@ and `koloa.gather.load('archives/GJ_436')` reads it back. DACE is filtered
 from some networks: it is then reported as unreachable and the rest goes
 on. Every archive is asked at once, not one after the other: the slowest
 sets the time.
+
+LBL can be run on the public spectra of the archives too (`koloa.lblrun`,
+the LBL tab of the GUI): `koloa "GJ 436" --lbl HARPSN` fetches the espdr
+S2D_A of HARPS-N of the star from the archive of the TNG (about 10 MB
+each; only the exposures koloa keeps from their CCFs, so not those of a
+companion), runs lbl-rapide on them (the telluric lines cleaned, a template
+and a mask made from the star's own spectra, the gradient of temperature
+nearest its Teff projected out) with a Python of its own (an environment
+called lbl-rapide by default; `--lbl-python`), and keeps its rdb as
+`archives/GJ_436/lbl/GJ_436_HARPSN_lbl.rdb`, to be given as a file named
+`HARPS-N (LBL)`. The spectra go in `--lbl-dir` (a few GB a star); those
+already there are neither fetched nor computed again. Gl 408, 51 spectra:
+2 min 43 s to fetch, 5 min 31 s for LBL the first time (its models
+fetched too), a median error of 0.72 m/s against 1.10 m/s for the CCFs of
+the same spectra.
 
 The archives of a star often hold the same spectra more than once
 (HARPS through the ESO pipeline on DACE, through SERVAL on VizieR, in a

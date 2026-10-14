@@ -32,6 +32,7 @@
     <button type="button" class="tab" data-tab="remembered"><span data-i18n="tab_remembered">Remembered targets</span> <span class="count" id="nrem"></span></button>
     <button type="button" class="tab" data-tab="batch" data-i18n="tab_batch">Batch FIP</button>
     <button type="button" class="tab" data-tab="survey" data-i18n="tab_survey">Survey</button>
+    <button type="button" class="tab" data-tab="lbl" data-i18n="tab_lbl">LBL</button>
   </nav>
 
   <main class="layout" id="tab-analysis">
@@ -257,6 +258,38 @@
   </main>
 
   <!-- a survey: a sample from SIMBAD, its archives, its files, its batch -->
+  <!-- LBL: the public spectra of a star fetched, lbl-rapide run on them
+       (koloa.lblrun) -->
+  <main class="layout" id="tab-lbl" hidden>
+    <section class="card span-3">
+      <h2><span data-i18n="lbl_title">LBL velocities from the spectra of the archives</span> <button type="button" class="info" data-help="lbl" aria-label="?">i</button></h2>
+      <p class="hint" data-i18n="lbl_hint">The public spectra of a star fetched from the archives, and LBL (lbl-rapide) run on them: velocities of the spectra themselves, often better than those of the pipelines' CCFs. Heavy: about 10 MB a spectrum, minutes to an hour a star.</p>
+      <div class="row lblform">
+        <label><span data-i18n="lbl_star">Star</span> <input id="lbl-target" type="text" autocomplete="off" placeholder="GJ 436"></label>
+        <button type="button" id="lbl-check" data-i18n="lbl_check">What the archives have</button>
+        <span class="hint" id="lbl-checkstate"></span>
+      </div>
+      <div id="lbl-insts" class="lblinsts"></div>
+      <div class="row lblform">
+        <label><span data-i18n="lbl_data">Folder of LBL's data</span> <span class="picker"><input id="lbl-data" type="text" autocomplete="off" class="wide"><button type="button" data-pick="folder" data-into="lbl-data">...</button></span></label>
+        <label><span data-i18n="lbl_python">Python of LBL</span> <input id="lbl-python" type="text" autocomplete="off" class="wide"></label>
+        <span class="hint" id="lbl-pystate"></span>
+      </div>
+      <div class="row lblform">
+        <label><span data-i18n="lbl_nproc">processes</span> <input id="lbl-nproc" type="number" min="1" step="1" class="short"></label>
+        <label><span data-i18n="lbl_teff">Teff [K]</span> <input id="lbl-teff" type="number" min="2500" max="7000" step="10" class="short" placeholder="auto"></label>
+        <label><input type="checkbox" id="lbl-tellu" checked> <span data-i18n="lbl_tellu">clean the telluric lines first</span></label>
+      </div>
+      <div class="cmd"><pre id="cmd-lbl" class="codeblock"></pre><button class="copy" data-copy="cmd-lbl" type="button" data-i18n="copy">Copy</button></div>
+      <div class="row"><button type="button" id="lbl-run" class="go" data-i18n="lbl_run">Fetch the spectra and run LBL</button>
+        <button type="button" id="lbl-fetch" data-i18n="lbl_fetch">Fetch the spectra only</button>
+        <span class="hint" id="lbl-runstate"></span></div>
+    </section>
+    <section class="card span-3" id="lbl-jobcard" hidden>
+      <div id="lbl-job"></div>
+    </section>
+  </main>
+
   <main class="layout" id="tab-survey" hidden>
     <section class="card span-3">
       <h2><span data-i18n="sv_title">A survey</span> <button type="button" class="info" data-help="survey" aria-label="?">i</button></h2>
@@ -361,5 +394,6 @@
   <script src="/static/common.js"></script>
   <script src="/static/gui.js"></script>
   <script src="/static/survey.js"></script>
+  <script src="/static/lbl.js"></script>
 </body>
 </html>

@@ -619,8 +619,9 @@ def series(rows: List[Dict[str, Any]], name: Optional[str] = None
     contrast, and its bisector span in the newer reduction
 
     :return: list of (RVData [m/s, BJD - 2400000], dict: reduction, key,
-             reference, label, n, mask, version, objects, left (why
-             exposures were left out, in words))
+             reference, label, n, mask, files (those kept, in the order of
+             the velocities), version, objects, left (why exposures were
+             left out, in words))
     """
     out = []
     for red, about in REDUCTIONS.items():
@@ -679,6 +680,8 @@ def series(rows: List[Dict[str, Any]], name: Optional[str] = None
                       name=name, indicators=more)
         out.append((data, dict(
             about, reduction=red, n=int(data.n), mask=best,
+            files=[str(mine[it]['file'])
+                   for it in np.where(good)[0][order]],
             version=max(set(version), key=version.count),
             objects=sorted({str(row['object']) for row, ok
                             in zip(mine, good) if ok}),

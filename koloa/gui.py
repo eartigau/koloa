@@ -123,6 +123,30 @@ def command(action: str, opts: Dict[str, Any]) -> List[str]:
     rotation = _number(opts.get('rotation'))
     if action == 'archive':
         return ['--refresh-archive']
+    if action == 'lbl':
+        from koloa import lblrun
+        if not target:
+            raise ValueError('a SIMBAD name for its LBL velocities')
+        insts = [key for key in lblrun.INSTRUMENTS
+                 if opts.get(f'lbl_{key}')]
+        if not insts:
+            raise ValueError('tick an instrument')
+        args = [target, '--lbl'] + insts + [
+            '--archives', str(opts.get('root') or 'archives'),
+            '--lbl-dir', str(opts.get('lbl_dir') or 'lbl_data')]
+        if str(opts.get('lbl_python') or '').strip():
+            args += ['--lbl-python', str(opts['lbl_python']).strip()]
+        nproc = _number(opts.get('nproc'), int)
+        if nproc:
+            args += ['--nproc', str(nproc)]
+        teff = _number(opts.get('teff'))
+        if teff:
+            args += ['--teff', f'{teff:g}']
+        if opts.get('tellu') is False:
+            args.append('--no-tellu')
+        if opts.get('fetch_only'):
+            args.append('--fetch-only')
+        return args
     if action == 'gather':
         if not target:
             raise ValueError('a SIMBAD name to gather the archives of')
@@ -321,7 +345,7 @@ class Job:
                     steps=[dict(step, elapsed=(step['end'] or now)
                                 - step['start']) for step in self.steps],
                     nlines=len(self.lines), lines=self.lines[since:],
-                    outputs=self.outputs,
+                    outputs=self.outputs, rows=dict(self.rows),
                     files=self.files() if self.status != 'running' else [],
                     report=report[0] if report else None)
 
@@ -2237,6 +2261,88 @@ def forget() -> Dict[str, Any]:
     for kept in (TESS_LC, TESS_WHY, SPACE_LC, SPACE_HAVE):
         kept.clear()
     return dict(kept=[job.id for job in JOBS.values()])
+
+
+#: what the Python of LBL said of itself, by its path (asked once)
+_LBL_PYTHON: Dict[str, Dict[str, Any]] = {}
+
+
+def lbl_state(target: str = '', root: str = '', data: str = ''
+              ) -> Dict[str, Any]:
+    """
+    The tab of LBL: your choices (the Python of LBL, the folder of its
+    data, its processes), whether that Python runs LBL, and for each
+    instrument the spectra of the star there and the rdb kept
+
+    :return: dict, python, data, nproc, check (ok, version, where, error),
+             instruments (key, label, dataset, archive, size, there, rdb,
+             npoints, made), running (the id of the LBL running)
+    """
+    from koloa import lblrun
+    from koloa.gather import folder_name
+    mine = lblrun.settings()
+    python = lblrun.find_python()
+    if python not in _LBL_PYTHON:
+        _LBL_PYTHON[python] = lblrun.check_python(python)
+    data = data or mine.get('data') or 'lbl_data'
+    root = root or 'archives'
+    out = []
+    for key, about in lblrun.INSTRUMENTS.items():
+        one = dict(key=key, label=about['label'], dataset=about['dataset'],
+                   archive=about['archive'], size=about['size'], there=0,
+                   rdb='', npoints=0, made='')
+        if target:
+            science = os.path.join(
+                os.path.expanduser(data), f'{about["lbl"]}_{about["source"]}',
+                'science', lblrun.object_name(target))
+            if os.path.isdir(science):
+                one['there'] = len([name for name in os.listdir(science)
+                                    if name.endswith('.fits')])
+            name = folder_name(target)
+            rdb = os.path.join(root, name, 'lbl', f'{name}_{key}_lbl.rdb')
+            if os.path.exists(rdb):
+                with open(rdb) as handle:
+                    one['npoints'] = max(0, sum(1 for _ in handle) - 2)
+                one.update(rdb=os.path.abspath(rdb), made=time.strftime(
+                    '%Y-%m-%d %H:%M', time.localtime(os.path.getmtime(rdb))))
+        out.append(one)
+    running = next((job.id for job in JOBS.values() if job.action == 'lbl'
+                    and job.returncode is None), None)
+    return dict(python=python, data=data,
+                nproc=int(mine.get('nproc') or 0) or max(
+                    1, (os.cpu_count() or 2) // 2),
+                cores=os.cpu_count() or 1, check=_LBL_PYTHON[python],
+                instruments=out, running=running)
+
+
+def lbl_check(target: str, root: str = '') -> Dict[str, Any]:
+    """the spectra the archives have of a star, for each instrument of
+    LBL (the exposures koloa keeps from their CCFs)"""
+    from koloa import lblrun
+    if not str(target).strip():
+        raise ValueError('a SIMBAD name')
+    out = {}
+    for key, about in lblrun.INSTRUMENTS.items():
+        try:
+            names = lblrun.harpsn_spectra(target, root or 'archives')
+            out[key] = dict(n=len(names), mb=round(len(names) * about['size']))
+        except (RuntimeError, ValueError, OSError) as err:
+            out[key] = dict(n=0, mb=0, error=str(err))
+    return out
+
+
+def lbl_save(body: Dict[str, Any]) -> Dict[str, Any]:
+    """your choices for LBL, kept"""
+    from koloa import lblrun
+    keep = {}
+    if 'python' in body:
+        keep['python'] = str(body.get('python') or '').strip()
+    if 'data' in body:
+        keep['data'] = str(body.get('data') or '').strip()
+    if 'nproc' in body:
+        keep['nproc'] = _number(body.get('nproc'), int) or 0
+    lblrun.save_settings(**keep)
+    return lbl_state(str(body.get('target') or ''), str(body.get('root') or ''))
 
 
 def share_state() -> Dict[str, Any]:
@@ -4352,6 +4458,10 @@ class Handler(BaseHTTPRequestHandler):
                                        eu=encyclopaedia_fetched()))
             if url.path == '/api/share':
                 return self._json(share_state())
+            if url.path == '/api/lbl':
+                return self._json(lbl_state(query.get('target', ''),
+                                            query.get('root', ''),
+                                            query.get('data', '')))
             if url.path == '/api/resolve':
                 return self._json(resolve_star(
                     query.get('name', ''), query.get('root', ''),
@@ -4459,6 +4569,16 @@ class Handler(BaseHTTPRequestHandler):
                 elif body['action'] == 'archive':
                     from koloa.archive import CACHE
                     outputs = CACHE
+                elif body['action'] == 'lbl':
+                    # one LBL at a time: it takes the cores of the machine
+                    from koloa.gather import folder_name
+                    if any(job.action == 'lbl' and job.returncode is None
+                           for job in JOBS.values()):
+                        raise ValueError('LBL is running already: one star '
+                                         'at a time')
+                    outputs = os.path.join(opts.get('root') or 'archives',
+                                           folder_name(opts['target']),
+                                           'lbl')
                 else:
                     outputs = opts.get('outdir') or 'koloa_output'
                 job = Job(body['action'], args, outputs)
@@ -4516,6 +4636,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(forget())
             if path == '/api/share':
                 return self._json(share_save(body))
+            if path == '/api/lbl/check':
+                return self._json(lbl_check(body.get('target', ''),
+                                            body.get('root', '')))
+            if path == '/api/lbl/settings':
+                return self._json(lbl_save(body))
             if path == '/api/quickstop':
                 return self._json(stop_quick(body.get('id', '')))
             if path == '/api/batch':

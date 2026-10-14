@@ -70,6 +70,11 @@ def no_shared_velocities(tmp_path_factory, monkeypatch):
     monkeypatch.delenv('KOLOA_SHARE', raising=False)
     monkeypatch.setattr(shared, 'SETTINGS', os.path.join(
         os.environ['KOLOA_CONFIG'], 'share.json'))
+    # nor those of LBL, and its Python is asked again in each test
+    from koloa import gui, lblrun
+    monkeypatch.setattr(lblrun, 'SETTINGS', os.path.join(
+        os.environ['KOLOA_CONFIG'], 'lbl.json'))
+    monkeypatch.setattr(gui, '_LBL_PYTHON', {})
 
 
 @pytest.fixture(autouse=True)

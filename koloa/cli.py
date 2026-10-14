@@ -18,6 +18,8 @@ koloa from the command line.
     koloanui                                     # koloa --gui, in one word
     koloa "GJ 436" --gather archives             # DACE, CARMENES DR1 and
                                                  # TESS in archives/GJ_436
+    koloa "GJ 436" --lbl HARPSN                  # its HARPS-N spectra, LBL
+                                                 # run on them (lbl-rapide)
 
 Created on 2026-09-27
 
@@ -235,6 +237,34 @@ def main(argv=None):
     parser.add_argument('--periods', nargs='+', type=float, default=None,
                         help='more periods to test (detailed analysis: '
                              'candidates the archive does not list) [d]')
+    parser.add_argument('--lbl', nargs='+', default=None, metavar='INST',
+                        help='the LBL velocities of the star named instead '
+                             'of a file, from the public spectra of the '
+                             'archives (koloa.lblrun): the spectra fetched '
+                             'into --lbl-dir, lbl-rapide run on them, the '
+                             'rdb kept in ARCHIVES/<star>/lbl/; INST: HARPSN')
+    parser.add_argument('--lbl-dir', default=None, metavar='DIR',
+                        help='with --lbl: the folder of LBL\'s data (the '
+                             'spectra, a few GB a star; the choice kept, '
+                             'else lbl_data)')
+    parser.add_argument('--lbl-python', default=None, metavar='PYTHON',
+                        help='with --lbl: the Python that runs LBL (the '
+                             'choice kept, else that of an environment '
+                             'called lbl-rapide)')
+    parser.add_argument('--archives', default='archives', metavar='ROOT',
+                        help='with --lbl: the folder of the folders of the '
+                             'stars, where the rdb is kept')
+    parser.add_argument('--nproc', type=int, default=None,
+                        help='with --lbl: the processes of LBL\'s compute')
+    parser.add_argument('--teff', type=float, default=None,
+                        help='with --lbl: the temperature of the star [K] '
+                             '(koloa\'s guess otherwise)')
+    parser.add_argument('--no-tellu', action='store_true',
+                        help='with --lbl: no cleaning of the telluric lines')
+    parser.add_argument('--no-fetch', action='store_true',
+                        help='with --lbl: the spectra already there only')
+    parser.add_argument('--fetch-only', action='store_true',
+                        help='with --lbl: the spectra fetched, LBL not run')
     args = parser.parse_args(argv)
     if args.gui:
         from koloa.gui import serve
@@ -258,6 +288,16 @@ def main(argv=None):
     if not args.filename and not (args.detailed and args.target):
         parser.error('give a file (or with --gather a star); --detailed '
                      'takes --target alone too')
+    if args.lbl is not None:
+        from koloa import lblrun
+        lblrun.lbl_star(args.filename[0], [one.upper() for one in args.lbl],
+                        args.lbl_dir or lblrun.settings().get('data')
+                        or 'lbl_data', root=args.archives,
+                        python=args.lbl_python, nproc=args.nproc,
+                        teff=args.teff,
+                        tellu=False if args.no_tellu else None,
+                        get=not args.no_fetch, compute=not args.fetch_only)
+        return
     if args.gather is not None:
         from koloa.gather import gather
         gather(args.filename[0], args.gather, dace=not args.no_dace,
