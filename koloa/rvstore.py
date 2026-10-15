@@ -12,7 +12,8 @@ A star is a folder of the repository named by SIMBAD's main identifier
     stars/<star>/manifest.json    what each archive gave (no local path)
     stars/<star>/rv/...           the velocities: dace/, carmenes/,
                                   published/ (VizieR, the observatories)
-    stars/<star>/lbl/...          the rdb of LBL (koloa.lblrun), labels.json
+    stars/<star>/lbl/...          the rdb of LBL (koloa.lblrun), labels.json,
+                                  perspective.json
 
 The light curves are not kept (phot/, several MB a star).
 
@@ -115,15 +116,53 @@ def _gh(*args: str, body: Optional[Dict[str, Any]] = None,
     return done.returncode, answer
 
 
-def access() -> Dict[str, bool]:
-    """whether the repository can be read here, and written (gh logged
-    in, its collaborators); asked once a process"""
-    if not _ACCESS:
+def _why(answer: Any, otherwise: str = '') -> str:
+    """what GitHub said of a request it refused (its message)"""
+    if isinstance(answer, dict) and answer.get('message'):
+        return str(answer['message']) + (f' (HTTP {answer["status"]})'
+                                         if answer.get('status') else '')
+    return otherwise
+
+
+def access(write: bool = False) -> Dict[str, Any]:
+    """
+    What can be done with the repository here (gh logged in, one of its
+    collaborators): read, write, and why not (what GitHub said). Asked once
+    a process.
+
+    A token may do less than its account (a fine-grained one without the
+    contents of the repository: GitHub then gives the account's role and
+    refuses the rest), so the contents themselves are asked; with write, a
+    write is tried too: the empty content, which git has already and which
+    changes nothing of the repository. Without it, write is what the role
+    of the account allows.
+    """
+    if 'read' not in _ACCESS:
         code, answer = _gh(f'repos/{REPO}', timeout=30.0)
         perms = (answer or {}).get('permissions') or {} if code == 0 else {}
-        _ACCESS.update(read=bool(perms.get('pull')),
-                       write=bool(perms.get('push')))
-    return dict(_ACCESS)
+        read = bool(perms.get('pull'))
+        why = '' if read else _why(answer, 'gh not logged in, or not one '
+                                           'of its collaborators')
+        if read:
+            code, ref = _gh(f'repos/{REPO}/git/ref/heads/{BRANCH}',
+                            timeout=30.0)
+            if code != 0:
+                read, why = False, _why(ref, 'its contents refused')
+        _ACCESS.update(read=read, role=read and bool(perms.get('push')),
+                       why=why)
+    if write and 'write' not in _ACCESS:
+        able = bool(_ACCESS.get('role'))
+        if able:
+            code, blob = _gh(f'repos/{REPO}/git/blobs', '--method', 'POST',
+                             body=dict(content='', encoding='base64'),
+                             timeout=30.0)
+            able = code == 0 and bool(blob)
+            if not able:
+                _ACCESS['why'] = _why(blob, 'a write refused')
+        _ACCESS['write'] = able
+    return dict(read=bool(_ACCESS.get('read')),
+                write=bool(_ACCESS.get('write', _ACCESS.get('role'))),
+                why=str(_ACCESS.get('why') or ''))
 
 
 def key_of(ident: Dict[str, Any]) -> str:
@@ -233,13 +272,21 @@ def push(ident: Dict[str, Any], folder: str,
         log(f'koloa-rvs: {ident.get("main")} is among the names never to '
             f'share: not written', 'info')
         return 0
-    if not access().get('write'):
+    can = access(write=True)
+    if not can['write']:
+        if always or can['read']:
+            # asked to (a batch), or a collaborator whose token may not
+            log(f'koloa-rvs: {ident.get("main")} not written: '
+                f'{can["why"] or "the repository may only be read here"}',
+                'warn')
         return 0
     prefix = f'stars/{key_of(ident)}/'
     ours = kept(folder)
     for _ in range(TRIES):
         head, files = _tree()
         if head is None:
+            log(f'koloa-rvs: {ident.get("main")} not written: the '
+                f'repository could not be read', 'warn')
             return 0
         new = {rel: data for rel, data in ours.items()
                if files.get(prefix + rel) != _blob_sha(data)}
@@ -251,7 +298,8 @@ def push(ident: Dict[str, Any], folder: str,
                              body=dict(content=base64.b64encode(
                                  data).decode(), encoding='base64'))
             if code != 0 or not blob:
-                log(f'koloa-rvs: {rel} not written', 'warn')
+                log(f'koloa-rvs: {rel} not written: '
+                    f'{_why(blob, "refused")}', 'warn')
                 return 0
             entries.append(dict(path=prefix + rel, mode='100644', type='blob',
                                 sha=blob['sha']))

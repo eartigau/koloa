@@ -193,7 +193,16 @@ left out. In the near infrared, a star whose
 spectra span less than 10 km/s of BERV uses the template of GJ 699
 (`--template` names another): its own would keep the residuals of the
 telluric lines. The spectra go in `--lbl-dir` (a few GB a star); those
-already there are neither fetched nor computed again.
+already there are neither fetched nor computed again. LBL puts each
+spectrum at rest with the BERV of its pipeline, so its velocities hold
+the perspective acceleration of the star as the pipeline's do: those of
+ESO (HARPS-N at the TNG, NIRPS, ESPRESSO) and of SOPHIE do, APERO's do
+not. It is taken out of the files koloa keeps (from the Gaia astrometry
+of the star, said in `perspective.json` beside them), which are then on
+the footing of APERO's: the 196 velocities of HARPS-N of Barnard's star
+(2013 to 2020) drift by 4.94 m/s/yr as LBL gives them, where 4.54 is
+expected, with an rms of 11.6 m/s; by 0.40 m/s/yr once it is taken out,
+with an rms of 2.4 m/s.
 
 | | spectra | fetched | LBL | median error | rms | the CCFs of the same spectra |
 |---|---|---|---|---|---|---|

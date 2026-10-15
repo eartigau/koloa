@@ -16,7 +16,7 @@ import sys
 
 import pytest
 
-from koloa import lblrun
+from koloa import lblrun, secular
 
 
 def _group(names=('a.fits.gz',)):
@@ -81,11 +81,31 @@ def test_a_run_and_its_rdb_kept(tmp_path):
     finally:
         del os.environ['PYTHONPATH']
     assert said == ['computing']
+    # the star as gathered, with how it moves
+    star = tmp_path / 'archives' / 'GJ_436'
+    star.mkdir(parents=True)
+    astro = dict(pmra=896.3, pmdec=-813.7, parallax=102.3)
+    (star / 'target.json').write_text(json.dumps(dict(main='Ross 905',
+                                                      astrometry=astro)))
     kept = lblrun.keep(rdb, 'GJ 436', 'HARPSN', _group(),
                        str(tmp_path / 'archives'))
     assert kept[0][0].endswith('archives/GJ_436/lbl/GJ_436_HARPSN_lbl.rdb')
     assert kept[0][1:] == ('HARPS-N (LBL)', 1)
-    assert open(kept[0][0]).read().splitlines()[2] == '1\t2\t3'
+    # the perspective acceleration the pipeline leaves taken out of the
+    #   velocities (not of their errors), and said beside them
+    acc = secular.perspective_acceleration(**astro)[0]
+    drift = acc * (1.0 - secular.PERSPECTIVE_TREF) / 365.25
+    assert open(kept[0][0]).read().splitlines()[2] == \
+        f'1\t{2.0 - drift!r}\t3'
+    taken = json.loads((star / 'lbl' / 'perspective.json').read_text())
+    assert taken['GJ_436_HARPSN_lbl.rdb']['value'] == pytest.approx(acc)
+    # APERO's are left as they are
+    spirou = lblrun.keep(rdb, 'GJ 436', 'SPIROU', _group(),
+                         str(tmp_path / 'archives'))
+    assert open(spirou[0][0]).read().splitlines()[2] == '1\t2\t3'
+    assert 'GJ_436_SPIROU_lbl.rdb' not in json.loads(
+        (star / 'lbl' / 'perspective.json').read_text())
+    os.remove(spirou[0][0])
     # a file per era (SOPHIE and SOPHIE+), their names beside them
     two = dict(_group(), eras=[('', 'SOPHIE (LBL)', -1e9, 2.0),
                                ('p', 'SOPHIE+ (LBL)', 2.0, 1e9)])

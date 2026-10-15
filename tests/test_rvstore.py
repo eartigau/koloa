@@ -145,6 +145,43 @@ def test_no_access(tmp_path, monkeypatch):
     monkeypatch.setattr(rvstore, '_ACCESS', {})
     rvstore.save_settings(True)
     _star(str(tmp_path / 'GJ_1'))
-    assert rvstore.access() == dict(read=False, write=False)
+    assert rvstore.access() == dict(
+        read=False, write=False,
+        why='gh not logged in, or not one of its collaborators')
     assert rvstore.pull(dict(main='GJ 1'), str(tmp_path / 'x')) == 0
+    assert rvstore.push(dict(main='GJ 1'), str(tmp_path / 'GJ_1')) == 0
+
+
+def test_narrow_token(tmp_path, monkeypatch):
+    """a token that may do less than its account (GitHub gives the role of
+    the account, and refuses the contents): said, and nothing written"""
+    repo = Repo()
+    refused = dict(message='Resource not accessible by personal access '
+                           'token', status='403')
+
+    def metadata_only(*args, **kwargs):
+        if args[0] == f'repos/{rvstore.REPO}':
+            return repo(*args, **kwargs)
+        return 1, refused
+
+    monkeypatch.setattr(rvstore, '_gh', metadata_only)
+    monkeypatch.setattr(rvstore, '_ACCESS', {})
+    rvstore.save_settings(True)
+    _star(str(tmp_path / 'GJ_1'))
+    assert rvstore.access(write=True) == dict(
+        read=False, write=False, why='Resource not accessible by personal '
+                                     'access token (HTTP 403)')
+    assert rvstore.push(dict(main='GJ 1'), str(tmp_path / 'GJ_1'),
+                        always=True) == 0
+
+    # the contents may be read, not written
+    def read_only(*args, **kwargs):
+        if '--method' in args:
+            return 1, refused
+        return repo(*args, **kwargs)
+
+    monkeypatch.setattr(rvstore, '_gh', read_only)
+    monkeypatch.setattr(rvstore, '_ACCESS', {})
+    assert rvstore.access() == dict(read=True, write=True, why='')
+    assert rvstore.access(write=True)['write'] is False
     assert rvstore.push(dict(main='GJ 1'), str(tmp_path / 'GJ_1')) == 0

@@ -94,20 +94,30 @@ TNG_FILES = 'http://archives.ia2.inaf.it/files/tng/'
 SOPHIE_E2DS = ('http://atlas.obs-hp.fr/sophie/sophie.cgi?c=i&a=mime:'
                'application/fits&o=sophie:%5Be2ds,{seq}%5D')
 #: the instruments: what they are called, where their spectra are from,
-#: about how large one is [MB]
+#: about how large one is [MB], and whether their velocities hold the
+#: perspective acceleration of the star (koloa.secular): LBL puts a
+#: spectrum at rest with the BERV of its pipeline, so they hold it as the
+#: velocities of that pipeline do (koloa.observatories): those of ESO
+#: (espdr: HARPS-N at the TNG, NIRPS, ESPRESSO) and of SOPHIE do, APERO's
+#: do not. HARPS-N on Barnard's star: 4.94 m/s/yr from 2013 to 2020, where
+#: 4.54 is expected
 INSTRUMENTS: Dict[str, Dict[str, Any]] = {
     'HARPSN': dict(label='HARPS-N', size=9.8, classes=['HARPSN_ESO'],
-                   keys=[''], archive='the archive of the TNG (espdr S2D_A)'),
+                   keys=[''], archive='the archive of the TNG (espdr S2D_A)',
+                   perspective=True),
     'SOPHIE': dict(label='SOPHIE', size=4.2, classes=['SOPHIE_None'],
-                   keys=['', 'HE'], archive='the archive of the OHP (e2ds)'),
+                   keys=['', 'HE'], archive='the archive of the OHP (e2ds)',
+                   perspective=True),
     'SPIROU': dict(label='SPIRou', size=18.4, classes=['SPIROU_CADC'],
-                   keys=[''], archive='the CADC (APERO t.fits)'),
+                   keys=[''], archive='the CADC (APERO t.fits)',
+                   perspective=False),
     'NIRPS': dict(label='NIRPS', size=24.0,
                   classes=['NIRPS_HE_ESO', 'NIRPS_HA_ESO'], keys=['', 'HA'],
-                  archive='the archive of ESO (S2D, telluric model)'),
+                  archive='the archive of ESO (S2D, telluric model)',
+                  perspective=True),
     'ESPRESSO': dict(label='ESPRESSO', size=65.0, classes=['ESPRESSO_None'],
                      keys=['', 'HR11', 'HR21', 'HR42', 'UHR11', 'MR42', 'MR84'],
-                     archive='the archive of ESO (S2D_A)'),
+                     archive='the archive of ESO (S2D_A)', perspective=True),
 }
 #: the deepest telluric line kept in a spectrum of NIRPS from ESO (its
 #: transmission in ESO's model); deeper, the pixel is left out
@@ -130,8 +140,10 @@ BERV_KEYS = {'SPIROU': ('FluxAB', 'BERV'), 'NIRPS_HE': (0, 'ESO QC BERV'),
 GRADIENTS = (3000, 3500, 4000, 4500, 5000, 5500, 6000)
 #: the files fetched at once
 WORKERS = 4
-#: the names of the datasets of the files kept, beside them
+#: the names of the datasets of the files kept, beside them, and the
+#: perspective acceleration taken out of them
 LABELS = 'labels.json'
+PERSPECTIVE = 'perspective.json'
 #: how long a spectrum left out (not public yet, a reduction LBL does not
 #: read) is not asked for again [days]
 LEFT_AGE = 30.0
@@ -951,16 +963,33 @@ def run(params: Dict[str, Any], python: str,
     return rdb
 
 
+def _velocities(head: str) -> List[int]:
+    """the columns of an rdb of LBL that are velocities (vrad, the
+    achromatic one, those of each band; not the chromatic slope)"""
+    return [num for num, col in enumerate(head.split('\t'))
+            if col.startswith('vrad') and col != 'vrad_chromatic_slope']
+
+
 def keep(rdb: str, target: str, inst: str, group: Dict[str, Any],
-         root: str = 'archives') -> List[Tuple[str, str, int]]:
+         root: str = 'archives', ident: Optional[Dict[str, Any]] = None
+         ) -> List[Tuple[str, str, int]]:
     """
     The rdb of LBL in the folder of the star, under its name, a file per
     dataset (era) with velocities (archives/GJ_436/lbl/
-    GJ_436_SOPHIEp_lbl.rdb), their names in labels.json beside them
+    GJ_436_SOPHIEp_lbl.rdb), their names in labels.json beside them.
+
+    The perspective acceleration of the star is taken out of the velocities
+    of an instrument that holds it (INSTRUMENTS), so that the files are on
+    the footing of those of APERO, which do not: what was taken out in
+    perspective.json beside them (the rdb of LBL itself is left as it is)
+
+    :param ident: the star as resolved, with its astrometry (that of the
+                  folder of the star when None)
 
     :return: list of (path, the name of its dataset, its velocities)
     """
     from koloa.gather import folder_name
+    from koloa.secular import PERSPECTIVE_TREF, perspective_drift
     name = folder_name(target)
     here = os.path.join(root, name, 'lbl')
     os.makedirs(here, exist_ok=True)
@@ -969,27 +998,85 @@ def keep(rdb: str, target: str, inst: str, group: Dict[str, Any],
     head, dashes, rows = lines[0], lines[1], [line for line in lines[2:]
                                               if line.strip()]
     col = head.split('\t').index('rjd')
-    labels = {}
-    if os.path.exists(os.path.join(here, LABELS)):
-        with open(os.path.join(here, LABELS)) as handle:
-            labels = json.load(handle)
+    acc = _perspective(target, root, ident) if INSTRUMENTS[inst].get(
+        'perspective') else None
+    if acc:
+        speeds = _velocities(head)
+        fixed = []
+        for row in rows:
+            cells = row.split('\t')
+            drift = float(perspective_drift(float(cells[col]), acc['value'],
+                                            PERSPECTIVE_TREF))
+            for num in speeds:
+                try:
+                    cells[num] = repr(float(cells[num]) - drift)
+                except ValueError:
+                    pass
+            fixed.append('\t'.join(cells))
+        rows = fixed
+    labels, taken = {}, {}
+    for kind, path in ((labels, LABELS), (taken, PERSPECTIVE)):
+        if os.path.exists(os.path.join(here, path)):
+            with open(os.path.join(here, path)) as handle:
+                kind.update(json.load(handle))
     out = []
     for suffix, label, low, high in group['eras']:
         mine = [row for row in rows
                 if low <= float(row.split('\t')[col]) < high]
         path = os.path.join(here, f'{name}_{inst}{suffix}_lbl.rdb')
+        file = os.path.basename(path)
         if not mine:
             if os.path.exists(path):
                 os.remove(path)
-            labels.pop(os.path.basename(path), None)
+            labels.pop(file, None)
+            taken.pop(file, None)
             continue
         with open(path, 'w') as handle:
             handle.write('\n'.join([head, dashes] + mine) + '\n')
-        labels[os.path.basename(path)] = label
+        labels[file] = label
+        if acc:
+            taken[file] = dict(value=acc['value'], error=acc['error'],
+                               source=acc['source'], tref=PERSPECTIVE_TREF,
+                               columns='vrad, vrad_achromatic, vrad_<band>')
+        else:
+            taken.pop(file, None)
         out.append((path, label, len(mine)))
     with open(os.path.join(here, LABELS), 'w') as handle:
         json.dump(labels, handle, indent=1)
+    if taken:
+        with open(os.path.join(here, PERSPECTIVE), 'w') as handle:
+            json.dump(taken, handle, indent=1)
+    elif os.path.exists(os.path.join(here, PERSPECTIVE)):
+        os.remove(os.path.join(here, PERSPECTIVE))
     return out
+
+
+def _perspective(target: str, root: str,
+                 ident: Optional[Dict[str, Any]] = None
+                 ) -> Optional[Dict[str, Any]]:
+    """the perspective acceleration of a star (koloa.secular), from the
+    astrometry it carries, that of its folder, or Gaia; None (said) when
+    there is none"""
+    from koloa.gather import folder_name
+    from koloa.secular import star_perspective
+    if not (ident or {}).get('astrometry'):
+        path = os.path.join(root, folder_name(target), 'target.json')
+        if os.path.exists(path):
+            with open(path) as handle:
+                ident = json.load(handle)
+    try:
+        acc = star_perspective(ident or _ident(target))
+    except Exception as err:  # the velocities then as LBL gives them
+        log(f'perspective acceleration: {type(err).__name__}: {err}', 'warn')
+        acc = None
+    if acc is None:
+        log(f'{target}: no astrometry, the perspective acceleration of the '
+            f'star is left in the velocities of LBL', 'warn')
+    else:
+        log(f'perspective acceleration of {target}: {acc["value"]:.3f} '
+            f'm/s/yr ({acc["source"]}), taken out of the velocities of LBL',
+            'value')
+    return acc
 
 
 def kept(target: str, root: str = 'archives') -> List[Dict[str, Any]]:
@@ -1060,7 +1147,7 @@ def run_group(target: str, inst: str, group: Dict[str, Any], lbl_dir: str,
     step(f'{name}: LBL')
     start = _time.time()
     rdb = run(params, python)
-    files = keep(rdb, target, inst, group, root)
+    files = keep(rdb, target, inst, group, root, ident)
     try:
         from koloa import rvstore
         from koloa.gather import folder_name

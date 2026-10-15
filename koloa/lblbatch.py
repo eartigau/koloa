@@ -268,7 +268,8 @@ def check(root: str, lbl_dir: str, python: str) -> bool:
         probe = os.path.dirname(probe)
     free = shutil.disk_usage(probe).free / 1e6
     state = lblrun.check_python(python)
-    gh = rvstore.access()
+    # a write tried: a token may do less than its account
+    gh = rvstore.access(write=True)
     done = sum(os.path.exists(os.path.join(root, DONE, f'{_key(star)}.json'))
                for star in stars)
     log(f'{len(stars)} stars, {done} done; the spectra not here yet: about '
@@ -279,10 +280,11 @@ def check(root: str, lbl_dir: str, python: str) -> bool:
                             f'{state["error"]}',
         'value' if state['ok'] else 'warn')
     log(f'the team\'s repository ({rvstore.REPO}): '
-        + ('read and written' if gh.get('write') else 'read only'
-           if gh.get('read') else 'no access (gh auth login, a token '
-                                  'that may write it)'),
-        'value' if gh.get('write') else 'warn')
+        + ('read and written' if gh['write'] else
+           ('read only' if gh['read'] else 'no access')
+           + f' ({gh["why"] or "gh auth login"}; a token that may read '
+             f'and write its contents)'),
+        'value' if gh['write'] else 'warn')
     return bool(state['ok'] and free > left * 1.2)
 
 
